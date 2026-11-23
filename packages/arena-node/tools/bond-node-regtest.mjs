@@ -34,9 +34,9 @@ import { scalarTo32 } from '../../arena-protocol/src/shares.js';
 import { fromHex, taggedHash, toHex } from '../../arena-protocol/src/hash.js';
 
 const env = process.env;
-const BIN = env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
+const BIN = env.BITCOIN_BIN || '/srv/arena/bitcoin-31.1/bin';
 const BASE = Number(env.BN_BASE_PORT || 28840), RPC = BASE, P2P = BASE + 1, SEAT = BASE + 10;
-const dir = mkdtempSync(join(env.BN_DIR || '/mnt/bitcoin/relocated/claude-tmp/claude-1000', 'bond-node-regtest-'));
+const dir = mkdtempSync(join(env.BN_DIR || '/srv/arena/regtest-tmp', 'bond-node-regtest-'));
 const RT = join(dir, 'chain');
 mkdirSync(RT);
 const wait = (ms) => new Promise((r) => { setTimeout(r, ms); });

@@ -11,8 +11,8 @@ LOG=${1:?the log file}
 : "${FEDIMINT_BIN:?}" "${STAKE_LOCK_BIN:?}"
 F=$FEDIMINT_BIN; FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/sv2-XXXXXX")}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
-L=${LND_BIN:-/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
+L=${LND_BIN:-/srv/arena/lnd-linux-amd64-v0.21.3-beta}
 HERE=$(cd "$(dirname "$0")" && pwd)
 NODE=${NODE_BIN:-$(command -v node)}
 BTC="$B/bitcoin-cli -datadir=$P/btc -regtest -rpcport=30101 -rpcuser=arena -rpcpassword=arena"

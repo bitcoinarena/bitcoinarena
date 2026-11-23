@@ -218,7 +218,7 @@ export const FUNDING_SEARCH_SESSIONS = 1024;
 export const FUNDING_RECENT_SESSIONS = 8;
 const searching = new Map();
 // ONCE PER LOCK, ONE READ AT A TIME (measured 2026-11-05 on the #1044 devnet: a lock is verified again and again - at entry, at every refresh of its
-// standing - and each verification started its own read-back, 9-17 session exports at once and a MacBook load of 150). A lock searched in this process is
+// standing - and each verification started its own read-back, 9-17 session exports at once and a test laptop load of 150). A lock searched in this process is
 // not searched again; the exports of every search run one after another through `lane`, the waits for a session to finish beside it
 const searched = new Set();
 let lane = Promise.resolve();

@@ -21,7 +21,7 @@ import { NETWORK_ID_TESTNET4, AUTHORITY_PUBKEY_TESTNET4 } from '../src/genesis-i
 import { encodeDonationSetBody, donationSetBodyId } from '../src/authority.js';
 import { lnurlFor } from '../src/bech32.js';
 
-const KEYDIR = process.env.ARENA_GENESIS_KEYS || '/mnt/bitcoin/blwp-genesis';
+const KEYDIR = process.env.ARENA_GENESIS_KEYS || '/srv/arena/blwp-genesis';
 const OUT = new URL('../src/testnet4-donation-set.js', import.meta.url);
 const BASE = 'https://seat.example.com/lnurlp/';
 const ENDPOINTS = [`${BASE}blwp-donate-a`, `${BASE}blwp-donate-b`];

@@ -215,7 +215,7 @@ test('names for the chat: seats by number, the top processes as "seat 6 70%"', (
     ['seat 1', 'seat 7', 'second-host seat 3', 'x.example:9000']);
   const ps = ['69.2 /home/arena/.nvm/versions/node/v24.15.0/bin/node src/main.js 31271 /home/arena/blwp-testnet4/node-6.db',
     '68.4 /home/arena/.nvm/versions/node/v24.15.0/bin/node src/main.js 31221 /home/arena/blwp-testnet4/node-1.db',
-    '51.1 /mnt/bitcoin/bitcoin-31.1/bin/bitcoind -datadir=/mnt/bitcoin/tn4 -printtoconsole',
+    '51.1 /srv/arena/bitcoin-31.1/bin/bitcoind -datadir=/srv/arena/tn4 -printtoconsole',
     '50.8 /home/arena/.nvm/versions/node/v24.15.0/bin/node tools/market-bot.mjs --x', '3.0 [chrome] <defunct>'].join('\n');
   assert.equal(topLine(ps), 'seat 6 69%, seat 1 68%, bitcoind 51%, node market-bot.mjs 51%');
 });

@@ -31,9 +31,9 @@ import { tweakPoint } from '../src/curve.js';
 import { fromHex, taggedHash, toHex } from '../../arena-protocol/src/hash.js';
 
 const env = process.env;
-const BIN = env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
+const BIN = env.BITCOIN_BIN || '/srv/arena/bitcoin-31.1/bin';
 const BASE = Number(env.CK_BASE_PORT || 28540), RPC = BASE, P2P = BASE + 1;
-const dir = mkdtempSync(join(env.CK_DIR || '/mnt/bitcoin/relocated/claude-tmp/claude-1000', 'census-key-0-regtest-'));
+const dir = mkdtempSync(join(env.CK_DIR || '/srv/arena/regtest-tmp', 'census-key-0-regtest-'));
 const RT = join(dir, 'chain');
 mkdirSync(RT);
 const wait = (ms) => new Promise((r) => { setTimeout(r, ms); });

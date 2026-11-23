@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // A PROOF IS JUDGED ONCE PER judgeAgainMs (kanban #1044 B1 phase 4, measured 2026-11-05 on the devnet: four named-claim proofs this seat's judge could not say
-// about were judged again on every 500 ms pass at seven seats, each judgement a stake-lock tool run - the MacBook load went to 160). A false verdict is not
+// about were judged again on every 500 ms pass at seven seats, each judgement a stake-lock tool run - the test laptop load went to 160). A false verdict is not
 // asked again; an undefined one only after judgeAgainMs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

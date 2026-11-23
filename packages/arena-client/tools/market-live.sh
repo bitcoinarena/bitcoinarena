@@ -7,7 +7,7 @@
 set -uo pipefail
 : "${BUILD:?}"
 P=${PROBE_DIR:-$(mktemp -d /tmp/market-live-XXXXXX)}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
 RPC=${RPC:-30201}
 HERE=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$P/btc"

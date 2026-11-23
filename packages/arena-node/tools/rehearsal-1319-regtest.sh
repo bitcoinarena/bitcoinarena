@@ -11,7 +11,7 @@ if [ -z "${R1319_WRAPPED:-}" ]; then export R1319_WRAPPED=1; exec timeout -k 30 
 : "${FEDIMINT_BIN:?}"
 F=$FEDIMINT_BIN; FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/r1319-XXXXXX)}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 RPC=30101
 BTC_ARGS="-datadir=$P/btc -regtest -rpcport=$RPC -rpcuser=arena -rpcpassword=arena"

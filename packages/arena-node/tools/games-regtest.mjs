@@ -20,7 +20,7 @@ import { MARKET } from '../test/plugins/market/index.js';
 const env = process.env;
 const dir = process.argv[2];
 if (!dir || !env.ARENA_PAGE_DIR) { console.error('ARENA_PAGE_DIR=<built page> node tools/games-regtest.mjs <work dir>'); process.exit(2); }
-const B = env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
+const B = env.BITCOIN_BIN || '/srv/arena/bitcoin-31.1/bin';
 const RPC = 21641;
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 const rt = join(dir, 'btc');

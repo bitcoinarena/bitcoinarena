@@ -1015,7 +1015,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   noteNextblockGames(hosted);   // kanban #2991: a staked round of any hosted Next Block version takes no practice ticks
   // GET /season's boards, kept per query: { at, json }, 32 at most
   const seasonKept = new Map();
-  // KEPT A FEW MINUTES (kanban #2860, the owner's playtest 2026-11-15: RPS orders timed out at Beelink load ~28; a seat's profile had seasonRounds +
+  // KEPT A FEW MINUTES (kanban #2860, the owner's playtest 2026-11-15: RPS orders timed out at test-host load ~28; a seat's profile had seasonRounds +
   // signSeason at ~9 %, GET /season and /season-rounds often in the [lag] lines): every seat asks every other for its season rounds, so a 30 s
   // keep re-read the store and signed every round twice a minute per query. The same bytes are now kept 5 minutes (ARENA_SEASON_KEEP_MS).
   const SEASON_KEEP_MS = Number(process.env.ARENA_SEASON_KEEP_MS) > 0 ? Number(process.env.ARENA_SEASON_KEEP_MS) : 300000;
@@ -2620,7 +2620,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return es && es.length ? toHex(reserveEpochId(fromHex(fedHex), sortedKeys(es.map((e) => e.pubkey)))) : null;
     } catch { return null; }
   };
-  // WHY A RESERVE KEY WAS NOT FOUND, said once a minute per federation (kanban #2869: after the 2026-11-15 restarts the old-Mac seats named no
+  // WHY A RESERVE KEY WAS NOT FOUND, said once a minute per federation (kanban #2869: after the 2026-11-15 restarts the second-host seats named no
   // key for federation A for hours - every market and fee-lock settlement there refused - while the seven guardian seats served one key)
   const reserveMissSaid = new Map();
   const reserveMiss = (fedHex, why) => { const now = Date.now(); if (now - (reserveMissSaid.get(fedHex) || 0) < 60000) return null;
@@ -2642,7 +2642,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // RESERVE_RECHECK_MS and replaced only when `needed` of them name another one; kept as it is when they cannot be read
     if (kept && Date.now() - (reserveRechecked.get(fedHex) || 0) < RESERVE_RECHECK_MS) return kept;
     if (kept) reserveRechecked.set(fedHex, Date.now());
-    // THE KEY THIS SEAT HELD FOR THIS EPOCH BEFORE A RESTART (kanban #2869: every old-Mac seat lost federation A's key with its restart and,
+    // THE KEY THIS SEAT HELD FOR THIS EPOCH BEFORE A RESTART (kanban #2869: every second-host seat lost federation A's key with its restart and,
     // unable to reach the guardian seats, named none for hours): its store's history answers first, the guardian seats only when it has none
     { const was = typeof reserveKeys.keyOfEpoch === 'function' ? reserveKeys.keyOfEpoch(fedHex, epoch) : null;
       if (was && !kept) return reserveKeys.setFor(fedHex, epoch, fromHex(was)); }
@@ -4885,7 +4885,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const now = Number(round.now());
     for (const x of lockSetPlan.values()) {
       if (!x || now < x.close || now > x.close + LOCK_SET_WINDOW_MS + 2000) continue;
-      // NO LOCK-SET WORK FOR A ROUND NOBODY ENTERED HERE (kanban #2901, measured 2026-11-16: the 8 Beelink seats' main threads at ~100 %, ~80 lock-set
+      // NO LOCK-SET WORK FOR A ROUND NOBODY ENTERED HERE (kanban #2901, measured 2026-11-16: the 8 test-host seats' main threads at ~100 %, ~80 lock-set
       // rounds a minute per seat, nearly all with 0 entries; a paid player's handout took 15-23 s): a round this seat holds no handout and no entry
       // for at its close is not stepped by this timer. It still takes part the moment a peer that has one asks (GET /lock-set steps it, POST /lock-set
       // takes the peer's view): a seat with an entry pulls every peer each LOCK_SET_PULL_MS, so its view, signature and certificate are made as before.
@@ -5143,7 +5143,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const r = round.get(rid);
       const held = r ? dkg.signerNodeFor(decodeRoundContract(new Uint8Array(r.contract)).nodes) : null;
       if (held && held.ok) return held.pool.groupPublicKey;
-      // ASKED FOR A KEY THIS SIGNER NODE DOES NOT HOLD, IT MAKES IT AGAIN (kanban #2869, measured 2026-11-15 23:46Z, round ac3f97a3: old-Mac seats 4
+      // ASKED FOR A KEY THIS SIGNER NODE DOES NOT HOLD, IT MAKES IT AGAIN (kanban #2869, measured 2026-11-15 23:46Z, round ac3f97a3: second-host seats 4
       // and 5 refused a market order's locks with "this signer node holds no claim key for that round" - their run had ended "no key after 30
       // runs" while seats of the committee restarted (22:00-22:28Z), and nothing ran it again: seating, assignment and POST /round come once).
       // The lock and fee-lock checks ask here, so an order that meets a missing key starts its run; the player's lock is posted again for 30 s.
@@ -9737,7 +9737,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // served with the facts its signature covers and handed to the background, which signs it again within a second. `all=1` and `ahead`
   // alone list what the window holds. A seat nobody lists builds nothing: builds stop LISTING_IDLE_MS after the last listing.
   // AND ONLY WHAT WAS ASKED, ONLY WHILE IT IS ASKED (kanban #2790, live audit9c 2026-11-15: the fixed set - 72 a series and the next 20 min -
-  // was ~1,600 of 11,300 rows, 14-16 s of signing every 45 s on every seat whether anyone listed or not, a third of a core each, Beelink load
+  // was ~1,600 of 11,300 rows, 14-16 s of signing every 45 s on every seat whether anyone listed or not, a third of a core each, test-host load
   // 29). A window now holds the rows the window before it was asked for (each request's cut, whether that window held the row or not), at
   // most LISTING_BUILD_MAX_ROWS, soonest first; the first window after a start or a quiet spell holds a bare listing's (the next
   // LISTING_BARE_NEXT a series and every round starting within LISTING_BUILD_SOON_MS). A window nobody asked is not followed by a build: the
@@ -16741,7 +16741,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   if (p2pTunnels && svcSettings.atBoot('p2p-tunnel')) ownToggles['p2p-tunnel'].start();
   if (guardianControl) ownToggles.guardian = { has: guardianControl.has, why: 'this node runs no guardian', running: guardianControl.running, start: guardianControl.start, stop: guardianControl.stop };
   http.on('upgrade', (req, socket, head) => {
-    // AN UPGRADED SOCKET HAS NO ERROR LISTENER OF NODE'S (kanban #1252, measured 2026-11-07 on the old Mac's fed B seats: "throw er; // Unhandled 'error' event
+    // AN UPGRADED SOCKET HAS NO ERROR LISTENER OF NODE'S (kanban #1252, measured 2026-11-07 on the second host's fed B seats: "throw er; // Unhandled 'error' event
     // ... read ECONNRESET ... on Socket instance" ended the node, once at seat 3's audit15 start and 8 times on seats 5-7 before): a peer's reset on one, before a
     // branch below (or the websocket handshake) listened to it, threw - it is listened to first, and a reset closes that socket, not the seat
     socket.on('error', () => { try { socket.destroy(); } catch { /* gone */ } });

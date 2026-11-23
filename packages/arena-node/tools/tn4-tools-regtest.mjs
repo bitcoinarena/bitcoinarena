@@ -38,9 +38,9 @@ const lastJson = (s) => JSON.parse(s.slice(s.lastIndexOf('\n{') + 1 || s.indexOf
 const LIVE_PORTS = new Set([8080, 30101, 48332, 18080, 18081, 18985, 18986, 18777, 18787, 11009, 8180, 31270, 31271, 31272, 31280,
   31281, 31282, 31290, 9351, 9352, 9381]);
 for (const p of [31221, 31231, 31241, 31251, 31261, 31271, 31281]) for (const d of [0, 1000, 2000, 3000, 4000]) LIVE_PORTS.add(p + d);
-const LIVE_DIRS = ['/mnt/bitcoin/tn4', '/mnt/bitcoin/lnd-testnet4', '/home/arena/blwp-testnet4/node-', '/home/arena/blwp-testnet4/paid',
+const LIVE_DIRS = ['/srv/arena/tn4', '/srv/arena/lnd-testnet4', '/home/arena/blwp-testnet4/node-', '/home/arena/blwp-testnet4/paid',
   '/home/arena/blwp-testnet4/client-lock-tn4', '/home/arena/blwp-testnet4/gw-', '/home/arena/blwp-testnet4/donor',
-  '/mnt/bitcoin/blwp-2of2', '/mnt/bitcoin/lnd-'];
+  '/srv/arena/blwp-2of2', '/srv/arena/lnd-'];
 // A PATH NOT MADE YET is its nearest existing parent's real path and the rest (macOS keeps /tmp under /private/tmp: a dir
 // still to be made must resolve the way its made parent does - measured on the test host)
 const real = (p) => {

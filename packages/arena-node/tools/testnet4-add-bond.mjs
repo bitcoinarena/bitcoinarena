@@ -32,12 +32,12 @@ const env = process.env;
 const publish = process.argv.includes('--publish');
 const censusAt = process.argv.includes('--census') ? Number(process.argv[process.argv.indexOf('--census') + 1]) : null;
 const home = env.ARENA_TESTNET4_DIR || `${env.HOME}/blwp-testnet4`;
-const datadir = env.ARENA_TN4_DATADIR || '/mnt/bitcoin/tn4';
+const datadir = env.ARENA_TN4_DATADIR || '/srv/arena/tn4';
 const wallet = env.ARENA_TN4_BOND_WALLET || 'blwp-tn4-bonds';
 const N = Number(env.ARENA_ADD_BOND_NODE || 1);
 const SATS = BigInt(env.ARENA_ADD_BOND_SATS || 32000);
 const CARRIER_FEE = 3000n;
-const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
+const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli',
   [`-datadir=${datadir}`, `-rpcwallet=${wallet}`, ...a], { encoding: 'utf8', maxBuffer: 256 << 20 }).trim();
 const say = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
 

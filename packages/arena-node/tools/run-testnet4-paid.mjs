@@ -11,7 +11,7 @@
  * touched: its own stores, ports, chain and pin are elsewhere.
  *
  *   PATH=<patched fedimintd, fedimint-cli>:$PATH HOME=<fedimint bundle home> \
- *   ARENA_BITCOIND_URL=http://127.0.0.1:48332 ARENA_BITCOIND_COOKIE=/mnt/bitcoin/tn4/testnet4/.cookie \
+ *   ARENA_BITCOIND_URL=http://127.0.0.1:48332 ARENA_BITCOIND_COOKIE=/srv/arena/tn4/testnet4/.cookie \
  *   ARENA_STAKE_LOCK_BIN=... ARENA_FEDERATION_CLIENT_DIR=... ARENA_FEDERATION_INVITE_FILE=... \
  *   ARENA_WSS_31221=wss://seat.example.com/guardian-1 ... \
  *   node tools/run-testnet4-paid.mjs
@@ -144,9 +144,9 @@ if (network === 'testnet4') {
   }
 }
 
-const datadir = env.ARENA_TN4_DATADIR || '/mnt/bitcoin/tn4';
+const datadir = env.ARENA_TN4_DATADIR || '/srv/arena/tn4';
 const wallet = env.ARENA_TN4_WALLET || 'testnet';
-const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli',
+const cli = (...a) => execFileSync(env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli',
   // a testnet4 block is read whole as hex: past the 1 MB default buffer (ENOBUFS, measured 2026-10-11 on a 1.4 MB block)
   [`-datadir=${datadir}`, `-rpcwallet=${wallet}`, ...a], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }).trim();
 const rpc = bitcoindRpc({ url: `${env.ARENA_BITCOIND_URL.replace(/\/$/, '')}/wallet/${wallet}`, cookiePath: env.ARENA_BITCOIND_COOKIE });

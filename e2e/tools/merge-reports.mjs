@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// ONE REPORT FROM SEVERAL RUNS OF THE SUITE (kanban #2642): the MacBook's load rule makes the suite run area by area (`run.mjs --only`),
+// ONE REPORT FROM SEVERAL RUNS OF THE SUITE (kanban #2642): the test laptop's load rule makes the suite run area by area (`run.mjs --only`),
 // each run writing its own report.json; this merges them, each flow's newest result winning, into <out>/report.json and REPORT.md.
 //   node e2e/tools/merge-reports.mjs <out dir> <report.json> [more report.json ...]
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -20,7 +20,7 @@ const ev = (r) => (r.result === 'pass' ? JSON.stringify(r.evidence) : r.why || '
 writeFileSync(join(out, 'REPORT.md'), [
   '# E2E report (kanban #2642)', '',
   `commit ${head.commit || '?'} · ${runs.length} runs merged (${runs[0]?.r.started} .. ${runs[runs.length - 1]?.r.started}) · **${head.pass} pass, ${head.fail} fail, ${head.notCovered} not covered**`, '',
-  'Private regtest devnet on the MacBook (devnet.mjs: 5-of-7 federation, seven seats, two gateways on two lnds, a payee lnd); the page built from',
+  'Private regtest devnet on the test laptop (devnet.mjs: 5-of-7 federation, seven seats, two gateways on two lnds, a payee lnd); the page built from',
   'this tree (tools/build-arena-page.mjs) served by e2e/lib/page.mjs and driven in headless Chrome. Order: money first, then reach.', '',
   '| flow | area | result | s | evidence / why |', '|---|---|---|---|---|',
   ...results.map((r) => `| ${r.id} | ${r.area} | ${r.result === 'pass' ? 'pass' : r.result === 'fail' ? '**FAIL**' : 'not covered'} | ${r.seconds} | ${ev(r)} |`), ''].join('\n'));

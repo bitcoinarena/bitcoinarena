@@ -3,7 +3,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 /*
  * THE REGTEST CONTRIBUTION RUN'S SIGNED RECORDS (kanban #1346), made where regtest's donation keys are (ARENA_GENESIS_KEYS, default
- * /mnt/bitcoin/blwp-genesis): a test contributor's key and referral (site) key, his ContributionAgreement signed by his own key, regtest's
+ * /srv/arena/blwp-genesis): a test contributor's key and referral (site) key, his ContributionAgreement signed by his own key, regtest's
  * key set (serial 2) with his entry added as serial 3 from height 0 - signed by regtest's donation authority - and ContributionTerminations
  * for heights FROM..TO signed by regtest's recovery key (the cold admin key), since the run's heights are not known before it.
  *
@@ -27,7 +27,7 @@ import { taggedHash } from '../../arena-protocol/src/hash.js';
 const env = process.env;
 const OUT = env.OUT; if (!OUT) throw new Error('OUT=<dir>');
 mkdirSync(OUT, { recursive: true });
-const KEYDIR = env.ARENA_GENESIS_KEYS || '/mnt/bitcoin/blwp-genesis';
+const KEYDIR = env.ARENA_GENESIS_KEYS || '/srv/arena/blwp-genesis';
 const ed = (name) => createPrivateKey({ key: readFileSync(join(KEYDIR, name)), format: 'der', type: 'pkcs8' });
 const authority = ed('regtest-authority.pkcs8'), recovery = ed('regtest-recovery.pkcs8');
 

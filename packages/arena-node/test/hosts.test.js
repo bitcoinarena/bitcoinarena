@@ -60,6 +60,6 @@ test('the reader keeps the last reading, names a failed part, and the environmen
   assert.match(r.snapshot().lnd.error, /connection refused/);
   assert.equal(r.snapshot().gateway.state, 'Running');
   assert.equal(hostsFromEnv({}), null);
-  const h = hostsFromEnv({ ARENA_HOSTS_LND: '/mnt/bitcoin/lnd-testnet4,https://127.0.0.1:8180/', ARENA_HOSTS_GATEWAY: 'gw-a,http://127.0.0.1:31270/,/home/arena/blwp-testnet4/gw-a/password' });
-  assert.deepEqual([h.lnd.lnddir, h.lnd.rest, h.lnd.network, h.gateway.name, h.gateway.base], ['/mnt/bitcoin/lnd-testnet4', 'https://127.0.0.1:8180', 'testnet4', 'gw-a', 'http://127.0.0.1:31270']);
+  const h = hostsFromEnv({ ARENA_HOSTS_LND: '/srv/arena/lnd-testnet4,https://127.0.0.1:8180/', ARENA_HOSTS_GATEWAY: 'gw-a,http://127.0.0.1:31270/,/home/arena/blwp-testnet4/gw-a/password' });
+  assert.deepEqual([h.lnd.lnddir, h.lnd.rest, h.lnd.network, h.gateway.name, h.gateway.base], ['/srv/arena/lnd-testnet4', 'https://127.0.0.1:8180', 'testnet4', 'gw-a', 'http://127.0.0.1:31270']);
 });

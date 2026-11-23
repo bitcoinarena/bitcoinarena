@@ -19,7 +19,7 @@ import {
 } from '../../arena-protocol/src/arbitration-tx.js';
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 
-const RT = process.env.RT, PORT = process.env.RPCPORT || '19443', B = '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+const RT = process.env.RT, PORT = process.env.RPCPORT || '19443', B = '/srv/arena/bitcoin-31.1/bin/bitcoin-cli';
 if (!RT) throw new Error('RT=<the private regtest datadir>');
 const cli = (...a) => execFileSync(B, ['-regtest', `-datadir=${RT}`, `-rpcport=${PORT}`, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const out = (o) => console.log(JSON.stringify(o));

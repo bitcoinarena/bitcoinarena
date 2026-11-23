@@ -8,7 +8,7 @@
  *   node packages/arena-protocol/tools/sign-donation-set.mjs
  *
  * Reads the regtest and testnet4 donation AUTHORITY keys that make-genesis.mjs
- * wrote (ARENA_GENESIS_KEYS, default /mnt/bitcoin/blwp-genesis), refuses a key
+ * wrote (ARENA_GENESIS_KEYS, default /srv/arena/blwp-genesis), refuses a key
  * whose public half is not the one genesis hashes into the network id, signs
  * one test set for each network, checks its own signature, and writes
  * src/test-donation-sets.js - PUBLIC BYTES ONLY. Tests and launchers read that
@@ -29,7 +29,7 @@ import {
 import { encodeDonationSetBody, donationSetBodyId } from '../src/authority.js';
 import { lnurlFor } from '../src/bech32.js';
 
-const KEYDIR = process.env.ARENA_GENESIS_KEYS || '/mnt/bitcoin/blwp-genesis';
+const KEYDIR = process.env.ARENA_GENESIS_KEYS || '/srv/arena/blwp-genesis';
 const OUT = new URL('../src/test-donation-sets.js', import.meta.url);
 const BASE = 'http://127.0.0.1:18777/lnurlp/';
 const ENDPOINTS = [`${BASE}blwp-test-a`, `${BASE}blwp-test-b`];

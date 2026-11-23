@@ -304,7 +304,7 @@ test('no session finished since the bound: nothing is exported (the tool refuses
   assert.match(report.refused.join('; '), /no session finished since the bound 7 yet/);
 });
 
-// ---- the MacBook load of 2026-11-05 (150): a lock verified again and again started a read-back each time, and every filer pass re-exported every round
+// ---- the test laptop load of 2026-11-05 (150): a lock verified again and again started a read-back each time, and every filer pass re-exported every round
 
 test('a lock is searched once: a second verification of it reads nothing, and searches of several locks export one after another', async () => {
   forgetLockSearches();

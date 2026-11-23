@@ -3845,7 +3845,7 @@ export class Round {
    * THE CLOSED ROUNDS PAGE BY PAGE (kanban #3238, measured on a copy of a fed2 seat's store, ~600,000 closed rounds): closedRounds read
    * every closed round's contract at once - one native buffer per row, all alive together, then each decoded - and a seat's start
    * (server.js, the closes short of final) took its JS heap to 1.3 GB and malloc to 1.5 GB in the first 40 s. Both fell back to ~0.15 GB
-   * after, but glibc keeps the high-water of its heap (a Beelink seat's [heap] was 931 MB two minutes after start, and stays). Read
+   * after, but glibc keeps the high-water of its heap (a test-host seat's [heap] was 931 MB two minutes after start, and stays). Read
    * CLOSED_PAGE rows at a time, in the order they opened, each page a new statement run (no read held open between pages).
    */
   *eachClosedRound({ page = CLOSED_PAGE } = {}) {

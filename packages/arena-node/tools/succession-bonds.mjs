@@ -13,7 +13,7 @@ import { tapSighash, scriptPathWitness, serializeSpend } from '../../arena-proto
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { chainFactsAt } from '../../arena-protocol/src/census.js';
 
-const B = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
+const B = process.env.BITCOIN_BIN || '/srv/arena/bitcoin-31.1/bin';
 const cli = (...a) => execFileSync(`${B}/bitcoin-cli`, [...(process.env.BTC_DATADIR ? [`-datadir=${process.env.BTC_DATADIR}`] : []), '-regtest', `-rpcport=${process.env.RPC || 30101}`, `-rpcuser=${process.env.RPCUSER || 'arena'}`,
   `-rpcpassword=${process.env.RPCPASS || 'arena'}`, ...a], { encoding: 'utf8' }).trim();
 const w = (...a) => cli('-rpcwallet=bonds', ...a);

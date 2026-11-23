@@ -14,7 +14,7 @@ import { nodeState } from '../src/state.js';
 import * as reachKit from '../src/reach.js';
 
 const NAT = { ok: true, reached: false, address: '46.22.17.30', port: 6221, answers: [], diagnosis: { cause: 'nat', advice: 'a router in front of this machine does not forward port 6221' } };
-const running = { BackendState: 'Running', Self: { DNSName: 'macbook.example.com.' } };
+const running = { BackendState: 'Running', Self: { DNSName: 'laptop.example.com.' } };
 
 /** A Tailscale CLI stand-in: `status` answers `st`; every call is recorded. */
 const tailscaleOf = (st) => { const calls = []; return { calls, sh: async (bin, args) => { calls.push(args.join(' ')); return args[0] === 'status' ? { ok: Boolean(st), out: st ? JSON.stringify(st) : '', err: st ? '' : 'not found' } : { ok: true, out: '{}', err: '' }; } }; };
@@ -42,11 +42,11 @@ test('not reached, on a tailnet: Funnel is the default, "direct" is refused with
   const { go, ts } = await wizard(t, { st: running });
   const d = await go('POST', '/api/reach/direct', { port: 6221 });
   assert.equal(d.result.reached, false, 'no direct reach is claimed');
-  assert.equal(d.result.tailnet, 'macbook.example.com');
+  assert.equal(d.result.tailnet, 'laptop.example.com');
   assert.equal(d.default, 'tailscale');
   const s = await go('POST', '/api/reach/save', { mode: 'direct' });
   assert.equal(s.ok, false);
-  assert.equal(s.why, 'this machine is not reachable directly from the internet (port 6221 at 46.22.17.30). This machine is on your tailnet as macbook.example.com: choose Tailscale Funnel, which needs no port opened on your router');
+  assert.equal(s.why, 'this machine is not reachable directly from the internet (port 6221 at 46.22.17.30). This machine is on your tailnet as laptop.example.com: choose Tailscale Funnel, which needs no port opened on your router');
   assert.deepEqual(ts.calls, ['status --json'], 'the check only asks Tailscale its status: no funnel, no serve');
 });
 

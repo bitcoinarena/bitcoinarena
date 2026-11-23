@@ -21,7 +21,7 @@ against the same pinned checksum (kanban #1345).
 ## What has been measured
 
 **2026.1.9.26** (commit `650581bd6e99`, kanban #1345, 2026-11-08). The published archives
-were built on the old MacBook. They were built again on the main MacBook from the same commit,
+were built on the older build machine. They were built again on the main build machine from the same commit,
 with the same script and an empty download cache. All five archives are byte-identical:
 
 | Archive | SHA-256 (both builds) |
@@ -39,9 +39,8 @@ reproducible on two machines.
 
 **The Rust binaries were not rebuilt on a second machine.** fedimintd, gatewayd,
 fedimint-cli and arena-stake-lock enter the archives as prebuilt binaries, pinned by SHA-256 and
-fetched from the `custody-5fa01c5d` release. They were built once, on the main MacBook
-(`custody-build.sh`). The only other Mac, 192.168.1.18, is barred from extra jobs by the 11-05
-no-extra-jobs rule, so no second build was made, and the SHA-256 of those binaries has
+fetched from the `custody-5fa01c5d` release. They were built once, on the main build machine
+(`custody-build.sh`). The only other build machine is kept free of extra jobs, so no second build was made, and the SHA-256 of those binaries has
 **not** been compared with an independent build. The same holds for the lock-client wasm
 tracked in the repository. Until such a comparison exists, a release is reproducible only
 from those pinned binaries, not from their Rust source.

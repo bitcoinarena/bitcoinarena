@@ -227,7 +227,7 @@ export async function redeemAll({ client, donations, recipientPkHex, secretHex, 
 /**
  * A FEDERATION WALLET KEPT IN A FILE (kanban #2948): the lock client's state survives a restart. The lock client's commit
  * (lock-client store.rs commit_inner) calls put/remove once per key, synchronously, and every one of them rewrote the whole
- * file. Measured 2026-11-23 on the Beelink, seat 2's dev-b (wallet-337ae01a..., 22.8 MB, 29,832 keys): one donation of
+ * file. Measured 2026-11-23 on the test host, seat 2's dev-b (wallet-337ae01a..., 22.8 MB, 29,832 keys): one donation of
  * 2,666 msat redeemed at 11:24Z - the wallet file rewritten in 25 consecutive seconds, 2,428 MB written (43-130 MB/s); 62.9 GB
  * written in the process's 10.4 h.
  *

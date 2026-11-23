@@ -34,7 +34,7 @@ const BUILDS = [
 ];
 
 // ONE TEST PER SCRIPT (kanban #1690, #1523): these were one loop in one test, so the curve tool's ENOENT on the
-// MacBook threw before arena-client.js was compared, and a stale client bundle - one seat of seven still blocking
+// test laptop threw before arena-client.js was compared, and a stale client bundle - one seat of seven still blocking
 // every world seed in the page - went unseen behind it. Each script is now built and compared on its own; one tool
 // failing says so by name and hides no other script.
 for (const [name, tool, built, needs] of BUILDS) test(`${name} a page serves is the build of the source in this tree - in dist and in the WebGL template`, () => {

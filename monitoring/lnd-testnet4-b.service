@@ -12,7 +12,7 @@ Wants=bitcoind-testnet.service
 
 [Service]
 Type=simple
-ExecStart=/mnt/bitcoin/lnd-linux-amd64-v0.21.3-beta/lnd --lnddir=/mnt/bitcoin/lnd-testnet4-b
+ExecStart=/srv/arena/lnd-linux-amd64-v0.21.3-beta/lnd --lnddir=/srv/arena/lnd-testnet4-b
 Restart=on-failure
 RestartSec=20
 TimeoutStopSec=120

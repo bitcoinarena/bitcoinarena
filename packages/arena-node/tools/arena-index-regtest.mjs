@@ -30,7 +30,7 @@ import { tweakPoint, combine } from '../src/curve.js';
 
 const RT = process.env.RT;
 if (!RT) { console.error('RT=<datadir> is required'); process.exit(2); }
-const B = process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+const B = process.env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli';
 const PORT = process.env.RPCPORT || '29543';
 const cli = (...a) => execFileSync(B, ['-regtest', `-datadir=${RT}`, `-rpcport=${PORT}`, ...a], { encoding: 'utf8' }).trim();
 const call = bitcoindRpc({ url: `http://127.0.0.1:${PORT}`, cookiePath: `${RT}/regtest/.cookie` });

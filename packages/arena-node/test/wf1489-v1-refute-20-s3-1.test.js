@@ -2,7 +2,7 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #1489 v1-refute-20 skeptic 3 (re-check of #1511 / #1884): the faucet's node check trusts a listed seat by its HOSTNAME alone
 // (seatTrusted: SEAT_TRUSTED_HOSTS.includes(x.hostname)) and then asks it with plain fetch - no resolved-address check. The port and path are the
-// announcer's. The default trusted list is the team's public names (beelink.tail1723e2.ts.net -> the Beelink's 100.x Tailscale address, where
+// announcer's. The default trusted list is the team's public names (host-a.tail0000aa.ts.net -> the test host's 100.x Tailscale address, where
 // signal-cli 8080, OpenClaw 18789 and the Chrome debug ports listen), and an operator whose own seats are on a loopback/LAN name lists that one.
 // So a bonded node announces http://<trusted host>:<any port>/ and a stranger's node check makes the faucet GET /owner, /roles, /served there.
 // Here: the operator's seat is on localhost (trusted, as faucet-feedback-1342 configures it); the attacker announces localhost on ANOTHER port.

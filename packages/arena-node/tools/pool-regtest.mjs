@@ -36,7 +36,7 @@ import { scalarFrom32, FIELD, SHARES_NEEDED, SHARES_TOTAL } from '../../arena-pr
 import { feldmanGroup, tweakPoint } from '../src/curve.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 
-const BITCOIN = process.env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
+const BITCOIN = process.env.BITCOIN_BIN || '/srv/arena/bitcoin-31.1/bin';
 const KEEP = process.argv.includes('--keep');
 const P = { rpc: 29653, p2p: 29654 };
 const rand = (n) => new Uint8Array(randomBytes(n));

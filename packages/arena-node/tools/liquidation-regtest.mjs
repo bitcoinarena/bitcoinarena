@@ -49,7 +49,7 @@ import { stakeLockPort } from '../src/stake-lock-port.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 
 const E2E = process.env.FEDS ? JSON.parse(readFileSync(process.env.FEDS, 'utf8')) : null;
-const RT = E2E ? E2E.btcDir : process.env.RT, PORT = E2E ? String(E2E.rpcPort) : (process.env.RPCPORT || '29932'), B = E2E ? E2E.bitcoinCli : (process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli');
+const RT = E2E ? E2E.btcDir : process.env.RT, PORT = E2E ? String(E2E.rpcPort) : (process.env.RPCPORT || '29932'), B = E2E ? E2E.bitcoinCli : (process.env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli');
 if (!RT) throw new Error('RT=<the private regtest datadir>');
 const cli = (...a) => execFileSync(B, ['-regtest', `-datadir=${RT}`, `-rpcport=${PORT}`, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 try { cli('loadwallet', 'liq'); } catch { try { cli('createwallet', 'liq'); } catch { /* loaded */ } }

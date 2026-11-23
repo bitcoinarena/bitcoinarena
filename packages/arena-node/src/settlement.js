@@ -1536,7 +1536,7 @@ export class LockSettlement {
     // seats' certified batches are read again (the read kept for the round may be older than a batch this seat missed), and with one
     // taken, the settlement is built again from the store
     if (txid && !entry && (!m.ok || String(txid).toLowerCase() !== String(m.txid).toLowerCase()) && (await this.bookResync(roundIdBytes))) m = await build();
-    // A FALLBACK BUILT ONCE IS NOT KEPT AGAINST THE ASKER'S (kanban #1044, measured 2026-11-10 on the MacBook devnet s44, 3 of 7 seats silent: seats 3-5 built
+    // A FALLBACK BUILT ONCE IS NOT KEPT AGAINST THE ASKER'S (kanban #1044, measured 2026-11-10 on the test laptop devnet s44, 3 of 7 seats silent: seats 3-5 built
     // fallback 14161803, seat 6 had kept 9f99a7bd from its own first build - every pass split 3 against 1 with 4 needed, and the locks ran out to their
     // expiration): on a mismatch the kept fallback is dropped and built again from the store once, and what each side holds is said
     if (fallback && txid && m.ok && String(txid).toLowerCase() !== String(m.txid).toLowerCase()) {

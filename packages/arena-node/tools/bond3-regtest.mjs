@@ -25,7 +25,7 @@ import { tweakPoint, combine } from '../src/curve.js';
 import { weightedKeygen, weightsFor, signersFor, signByNode } from './census-key-measure.mjs';
 import { readSlashStart, prepareReturnIfOwed, withOwnerSignature } from '../src/hold-return.js';
 
-const RT = process.env.RT, PORT = process.env.RPCPORT || '29143', B = process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+const RT = process.env.RT, PORT = process.env.RPCPORT || '29143', B = process.env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli';
 if (!RT) throw new Error('RT=<the private regtest datadir>');
 const cli = (...a) => execFileSync(B, ['-regtest', `-datadir=${RT}`, `-rpcport=${PORT}`, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 try { cli('loadwallet', 'bond3'); } catch { try { cli('createwallet', 'bond3'); } catch { /* loaded */ } }

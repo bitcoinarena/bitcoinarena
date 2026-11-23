@@ -20,7 +20,7 @@ import { TEST_DONATION_SET_REGTEST } from '../../arena-protocol/src/test-donatio
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
-// game-app constants as fixed bytes (the MacBook copy has no game-app deps)
+// game-app constants as fixed bytes (the laptop copy has no game-app deps)
 const TRUCK_V3_CONFIG_HASH = b32(0x13), BLOCK_TICKS = 10800, CORE_HASH = b32(0x14), NEXTBLOCK_GAME_ID = b32(0x15);
 const now = BigInt(Date.now());
 // settlementSlots 2: the settlement's threshold is 2 of 2

@@ -32,7 +32,7 @@ set -uo pipefail
 F=$FEDIMINT_BIN
 FH=${FEDIMINT_HOME:-$F/home}
 P=${PROBE_DIR:-$(mktemp -d /tmp/stake-lock-step4-XXXXXX)}
-B=${BITCOIN_BIN:-/mnt/bitcoin/bitcoin-31.1/bin}
+B=${BITCOIN_BIN:-/srv/arena/bitcoin-31.1/bin}
 HERE=$(cd "$(dirname "$0")" && pwd)
 say() { echo "$@"; }
 js() { node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{process.stdout.write(String(($1)(JSON.parse(s))))}catch(e){process.stdout.write('?')}})"; }

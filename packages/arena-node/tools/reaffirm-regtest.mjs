@@ -18,7 +18,7 @@ import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const env = process.env;
 if (!env.RT || !env.PHASE0_TREE) { console.error('RT=<datadir> and PHASE0_TREE=<phase0 checkout> are required'); process.exit(2); }
-const B = env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+const B = env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli';
 const cli = (...a) => execFileSync(B, ['-regtest', `-datadir=${env.RT}`, `-rpcport=${env.RPCPORT || '29443'}`, ...a], { encoding: 'utf8', maxBuffer: 64 << 20 }).trim();
 const say = (o) => console.log(JSON.stringify(o, (k, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
 

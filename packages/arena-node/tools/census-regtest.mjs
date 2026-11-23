@@ -45,7 +45,7 @@ import { NEXTBLOCK_GAME_ID } from '../../nextblock/plugin/nextblock.js';
 
 const RT = process.env.RT;
 if (!RT) { console.error('RT=<datadir> is required'); process.exit(2); }
-const B = process.env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';   // another host's bitcoin-cli by BITCOIN_CLI
+const B = process.env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli';   // another host's bitcoin-cli by BITCOIN_CLI
 const PORT = process.env.RPCPORT || '29443';
 const cli = (...a) =>
   execFileSync(B, ['-regtest', `-datadir=${RT}`, `-rpcport=${PORT}`, ...a], { encoding: 'utf8' }).trim();

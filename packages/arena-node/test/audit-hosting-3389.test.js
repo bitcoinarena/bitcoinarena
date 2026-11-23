@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #3389: a core that runs out of heap WHILE V8 COMPILES IT must not abort the seat, whatever the size bounds let through.
-// Measured before the fix (MacBook, node 24): core-depth.js bounds raised, a DECIDE adapter plus 400,000 `(a)=>a` in a core thread
+// Measured before the fix (test laptop, node 24): core-depth.js bounds raised, a DECIDE adapter plus 400,000 `(a)=>a` in a core thread
 // of 16 MB old generation - the seat process died, exit 134, "FATAL ERROR: Reached heap limit Allocation failed" (the same with
 // 1.8M at the shipped 128 MB, #3067's package). Now the core is compiled first in a process of its own (core-compile-apart.js):
 // the seat stands in a child process here, and must exit normally with the core refused - and a normal core still loads.

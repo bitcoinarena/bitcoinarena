@@ -13,7 +13,7 @@
 // Without --publish it builds and checks the transaction (testmempoolaccept) and broadcasts nothing.
 //
 //   SEATS=<url,...> FED=<federation hex> NODE=<guardian node key hex> BOND=<txid:vout> MATURITY=<height> [FEE_SATS=3000]
-//   [BITCOIN_CLI=...] [BTC_DATADIR=/mnt/bitcoin/tn4] node tools/slash-testnet4.mjs [--publish]
+//   [BITCOIN_CLI=...] [BTC_DATADIR=/srv/arena/tn4] node tools/slash-testnet4.mjs [--publish]
 import { execFileSync } from 'node:child_process';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
@@ -28,7 +28,7 @@ import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 const env = process.env;
 for (const k of ['SEATS', 'FED', 'NODE', 'BOND', 'MATURITY']) if (!env[k]) throw new Error(`${k} is needed`);
 const publish = process.argv.includes('--publish');
-const B = env.BITCOIN_CLI || '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli', DIR = env.BTC_DATADIR || '/mnt/bitcoin/tn4';
+const B = env.BITCOIN_CLI || '/srv/arena/bitcoin-31.1/bin/bitcoin-cli', DIR = env.BTC_DATADIR || '/srv/arena/tn4';
 const cli = (...a) => execFileSync(B, [`-datadir=${DIR}`, ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const out = (o) => console.log(JSON.stringify(o, (_, v) => (typeof v === 'bigint' ? String(v) : v instanceof Uint8Array ? toHex(v) : v)));
 const big = (b) => BigInt('0x' + toHex(b));

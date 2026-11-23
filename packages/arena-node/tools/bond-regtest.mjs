@@ -28,7 +28,7 @@ import {
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { chainFactsAt } from '../../arena-protocol/src/census.js';
 
-const RT = process.env.RT, B = '/mnt/bitcoin/bitcoin-31.1/bin/bitcoin-cli';
+const RT = process.env.RT, B = '/srv/arena/bitcoin-31.1/bin/bitcoin-cli';
 const cli = (...a) => execFileSync(B, ['-regtest', `-datadir=${RT}`, '-rpcport=19443', ...a], { encoding: 'utf8' }).trim();
 const big = (b) => BigInt('0x' + toHex(b));
 const tweakPoint = (P, t) => {

@@ -45,9 +45,9 @@ import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { fromHex, toHex } from '../../arena-protocol/src/hash.js';
 
 const env = process.env;
-const BIN = env.BITCOIN_BIN || '/mnt/bitcoin/bitcoin-31.1/bin';
+const BIN = env.BITCOIN_BIN || '/srv/arena/bitcoin-31.1/bin';
 const BASE = Number(env.GS_BASE_PORT || 28740), RPC = BASE, P2P = BASE + 1;
-const dir = mkdtempSync(join(env.GS_DIR || '/mnt/bitcoin/relocated/claude-tmp/claude-1000', 'guardian-bond-spent-'));
+const dir = mkdtempSync(join(env.GS_DIR || '/srv/arena/regtest-tmp', 'guardian-bond-spent-'));
 const RT = join(dir, 'chain');
 mkdirSync(RT);
 const wait = (ms) => new Promise((r) => { setTimeout(r, ms); });

@@ -100,7 +100,7 @@ try {
   let vested = null;
   while (timeLeft() > 0) {
     const h = (await tip()) + 1;
-    // a slow seat is asked again, never the end of the run (c46e, 2026-11-08: one 10 s timeout at MacBook load ~100 ended it 4 min before
+    // a slow seat is asked again, never the end of the run (c46e, 2026-11-08: one 10 s timeout at test laptop load ~100 ended it 4 min before
     // the round's settlement window closed - the books fill only after it, 10 min after the round's close)
     let a, b; try { [a, b] = await Promise.all([sharesAt(SEATS[0], h), sharesAt(SEATS[3], h)]); } catch (e) { say({ step: 'shares not read', height: h, why: e.message }); await wait(30000); continue; }
     const t = (x) => x.tranches.map((y) => `${y.milestone}:${y.vestedAt}`).join(' ');
