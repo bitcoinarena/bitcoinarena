@@ -196,6 +196,22 @@ export function configRunByCore(t, catalog) {
   return { ok: false, known: true, why: `its core ${core.slice(0, 8)} (${entry.name} ${entry.version}) runs config ${configs.map((x) => x.slice(0, 8)).join(', ') || '(none)'}, not ${cfg.slice(0, 16)}: every seat refuses it` };
 }
 
+/**
+ * DOES A SERIES' TEMPLATE FIT ITS GAME'S MANIFEST AS THE SEATS CHECK IT (kanban #3380, manifest.js roundFitsManifest - the check a seat's writer
+ * runs before it opens a round: core, config, protocol, min_score, rank curve, run length). 11-23: a Next Block grid at config 2170f250 was
+ * still refused by every seat, "min_score 0 is below game nextblock's 1" - the built-in template's. A game the catalog does not hold is not
+ * judged. -> { ok: true, known } | { ok: false, known: true, why }
+ */
+export function templateFitsManifest(t, catalog, fits) {
+  const hex = (x) => (x instanceof Uint8Array ? toHex(x) : String(x || '')).toLowerCase();
+  if (!t || !catalog || typeof fits !== 'function') return { ok: true, known: false };
+  const entry = catalog.get(hex(t.gameId));
+  if (!entry || !entry.manifest) return { ok: true, known: false };
+  let r; try { r = fits(t, entry.manifest, fromHexLocal(hex(t.gameId))); } catch (e) { r = { ok: false, why: e.message }; }
+  return r && r.ok ? { ok: true, known: true } : { ok: false, known: true, why: `${entry.name} ${entry.version}: ${(r && r.why) || 'does not fit'} - every seat refuses it` };
+}
+const fromHexLocal = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
+
 /** The block hashes (display order, as getblockhash prints them) of a seat's GET /headers - 80-byte headers end to end. */
 export function headerHashes(bytes, blockHashOf) {
   const out = new Set();

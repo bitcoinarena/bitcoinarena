@@ -42,3 +42,28 @@ test('configRunByCore: a template whose core does not run its config is refused 
   assert.equal(configRunByCore(t(0x21, 0x99), cat).known, false);
   assert.equal(configRunByCore(t(0x21, 0x7d, 9), cat).known, false);
 });
+
+// 2026-11-23 03:09Z: the 4th grid at config 2170f250 was still refused by every seat - "min_score 0 is below game nextblock's 1" - because the
+// template it was built from was the built-in one (min_score 0, protocol 3) the refused days had copied; the 11-18 day (min_score 100000,
+// protocol 13) was still held
+test('a day carries the newest held template its manifest takes, not a newer refused one; the fit is the seats\' own check', async () => {
+  const { dayTemplate } = await import('../src/duty-poster.js');
+  const { templateFitsManifest } = await import('../src/duty-guard.js');
+  const { roundFitsManifest } = await import('../../arena-protocol/src/manifest.js');
+  const { NETWORK_ID_TESTNET4 } = await import('../../arena-protocol/src/genesis-ids.js');
+  const g = fromHex(id(8));
+  const good = { seriesGrid: true, networkId: NETWORK_ID_TESTNET4, gameId: g, startTimeMs: 1n, minScore: 100000, protocolVersion: 13, configHash: fromHex(id(0x21)) };
+  const bad = { ...good, startTimeMs: 9n, minScore: 0, protocolVersion: 3, configHash: new Uint8Array(32) };
+  const fits = (t) => t.minScore >= 1 && t.configHash[0] === 0x21;
+  const t = dayTemplate({ held: [good, bad], family: new Set([id(8)]), networkId: NETWORK_ID_TESTNET4, game: 'nextblock', fits });
+  assert.equal(t.from, 'held');
+  assert.equal(t.contract.minScore, 100000);
+  assert.equal(t.contract.protocolVersion, 13);
+  assert.equal(dayTemplate({ held: [good, bad], family: new Set([id(8)]), networkId: NETWORK_ID_TESTNET4, game: 'nextblock' }).contract.minScore, 0, 'without the check: the newest, as before');
+  // the seats' check through the catalog: a manifest whose min_score is 1 refuses a round at 0, by name
+  const cat = new Map([[id(8), { name: 'nextblock', version: 8, manifest: { gameName: 'nextblock' } }]]);
+  const r = templateFitsManifest(bad, cat, (c) => (c.minScore >= 1 ? { ok: true } : { ok: false, why: 'that round\'s min_score 0 is below game "nextblock"\'s 1' }));
+  assert.equal(r.ok, false); assert.match(r.why, /min_score 0 is below/);
+  assert.equal(templateFitsManifest(good, cat, (c) => (c.minScore >= 1 ? { ok: true } : { ok: false })).ok, true);
+  assert.equal(templateFitsManifest(bad, new Map(), roundFitsManifest).known, false, 'a game the catalog does not hold is not judged');
+});

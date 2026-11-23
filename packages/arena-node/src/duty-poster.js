@@ -26,7 +26,7 @@ import { join } from 'node:path';
 import { appendFileSync } from 'node:fs';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { decodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
+import { decodeManifest, gameIdOf, roundFitsManifest } from '../../arena-protocol/src/manifest.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { peerEndpointRefusal } from './address-book.js';   // kanban #3090/#3093
 import { daySlotOf, targetDay, dayStartMs, DUTY_FALLBACK_MS, DUTY_BACKUP_AFTER_MS, DUTY_BACKUP_RANK_CAP } from '../../arena-protocol/src/duty.js';
@@ -149,9 +149,10 @@ export async function gridProtocolOf({ templateVersion, required, floor, drawabl
  * THE DAY'S TEMPLATE FOR AN APP: the newest grid template this node holds whose game is a version of it (`family`, a Set of game ids hex),
  * its network's - else DUTY_TEMPLATE on `networkId`, its relays this node's own address. -> { contract, from: 'held' | 'built-in' }
  */
-export function dayTemplate({ held, family, networkId, game, ownRelay = null, relays = String(process.env.ARENA_PUBLICATION_RELAYS || '').split(',').filter(Boolean) }) {
+export function dayTemplate({ held, family, networkId, game, ownRelay = null, relays = String(process.env.ARENA_PUBLICATION_RELAYS || '').split(',').filter(Boolean), fits = null }) {
   const nid = toHex(networkId);
-  const mine = (held || []).filter((t) => t && isGridSeries(t) && t.networkId && toHex(t.networkId) === nid && t.gameId && family.has(toHex(t.gameId)))
+  // ONLY A DAY THE SEATS TAKE IS CARRIED ON (kanban #3380, `fits(t)`: its manifest takes it): a refused day copied by every later one refused them all
+  const mine = (held || []).filter((t) => t && isGridSeries(t) && t.networkId && toHex(t.networkId) === nid && t.gameId && family.has(toHex(t.gameId)) && (typeof fits !== 'function' || fits(t)))
     .sort((a, b) => Number(BigInt(b.startTimeMs) - BigInt(a.startTimeMs)));
   if (mine.length) {
     const c = {};
@@ -305,6 +306,9 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     const cat = (await gb.seatCatalog().catch(() => null)) || new Map();
     return new Set([...cat.values()].filter((g) => g.name === guard.DUTY_APP_NAMES[game] && (!devOf[game] || g.dev === devOf[game])).map((g) => g.id));
   };
+  // A TEMPLATE THE SEATS' MANIFESTS TAKE (kanban #3380): checked against the last catalog read (catalogKept), not judged without one
+  let catalogKept = null;
+  const fitsHeld = (t) => guard.templateFitsManifest(t, catalogKept, roundFitsManifest).ok;
   const templates = new Map();     // game -> { contract, from }
   const contractAt = (game, height) => ({ ...(templates.get(game) || dayTemplate({ held: [], family: new Set(), networkId: fromHex(networkIdHex()), game })).contract, censusHeight: height });
   const censusFor = async (contract) => {
@@ -323,7 +327,9 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     kind = { ...kind, fields: { ...kind.fields, configHash: named.configHash } };
     // AND ONLY A CONFIG THE CORE RUNS IS POSTED (kanban #3380): a day the seats refuse is no day, and it would take an emergency's place
     { const cat = await gridBaseOf().seatCatalog().catch(() => null);
-      const runs = guard.configRunByCore({ ...t.contract, ...kind.fields }, cat);
+      const day = { ...t.contract, ...kind.fields, protocolVersion: Math.max(Number(t.contract.protocolVersion || 0), Number((kind.base && kind.base.requiredProtocol) || 0)) };
+      let runs = guard.configRunByCore(day, cat);
+      if (runs.ok) runs = guard.templateFitsManifest(day, cat, roundFitsManifest);
       if (!runs.ok) { say({ dutyDay: 'CONFIG NOT RUN BY ITS CORE', game, why: runs.why }); return { ok: false, why: `nothing posted: ${runs.why}` }; } }
     // THE PROTOCOL A GRID IS WRITTEN IN: the day's shape's, or the newest version's requirement when that is higher - raised to the
     // operator's floor for the app (ARENA_DUTY_PROTOCOL_<APP>, kanban #1486) once the census at that version can draw the committee
@@ -445,7 +451,8 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
     for (const id of list) {
       const t = byId.get(id);
       if (!t) return null;                       // a series not held here is not judged
-      const r = guard.configRunByCore(t, cat);
+      let r = guard.configRunByCore(t, cat);
+      if (r.ok) r = guard.templateFitsManifest(t, cat, roundFitsManifest);
       if (r.ok) return null;
       why = why || r.why;
     }
@@ -472,7 +479,7 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       for (const game of apps) {
         if (!devOf[game]) { engines.delete(game); engines.delete(`${game}:backup`); continue; }   // an app this node does not host: the next node in order posts it
         try {
-          templates.set(game, dayTemplate({ held: seat.heldTemplates(), family: await familyOf(game, gb), networkId: fromHex(networkIdHex()), game, ownRelay: seat.endpoint ? reach(seat.endpoint) : self() }));
+          catalogKept = (await gb.seatCatalog().catch(() => null)) || catalogKept; templates.set(game, dayTemplate({ held: seat.heldTemplates(), fits: fitsHeld, family: await familyOf(game, gb), networkId: fromHex(networkIdHex()), game, ownRelay: seat.endpoint ? reach(seat.endpoint) : self() }));
           for (const role of ['primary', 'backup']) {
             const st = await engineFor(game, gb, role).look();
             if (st.error && (!lastError || st.error.atMs > lastError.atMs)) lastError = { ...st.error, app: game, role };
@@ -539,7 +546,7 @@ export function createDutyPoster({ call, walletCall, networkIdHex, censusEntries
       await readDevs();
       if (!devOf[game]) return { ok: false, why: `this node hosts no ${game}` };
       const gb = gridBaseOf();
-      templates.set(game, dayTemplate({ held: seat.heldTemplates(), family: await familyOf(game, gb), networkId: fromHex(networkIdHex()), game, ownRelay: seat.endpoint ? reach(seat.endpoint) : self() }));
+      catalogKept = (await gb.seatCatalog().catch(() => null)) || catalogKept; templates.set(game, dayTemplate({ held: seat.heldTemplates(), fits: fitsHeld, family: await familyOf(game, gb), networkId: fromHex(networkIdHex()), game, ownRelay: seat.endpoint ? reach(seat.endpoint) : self() }));
       try { return await engineFor(game, gb, 'primary').publishOnce({ slot, gameIdHex, dry }); } catch (e) { return { ok: false, why: e.message }; }
     },
     // for the tests: one pass at once
