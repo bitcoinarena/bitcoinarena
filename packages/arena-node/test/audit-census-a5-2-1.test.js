@@ -139,7 +139,7 @@ const headersOf = (view) => view.blocks.map((b) => b.header);
 const keys = (list) => list.map((k) => toHex(k)).sort();
 
 
-import { clientCommittee, forgetSeatings, newestCheckedCensus } from '../../arena-client/src/committee.js';
+import { clientCommittee, newestCheckedCensus } from '../../arena-client/src/committee.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { mergeServedRounds } from '../../arena-protocol/src/served-nodes.js';
@@ -177,7 +177,7 @@ async function check(d, view) {
 }
 
 test('audit census a5-2-1: a higher-bond_min round checked at the newest height does not shrink the page\'s bonded node set', async () => {
-  forgetSeatings();
+  // (2.0 keeps no seatings cache: nothing to forget)
   // round A: the network's floor, at the census height - its census bonds all six nodes
   const a = daemon(BONDS, OVER);
   const viewA = chainWith(BONDS, a.contract);
