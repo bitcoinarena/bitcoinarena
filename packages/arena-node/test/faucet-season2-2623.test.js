@@ -60,7 +60,8 @@ test('#2623 the faucet: link code by sign-in, Season 2 approval with bonus and h
     { const s = openBountySeason(s2db); assert.equal(s.redeem(code.code, { platform: 'telegram', userId: '42', username: '@ann' }).ok, true);
       s.record(ann.pubkey, 'telegram', { member: true });
       // Week 2 (kanban #2641): a second community for the +25 %
-      assert.equal(s.claimName(ann.pubkey, 'discord', { userId: '43', username: 'ann' }).ok, true); s.record(ann.pubkey, 'discord', { member: true }); s.close(); }
+      // (kanban #2645: proven by a code posted from the account - a typed name counts no more)
+      { const c2 = s.makeCode(ann.pubkey); assert.equal(s.redeem(c2.code, { platform: 'discord', userId: '43', username: 'ann' }).ok, true); } s.record(ann.pubkey, 'discord', { member: true }); s.close(); }
     const v = await j('/feedback/verify', { method: 'POST', headers: auth(ann, `${STAGE}/verify`) });
     assert.equal(v.ok, true); assert.equal(v.flags.telegram, true); assert.equal(v.links[0].userId, undefined, 'no platform id goes back');
     // WEEK 2'S SOCIAL SCREEN (kanban #2641): no names answers the stored links and the bonus; a platform this faucet has no reader for says so

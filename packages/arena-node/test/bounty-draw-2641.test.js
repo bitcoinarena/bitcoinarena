@@ -12,12 +12,13 @@ const rep = (n, pubkey) => ({ id: `d${n}`.padEnd(64, '0'), pubkey });
 
 test('#2641 draw entries: one per key in any of Telegram / Discord / Armada; none without; a shared account counts for the first key only', async () => {
   const s = openBountySeason();
-  const link = (k, p, id, name) => { assert.equal(s.claimName(k, p, { userId: id, username: name }).ok, true); };
+  // each account proven by a code posted from it (kanban #2645, #2657: a typed name enters no draw)
+  const link = (k, p, id, name) => { const c = s.makeCode(k); assert.equal(s.redeem(c.code, { platform: p, userId: id, username: name }).ok, true); };
   link(K(1), 'telegram', 't1', '@all3'); link(K(1), 'discord', 'd1', 'all3'); link(K(1), 'armada', 'a'.repeat(64), 'npub1all3');
   link(K(2), 'armada', 'b'.repeat(64), 'npub1onlyarmada');
   link(K(3), 'x', 'x3', 'xonly');
   link(K(4), 'telegram', 't4', '@first');
-  assert.equal(s.claimName(K(5), 'telegram', { userId: 't4', username: '@first' }).ok, false, 'the same Telegram account for a second key');
+  assert.equal(s.redeem(s.makeCode(K(5)).code, { platform: 'telegram', userId: 't4', username: '@first' }).ok, false, 'the same Telegram account for a second key');
   const yes = { telegram: async () => ({ member: true }), discord: async () => ({ member: true }), armada: async () => ({ member: true }), x: async () => ({ member: true }) };
   for (let n = 1; n <= 5; n++) { await s.verify(K(n), yes); const r = rep(n, K(n)); s.commit(r, s.plan(r, { level: 'low' })); }
   const r1b = rep(11, K(1)); s.commit(r1b, s.plan(r1b, { level: 'medium' }));

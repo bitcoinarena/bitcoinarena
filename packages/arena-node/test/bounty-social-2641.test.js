@@ -13,6 +13,8 @@ import { socialLoad, socialSave, socialMissing, socialBonus, socialKey } from '.
 import { readFileSync } from 'node:fs';
 
 const K = (n) => n.toString(16).padStart(64, '0');
+// AN ACCOUNT PROVEN BY ITS OWN ACTION (kanban #2645, #2657): its key's link code posted from it, as the link bots redeem it - a typed name alone counts no more
+const prove = (s, key, platform, userId, username = null, nowMs = Date.now()) => { const c = s.makeCode(key, { nowMs }); const r = s.redeem(c.code, { platform, userId, username, nowMs }); assert.equal(r.ok, true, r.why); s.record(key, platform, { member: true, nowMs }); };
 
 test('#2641 bonusPct: every combination of X, Nostr, Telegram, Discord, Armada (X +20, Nostr +20, 2 of 3 +20, at most +60)', () => {
   const ps = ['x', 'nostr', ...COMMUNITIES];
@@ -123,8 +125,13 @@ test('#2641 the social check: members linked to the key with their reads, one ke
   const a = await socialCheck(s, K(1), { x: 'ann', discord: 'ann', telegram: 'ann', armada: 'npub1ann', other: 'x' }, resolvers, { nowMs: () => t0 });
   assert.deepEqual(Object.fromEntries(Object.entries(a.results).map(([k, v]) => [k, v.member])), { telegram: null, discord: true, x: true, armada: true });
   assert.equal(a.results.telegram.unseen, true);
-  assert.deepEqual(a.flags, { telegram: false, discord: true, x: true, armada: true, nostr: false }); assert.equal(a.bonusPct, 40);
+  // typed names are found and linked, and give nothing until proven by a code from the account (kanban #2645, #2657)
+  assert.deepEqual(a.flags, { telegram: false, discord: false, x: false, armada: false, nostr: false }); assert.equal(a.bonusPct, 0);
+  assert.equal(a.results.x.needsCode, true);
   assert.equal(a.links.length, 3); assert.equal(a.links.every((l) => l.proof === 'name'), true);
+  prove(s, K(1), 'discord', '201', 'ann', t0); prove(s, K(1), 'armada', 'a'.repeat(64), 'npub1ann', t0);
+  assert.deepEqual(s.flagsOf(K(1), { nowMs: t0 }), { telegram: false, discord: true, x: false, armada: true, nostr: false }, 'proven by code: counted');
+  assert.equal(bonusPct(s.flagsOf(K(1), { nowMs: t0 })), 20);
   assert.equal(a.links.some((l) => 'userId' in l), false, 'no platform ids go back');
   // a non-member links nothing; empty names are not asked
   const b = await socialCheck(s, K(2), { x: 'bob', discord: '', armada: '   ' }, resolvers, { nowMs: () => t0 });
@@ -156,6 +163,7 @@ test('#2641 a second report from the same key gets the bonus with no new input: 
   const s = openBountySeason();
   const yes = { x: async () => ({ userId: '77', member: true }), discord: async () => ({ userId: '201', member: true }), armada: async () => ({ userId: 'b'.repeat(64), member: true }) };
   await socialCheck(s, K(1), { x: 'ann', discord: 'ann', armada: 'npub1ann' }, yes);
+  prove(s, K(1), 'x', '77'); prove(s, K(1), 'discord', '201'); prove(s, K(1), 'armada', 'b'.repeat(64));
   const live = { x: async () => ({ member: true }), discord: async () => ({ member: true }), armada: async () => ({ member: true }) };
   const r1 = rep(1, K(1)); await s.verify(K(1), live, { cause: 'approve' }); const p1 = s.plan(r1, { level: 'high' }); s.commit(r1, p1);
   assert.equal(p1.bonusPct, 40); assert.equal(p1.sats, 7000);
@@ -169,6 +177,7 @@ test('#2641 a second report from the same key gets the bonus with no new input: 
 test('#2641 payout: approved at +40 %, left one of the two communities, +20 % paid and the admin sees why; a failed read is no member', async () => {
   const s = openBountySeason();
   await socialCheck(s, K(1), { x: 'ann', discord: 'ann', telegram: 'annie' }, { x: async () => ({ userId: '77', member: true }), discord: async () => ({ userId: '201', member: true }), telegram: async () => ({ userId: '9', member: true }) });
+  prove(s, K(1), 'x', '77'); prove(s, K(1), 'discord', '201'); prove(s, K(1), 'telegram', '9');
   const r1 = rep(1, K(1)); const p1 = s.plan(r1, { level: 'high' }); s.commit(r1, p1); assert.equal(p1.sats, 7000);
   await s.verify(K(1), { x: async () => ({ member: true }), telegram: async () => ({ member: true }), discord: async () => ({ member: false, why: 'not in the server' }) }, { cause: 'payout' });
   const pay = s.payable(r1.id);

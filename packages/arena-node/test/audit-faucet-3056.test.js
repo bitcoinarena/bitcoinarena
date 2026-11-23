@@ -20,7 +20,7 @@ test('a season draw entrant cannot pick his place after the seed block is known 
   // five honest reporters and the attacker (K6), each with an approved report and a Telegram link
   const names = ['@alice_tg', '@bob_tg', '@carol_tg', '@dave_tg', '@erin_tg', '@mallory'];
   for (let n = 1; n <= 6; n++) {
-    assert.equal(s.claimName(K(n), 'telegram', { userId: `tg${n}`, username: names[n - 1] }).ok, true);
+    assert.equal(s.redeem(s.makeCode(K(n)).code, { platform: 'telegram', userId: `tg${n}`, username: names[n - 1] }).ok, true);   // proven by code (kanban #2645)
     await s.verify(K(n), yes);
     const r = rep(n, K(n)); const p = s.plan(r, { level: 'low' }); assert.equal(p.ok, true); s.commit(r, p);
   }
