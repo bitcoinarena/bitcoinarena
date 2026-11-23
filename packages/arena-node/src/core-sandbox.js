@@ -33,6 +33,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { coreTree, coreRelPath, coreBytesHashHex } from './core-hash.js';
 import { instrumentCore, coreBudget } from './core-depth.js';
+import { compileApart } from './core-compile-apart.js';
 
 /** The longest a replay may run: a whole replay of the longest run (10800 ticks) is a few seconds; this is the ceiling. */
 export const CALL_MS = 120000;
@@ -293,15 +294,23 @@ const PURE_MAX = 4096;
  * plugin trial, which wants to see what an adapter keeps across calls). The small asks (PURE) are answered once per input.
  */
 export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS, askMs = ASK_MS, loadMs = LOAD_MS, name = entry,
-  arrayBudget = ARRAY_BUDGET, liveCap = 0, oneThread = false, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, answerMax = ANSWER_MAX, until = null, lingerAs = null, loadUntil = null } = {}) {
+  arrayBudget = ARRAY_BUDGET, liveCap = 0, oneThread = false, heap = HEAP_LIMITS, rssBackstop = RSS_BACKSTOP, answerMax = ANSWER_MAX, until = null, lingerAs = null, loadUntil = null,
+  budget = coreBudget() } = {}) {
   // answerMax (kanban #1691), until (kanban #1719), lingerAs (kanban #1880) and loadUntil (kanban #2058) reach every thread this core starts
   const opts = { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax, until, lingerAs, loadUntil };
   // THE DEPTH LIMIT, INJECTED AT LOAD (kanban #2220, #2476; core-depth.js): every file the core's threads compile counts its call
   // depth, so no thread - the kept one, a call's own, a seat's or a reload's - answers by where V8's stack overflowed
   // kanban #3052, #3067: one budget for all of the core's files - bytes and functions - before any of them is instrumented or compiled
-  const budget = coreBudget();
+  // (`budget`: the bounds; a test raises them to reach a compile the bounds would have refused, kanban #3389)
   files = new Map([...files].map(([rel, text]) => [rel, instrumentCore(text, rel, budget)]));
   const leftOf = (ms) => (Number.isFinite(until) ? Math.max(1, Math.min(ms, until - Date.now())) : ms);
+  // kanban #3389: COMPILED IN A PROCESS OF ITS OWN FIRST (core-compile-apart.js) - a heap overrun while V8 compiles aborts the
+  // process it happens in, so it happens in the child, and the core is refused here, before a thread of the seat compiles it
+  {
+    const loadBy = Math.min(Number.isFinite(until) ? until : Infinity, Number.isFinite(loadUntil) ? loadUntil : Infinity);
+    const apart = compileApart(files, heap, Number.isFinite(loadBy) ? Math.max(1, Math.min(loadMs, loadBy - Date.now())) : loadMs);
+    if (!apart.ok) throw new Error(apart.why);
+  }
   let kept = startThread({ files, entry }, opts);
   let ended = null;
   let last = kept;
