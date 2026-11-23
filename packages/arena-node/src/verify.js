@@ -705,8 +705,11 @@ export class Verifier {
       }
       this.pendingSeen.delete(k);
     }
-    const scored = answer.outcome === null
-      ? await this.#atLastMark(roundIdBytes, entryId, entry, answer, canonical, options) : answer;
+    // EVERY CLOSE AT THE LAST CARRIED MARK, WHATEVER THE FULL REPLAY REACHED (kanban #3372, audit play-a6-3-1, high): only a LIVE replay was
+    // cut back; a player who sent the rest of the run, no mark, to some seats only had those seats sign DELIVERED (or a crash) over the same
+    // canonical transcript the others signed FAILED - two results, no threshold, the run VOID. Ticks no mark carried decide nothing; a run
+    // whose last carried mark is at its last stored tick (a carried final mark) is signed as the replay said (#atLastMark: nothing to cut).
+    const scored = await this.#atLastMark(roundIdBytes, entryId, entry, answer, canonical, options);
     return this.#sign({ roundIdBytes, entryId, entry, contract, answer: scored, transcript: canonical, stopped: true });
   }
 
@@ -2317,7 +2320,7 @@ export class Verifier {
         }
         // A RE-RUN IS AFTER THE CLOSE TOO: a run LIVE at its last receipted
         // mark is the same FAILED the close signed (§15, ruled 2026-09-12).
-        let scored = canonical && answer.outcome === null
+        let scored = canonical   // every run at its last carried mark, as the close (kanban #3372)
           ? await this.#atLastMark(roundIdBytes, entryIdBytes, found.entry, answer, canonical, { roundRandomness: beacon.hash })
           : answer;
         // §13B AT ANY TICK HOLDS IN A RE-RUN TOO (audit): an entry this seat holds a proven fork of is re-run as
