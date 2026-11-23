@@ -33,7 +33,17 @@ const out = (v) => JSON.stringify(v === undefined ? null : v, (k, x) => {
   return x;
 });
 
+// THE CORE'S FIELDS TOO (kanban #2808, #1489 r21-hosting-1; #2730 did not hold): meta read CORE's fields (name, RUN_TICKS, ...) only when meta
+// was asked - on the trial's kept thread before any decide, never on the seat's fresh decide thread - so a CORE `name` getter still told the
+// two apart. Everything meta answers is now read here, at load, on every thread alike; meta only hands back what was read (a read that threw
+// throws again from meta, as before).
+let META = null, META_ERROR = null;
+try { META = readMeta(); } catch (e) { META_ERROR = e; }
 function meta() {
+  if (META_ERROR) throw META_ERROR;
+  return { ...META };
+}
+function readMeta() {
   return {
     core: !!A, decide: !!(D && typeof D.decide === 'function'),
     name: A ? A.name : D ? D.name : null,
