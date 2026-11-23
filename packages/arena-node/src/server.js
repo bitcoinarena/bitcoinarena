@@ -165,7 +165,7 @@ import { holdsNothing, guardedFederationOf, auditGuardian, createRetireBook } fr
 import { federationRecords, seatedOf as seatedOfRecord, GATHER_FRESH_MS } from './federation-records.js';
 import { createAbsences, readAbsenceHex, readDepartureHex, absenceHex, departureHex, readEmergencyHex, emergencyHex } from './absences.js';
 import { departureAnchorHeight, anchorRequired, DEPARTURE_ANCHOR_SLACK, departureId } from '../../arena-protocol/src/absence.js';
-import { emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
+import { emergencyEntryOf, emergencyDepartureStands } from '../../arena-protocol/src/emergency.js';
 import { createAbsenceProducer, guardianConfigOf, wsAdminStatus, ownDeparture, owedDepartures } from './absence-producer.js';
 import { createDepartureAnchors, bondCliAnchorWallet, installerAnchorWallet, fileStore as anchorFileStore } from './departure-anchor.js';
 import { createFoundingSeat, cliSetup, execCli, fileKeySet } from './founding-seat.js';
@@ -4202,7 +4202,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const now = fedRecords && fedRecords.censusNow ? fedRecords.censusNow() : { ok: false, why: 'this seat reads no census' };
     if (!now.ok) return { ok: false, status: 503, why: now.why };
     let tip = null; try { if (typeof chainTip === 'function') tip = Number(await chainTip()); } catch { tip = null; }
-    const entry = now.entries.find((e) => e && e.pubkey && toHex(e.pubkey) === toHex(d.nodePubkey));
+    // ONLY A BODY THE NODE SIGNED NAMES ITS EMERGENCY KEY (kanban #3348, audit census-a6-1-1, high): a stranger's own bond to the node's key under
+    // another operator id stands in the census with the stranger's unsigned body - its emergency key took the node out of every seating
+    const entry = emergencyEntryOf(now.entries, d.nodePubkey);
     // taken only fresh (EMERGENCY_FRESH_BLOCKS): a request dated back into time is refused - unless this seat holds it already
     const had = absences.emergencyFor(d.nodePubkey);
     const st = emergencyDepartureStands(d, { advert: entry && entry.advert, tip: Number.isInteger(tip) ? tip : now.height, fresh: !(had && had.postedAt <= d.postedAt),
@@ -8597,7 +8599,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!now.ok) return [];
         const sv = (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } };
         return absences.listEmergencies().map((h) => { try { return readEmergencyHex(h); } catch { return null; } }).filter(Boolean)
-          .filter((d) => emergencyDepartureStands(d, { advert: (now.entries.find((e) => e && e.pubkey && toHex(e.pubkey) === toHex(d.nodePubkey)) || {}).advert,
+          .filter((d) => emergencyDepartureStands(d, { advert: (emergencyEntryOf(now.entries, d.nodePubkey) || {}).advert,
             tip: now.height, verify: sv }).ok); },
       next: nextSetup ? { setup: nextSetup, inSetup: async () => nextSetup.inSetup() } : null,
       entriesAt: foundingEntriesAt,
@@ -15492,7 +15494,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let named = null;
         if (/^[0-9a-f]{64}$/.test(key) && fedRecords && fedRecords.censusNow) {
           const now = fedRecords.censusNow();
-          const e = now.ok ? now.entries.find((x) => x && x.advert && x.advert.emergencyPubkey && toHex(x.advert.emergencyPubkey) === key) : null;
+          const e = now.ok ? now.entries.find((x) => x && x.nodeSigned !== false && x.advert && x.advert.emergencyPubkey && toHex(x.advert.emergencyPubkey) === key) : null;
           if (e) named = { node: toHex(e.pubkey), endpoint: String(e.advert.endpoint || ''), operatorId: String(e.advert.operatorId || ''),
             roles: [...(e.advert.roles || [])], guardianOf: ((e.advert.guardianOf) || []).map((g) => toHex(g.federationId)),
             held: !!absences.emergencyFor(e.pubkey) };

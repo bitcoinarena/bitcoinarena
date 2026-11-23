@@ -26,7 +26,7 @@ import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constan
 import { decodeBoundProof, encodeBoundProof, boundProofId, boundSlashStands } from '../../arena-protocol/src/bound-slash.js';
 import { encodeTheftProof, decodeTheftProof, theftProofId, theftOutputs, theftSlashStands, theftTakes, sessionsShowMark, spendStands, theftVerifyInput } from '../../arena-protocol/src/theft-slash.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
-import { emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
+import { emergencyEntryOf, emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { withConfigEndpoints } from './federation-endpoints.js';
 import { recordInviteSource, createInviteBuffer } from '../../arena-protocol/src/trusted-guardian-keys.js';
@@ -1321,7 +1321,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
   // body's emergencies (posted_at, then node key), the seated before them, the nominal - it leaves seatedBase - (rank + 1) seated
   function emergencyDeparted(b, g, d, proof, order = null) {
     if (!d || !Number.isInteger(abandonBlocks)) return null;
-    const entry = (b.census.entries || []).find((e) => e && e.pubkey && toHex(e.pubkey) === toHex(g.nodePubkey));
+    const entry = emergencyEntryOf(b.census.entries, g.nodePubkey);
     const st = emergencyDepartureStands(d, { advert: entry && entry.advert, tip: b.height, verify: emergencyVerify });
     if (!st.ok) return null;
     const eff = emergencyDepartureEffect(st, { guardian: true, lastSeenHeight: proof && proof.ok ? proof.sinceHeight : null, abandonBlocks });
