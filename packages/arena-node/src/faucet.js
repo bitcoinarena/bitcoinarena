@@ -154,6 +154,8 @@ const net48 = (key) => (key && key.endsWith('::/64') ? `${key.split(':').slice(0
 const net32 = (key) => (key && key.endsWith('::/64') ? `${key.split(':').slice(0, 2).join(':')}::/32` : null);
 // an IPv4 key as its /24; anything else has none
 const net24 = (key) => (key && /^\d{1,3}(\.\d{1,3}){3}$/.test(key) ? `${key.split('.').slice(0, 3).join('.')}.0/24` : null);
+/** kanban #2814: the networks an address key belongs to - its /48 and /32 (IPv6) or its /24 (IPv4) - for a per-network share of a day's budget. */
+export const ipNetsOf = (key) => [net48(key), net32(key), net24(key)].filter(Boolean);
 // the same seed scrubber as the feedback store (kanban #1472)
 import { scrubKeys, scrubAcrossLabels } from './feedback-store.js';
 // `signed`: a signed report (#1342) - counted against FEEDBACK_SIGNED_PER_DAY with the other signed ones; the log's entries say `signed: true` for those.
