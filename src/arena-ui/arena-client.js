@@ -17967,7 +17967,9 @@ function servedNodes({ rounds, fromMs, toMs, verify }) {
       if (x.signedAtMs < from || x.signedAtMs >= to) continue;  // outside the window: not refused, just not these 24 h
       inWindow.push(key);
     }
-    if (sources && !round.own && signers.size < SERVED_SIGNERS_MIN) {
+    // THE SAME RULE FOR THE SEAT'S OWN ROUNDS (kanban #3157, #1489 r1120b-refute-11-3): own rounds were exempt, so a round where only the seat's own
+    // FINAL was held was credited at the seat and refused by the page (no own record) - the page paid under one root, the seat rebuilt another
+    if (sources && signers.size < SERVED_SIGNERS_MIN) {
       if (inWindow.length) refused.push({ round: rid, why: `only ${signers.size} committee key(s) signed a FINAL on it: one node's word is not a round (kanban #3037)` });
       continue;
     }
