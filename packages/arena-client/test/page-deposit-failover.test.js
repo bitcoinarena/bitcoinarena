@@ -89,7 +89,7 @@ test('the deposit offer: the lobby\'s gateway refuses, the federation\'s next ma
 test('the seated gateways first: a deposit asks its federation\'s seated gateways before the lobby\'s and the federation\'s list', async () => {
   const F = 'ab'.repeat(32), G = 'cd'.repeat(32);
   const asked = [];
-  useSeatedGateways(async (fid) => { asked.push(fid); return fid === F ? ['https://seat-1', 'https://seat-2'] : []; });
+  useSeatedGateways(async (fid) => { asked.push(fid); return fid === F ? { answers: [['https://seat-1', 'https://seat-2'], ['https://seat-1', 'https://seat-2']] } : { answers: [] }; });   // kanban #3183: two seats agree
   try {
     // kanban #3029: a seated gateway is one the federation lists (the lock client's gateways()); one it does not list is not taken first
     const c = fakeClient({ 'https://seat-1': 'throw', 'https://seat-2': { end: 'Claimed', afterMs: 10 }, 'https://lobby': { end: 'Claimed' } }, ['https://fed-1', 'https://seat-2', 'https://seat-1/']);

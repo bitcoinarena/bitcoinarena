@@ -10427,18 +10427,19 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         ARENACLIENT.useSeatedGateways(async (fid) => {
           const k = String(fid).toLowerCase(), was = seatedKept.get(k);
           if (was && Date.now() - was.at < 120000) return was.urls;
-          for (const base of seatBases) {
+          // kanban #3183: every seat's answer, not the first one's - a gateway is seated where at least two seats name it (page-lock.js SEATED_AGREE)
+          const answers = (await Promise.all(seatBases.map(async (base) => {
             try {
               const r = await fetch(base + '/gateway-seats?federation=' + k, { signal: AbortSignal.timeout(2500) });
-              if (!r.ok) continue;
+              if (!r.ok) return null;
               const v = await r.json();
-              if (!v || String(v.federationId || '').toLowerCase() !== k) continue;
-              const urls = ARENACLIENT.gatewayUrlsOfView(v);
-              seatedKept.set(k, { at: Date.now(), urls });
-              return urls;
-            } catch (e) { /* the next seat */ }
-          }
-          return [];
+              if (!v || String(v.federationId || '').toLowerCase() !== k) return null;
+              return ARENACLIENT.gatewayUrlsOfView(v);
+            } catch (e) { return null; }
+          }))).filter(Array.isArray);
+          const urls = { answers };
+          if (answers.length) seatedKept.set(k, { at: Date.now(), urls });
+          return urls;
         });
       }
       if (testnet) { findTheRoundsOwed(testnet.named); console.log('[arena] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
