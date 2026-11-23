@@ -164,6 +164,7 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
   const askers = new Map();           // asker key (IPv4, IPv6 /64) -> { since, n }: fresh invoices minted for it in this window (kanban #1743, #1801, #1964)
   const letGo = new Map();            // paymentHash -> the zap let go from a full book, watched until its invoice expires (kanban #1922)
   let strangersMinting = 0;            // invoices being made right now for callers not on this host (kanban #2302)
+  let strangersLooking = 0; const tipLookups = new Map();   // kanban #3311: kept tip invoices being looked up (one lookup per invoice at a time)
   let mintsAll = [];                  // when each fresh invoice for a caller not on this host was minted, the last window's (kanban #1964)
   const nowSec = () => Math.floor(Date.now() / 1000);
   // THIS HOST'S OWN TOOLS (kanban #2109, #1489 v1-refute-19-s3-1): a caller whose socket is this machine and that sent no proxy header.
@@ -490,8 +491,19 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
       const key = `${own ? asker : askerKey(asker)}|${name}|${amountMsat}`;   // one asker's own invoice only (kanban #1999)
       const kept = tipKept.get(key);
       if (kept && kept.until - nowSec() >= expiryS / 2) {
+        // ONE LOOKUP PER KEPT INVOICE AT A TIME (kanban #3311, audit nostr a5-2-1): each callback GET ran its own lookup - an `lncli lookupinvoice`
+        // child on the node - so one stranger's burst of GETs for one amount forked one child per connection, unbounded. Concurrent GETs of one
+        // kept invoice now share one lookup, and a stranger's distinct lookups in flight are bounded as its mints are (ZAP_MINTING_MAX)
+        let look = tipLookups.get(kept.paymentHash);
+        if (!look) {
+          if (!own && strangersLooking >= ZAP_MINTING_MAX) return refuse('too many invoices are being checked here at once; try again in a moment');
+          if (!own) strangersLooking++;
+          look = Promise.resolve().then(() => lookup({ name, paymentHash: kept.paymentHash }))
+            .finally(() => { tipLookups.delete(kept.paymentHash); if (!own) strangersLooking--; });
+          tipLookups.set(kept.paymentHash, look);
+        }
         let got = null;
-        try { got = await lookup({ name, paymentHash: kept.paymentHash }); } catch (e) { log(`lookup ${kept.paymentHash.slice(0, 16)} failed: ${e.message}`); }
+        try { got = await look; } catch (e) { log(`lookup ${kept.paymentHash.slice(0, 16)} failed: ${e.message}`); }
         if (got && !got.settled && tipKept.get(key) === kept) return json(200, { pr: kept.request, routes: [] });
       }
       if (tipKept.get(key) === kept) tipKept.delete(key);
