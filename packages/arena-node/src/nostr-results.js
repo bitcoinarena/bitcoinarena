@@ -177,6 +177,9 @@ export async function publishPass(rows, relays, { connect, timeoutMs = 10000, no
     const answers = await sendToRelay(url, owed.map((r) => r.event), { connect, timeoutMs });
     for (const r of owed) {
       const a = answers.get(r.event.id);
+      // A TRANSIENT REFUSAL IS NO ANSWER (kanban #3378, audit nostr a6-3-3): NIP-01's 'rate-limited:' and 'error:' say try again - booked as a
+      // refusal they ended the row for good, so a relay kept busy by a stranger never got the round's result; that relay stays owed (backoff)
+      if (a && !a.ok && /^(rate-limited|error):/.test(String(a.why || ''))) continue;
       if (a) r.relays[url] = a.ok || /^duplicate:/.test(a.why) ? 'ok' : `refused: ${a.why}`.slice(0, 200);
     }
   }));
