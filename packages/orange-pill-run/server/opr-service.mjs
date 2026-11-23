@@ -886,6 +886,21 @@ export function createOpr(o = {}) {
     } finally { ticking = false; }
   }
 
+  // the bodies of GET /round, /rounds and /board (kanban #3354: served through the kept answers)
+  function publicRead(path, url, sendKept) {
+    if (path === '/round') {
+      const r = url.searchParams.get('id') ? roundRow(url.searchParams.get('id')) : currentRound();
+      return visible(r) ? sendKept(200, { ok: true, round: publicRound(r) }) : sendKept(404, { ok: false, why: 'no round' });
+    }
+    if (path === '/rounds') return sendKept(200, { ok: true, rounds: q(`SELECT * FROM rounds ${cfg.showTest ? '' : 'WHERE test = 0'} ORDER BY start_ms DESC LIMIT 30`).all().map((r) => publicRound(r)) });
+    if (path === '/board') {
+      const r = url.searchParams.get('round') ? roundRow(url.searchParams.get('round')) : currentRound();
+      if (!visible(r)) return sendKept(404, { ok: false, why: 'no round' });
+      return sendKept(200, { ok: true, round: publicRound(r), board: publicBoard(r.id).map(({ player, ...x }) => x) });
+    }
+    return sendKept(404, { ok: false, why: 'no such route' });
+  }
+  const publicKept = new Map(), PUBLIC_KEPT_MOST = 256;
   function publicRound(r, t = now()) {
     if (!r) return null;
     const board = boardOf(r.id), best = board[0];
@@ -980,15 +995,16 @@ export function createOpr(o = {}) {
         if (req.method === 'POST' && path === '/admin/test-round') { const r = testRound({ ...body, by }); if (r.ok) tick().catch(() => {}); return send(r.ok ? 200 : 400, r); }
         return send(404, { ok: false, why: 'no such admin route' });
       }
-      if (req.method === 'GET' && path === '/round') {
-        const r = url.searchParams.get('id') ? roundRow(url.searchParams.get('id')) : currentRound();
-        return visible(r) ? send(200, { ok: true, round: publicRound(r) }) : send(404, { ok: false, why: 'no round' });
-      }
-      if (req.method === 'GET' && path === '/rounds') return send(200, { ok: true, rounds: q(`SELECT * FROM rounds ${cfg.showTest ? '' : 'WHERE test = 0'} ORDER BY start_ms DESC LIMIT 30`).all().map((r) => publicRound(r)) });
-      if (req.method === 'GET' && path === '/board') {
-        const r = url.searchParams.get('round') ? roundRow(url.searchParams.get('round')) : currentRound();
-        if (!visible(r)) return send(404, { ok: false, why: 'no round' });
-        return send(200, { ok: true, round: publicRound(r), board: publicBoard(r.id).map(({ player, ...x }) => x) });
+      // THE PUBLIC READS ARE BUILT ONCE PER STATE AND SECOND (kanban #3354, audit opr a6-1-3): GET /board, /round and /rounds need no sign-in and
+      // rebuilt the whole board per request (every scored run parsed, an X, first-run and bot-list read per player) on the one thread - a few
+      // requests a second from a stranger stalled every start and submit. The answer is kept and served again while nothing was written to the
+      // store (SQLite total_changes) and the service's clock is in the same second; at most PUBLIC_KEPT_MOST answers are held
+      if (req.method === 'GET' && (path === '/board' || path === '/round' || path === '/rounds')) {
+        const stamp = `${q('SELECT total_changes() AS n').get().n}|${Math.floor(now() / 1000)}`, k = `${path}?${url.searchParams.toString()}`;
+        const kept = publicKept.get(k);
+        if (kept && kept.stamp === stamp) { res.writeHead(kept.code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(kept.body); return; }
+        const sendKept = (code, body) => { const b = JSON.stringify(body); if (publicKept.size >= PUBLIC_KEPT_MOST) publicKept.clear(); publicKept.set(k, { stamp, code, body: b }); res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(b); };
+        return publicRead(path, url, sendKept);
       }
       const rm = /^\/replay\/([0-9a-f]{32})$/.exec(path);
       if (req.method === 'GET' && rm) {
