@@ -342,6 +342,24 @@ function countRandomness(nodes, reads, committee = 0) {
     throw new Error(`only ${n} of ${named} named nodes name this round's randomness (more than half must): `
       + [...refused, ...absent.map((x) => x.absent)].join('; '));
   }
+  // AND MORE THAN HALF OF THE HOSTS (kanban #3351, audit client a6-1-2; the #3307 rule at this door): the link names the URLs, so one box
+  // under 8 paths beside a round's 7 seats was 8 voters of 15 and its own 32 bytes seeded the player's world. Each voting host now gives
+  // one word (the value most of its addresses name, none on a tie), and the value must also be held by more than half of the voting hosts;
+  // otherwise it is a refusal by name. This bar is set when the caller knows the round's committee (worldSeedFor, the read after the stake is
+  // locked); seats behind one host still count one by one for the seat bar above (#2046), and one seat that lies from its own host beside
+  // a committee behind one host can make that read a refusal, never another world
+  const hostOfRead = (u) => { try { const x = new URL(String(u)); if (x.hostname) return x.hostname.toLowerCase().replace(/\.+$/, ''); } catch { /* not a URL */ } return src(u); };
+  const hostVals = new Map();
+  for (const k of nodes) { const h = hostOfRead(k); if (!gone.has(src(k)) && !hostVals.has(h)) hostVals.set(h, new Map()); }
+  for (const s of said) { const m = hostVals.get(hostOfRead(s.node)); if (m) { const h = toHex(s.hash); m.set(h, (m.get(h) || 0) + 1); } }
+  let hostsFor = 0;
+  for (const m of hostVals.values()) {
+    const r = [...m].sort((a, b) => b[1] - a[1]);
+    if (r.length && r[0][0] === won && (r.length === 1 || r[0][1] > r[1][1])) hostsFor += 1;
+  }
+  if (committee > 0 && 2 * hostsFor <= hostVals.size)
+    throw new Error(`only ${hostsFor} of ${hostVals.size} named hosts name this round's randomness ${won} (more than half must): `
+      + said.filter((s) => toHex(s.hash) !== won).map((s) => `${s.node} says ${toHex(s.hash)}`).concat(refused).join('; '));
   const kept = said.filter((s) => toHex(s.hash) === won);
   for (const s of said) if (toHex(s.hash) !== won) refused.push(`${s.node}: named randomness ${toHex(s.hash)}, not the ${n} of ${named} nodes' ${won}`);
   return { randomness: kept[0].hash, height: kept[0].height, agreed: kept.length, refused };
