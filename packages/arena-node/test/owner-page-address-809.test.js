@@ -24,6 +24,7 @@ function siteBaseWith(fetcher, { boots = [] } = {}) {
 test('the newest address that answers wins, not the first seat to answer with an old one', async () => {
   const asked = [];
   const fetcher = async (url, opt = {}) => {
+    url = url.replace(/\/address-announcements\?node=[0-9a-f]{64}$/, '/address-announcements');   // the page names the node it looks for since af7b26c10 (#2915)
     asked.push(url);
     if (url === '/daily.json') return json({ testnet: { node: ['https://seat-1', 'https://seat-2', 'https://seat-5'] } });
     if (url === 'https://seat-1/address-announcements') return json({ announcements: [{ node: KEY, endpoint: OLD, atMs: 1000 }] });
@@ -43,6 +44,7 @@ test('the newest address that answers wins, not the first seat to answer with an
 
 test('a newest address that does not answer falls back to an older one that does; none answering gives the newest', async () => {
   const fetcher = (versionOk) => async (url, opt = {}) => {
+    url = url.replace(/\/address-announcements\?node=[0-9a-f]{64}$/, '/address-announcements');   // af7b26c10 (#2915)
     if (url === '/daily.json') return json({ testnet: { node: ['https://seat-1', 'https://seat-5'] } });
     if (url === 'https://seat-1/address-announcements') return json({ announcements: [{ node: KEY, endpoint: OLD, atMs: 1000 }] });
     if (url === 'https://seat-5/address-announcements') return json({ announcements: [{ node: KEY, endpoint: NEW, atMs: 2000 }] });

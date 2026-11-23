@@ -11,6 +11,7 @@ import { pageCurve } from '../src/page-curve.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { decodeRoundContract, encodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { signedSeats } from './settled-signed.js';   // kanban #2108: seats sign their /settled answers
 
 const CONTRACT_HEX = readFileSync(new URL('./page-collect-other-seeds.test.js', import.meta.url), 'utf8').match(/CONTRACT_HEX = '([0-9a-f]+)'/)[1];
 const contract = decodeRoundContract(fromHex(CONTRACT_HEX));
@@ -30,7 +31,7 @@ test('#1966: 31 wildcard subdomains of one liar domain cost the page one seat', 
   };
   let derived = 0;
   const curve = { ...pageCurve, pointX: (s) => { derived += 1; return pageCurve.pointX(s); } };
-  await PL.findOwedRounds({ seed: new Uint8Array(32).fill(9), curve, nodes, fetcher, sinceMs: 0 });
+  await PL.findOwedRounds({ seed: new Uint8Array(32).fill(9), curve, nodes, ...signedSeats(fetcher, []), sinceMs: 0 });   // kanban #2108: no census bonds the liar
   console.log(`  FACTS 31 subdomains: ${derived} key derivations`);
   assert.ok(derived <= 500 * 33, `31 subdomains of one domain made the page derive ${derived} keys`);
 });
@@ -52,6 +53,6 @@ test('#2002: three federation seats\' oldest shared round is found beside 6 liar
     return { ok: false };
   };
   // the liars first in the link: order must not matter
-  const found = await PL.findOwedRounds({ seed, curve: pageCurve, nodes: [...liars, ...honest], fetcher, sinceMs: 0 });
+  const found = await PL.findOwedRounds({ seed, curve: pageCurve, nodes: [...liars, ...honest], ...signedSeats(fetcher, honest), sinceMs: 0 });
   assert.deepEqual(found.map((f) => f.roundIdHex), [id]);
 });

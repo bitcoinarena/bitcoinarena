@@ -158,7 +158,17 @@ export function eligibleFor(e, contract, role) {
 
 export function meetsCensusMinimum(entries, contract, role) {
   const { network, minimum } = censusMinimumFor(contract);
-  const have = (entries || []).filter((e) => eligibleFor(e, contract, role)).length;
+  // DISTINCT NODE KEYS AT OR ABOVE THE ROUND'S FLOOR, NOT ROWS (kanban #2850, #1489 r26-census-1): protocol 19 keeps every bond output as its own
+  // row, so one key with several outputs (or a row below bond_min) met census_min_nodes alone and selectCommittee then drew a committee of one key.
+  // The rows are merged by key first - summed under protocol 19, each row on its own before - and only keys at the round's bond_min count.
+  const floor = contract && typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null;
+  const byKey = new Map();
+  for (const e of (entries || []).filter((x) => eligibleFor(x, contract, role))) {
+    if (!e || !(e.pubkey || (e.advert && e.advert.nodePubkey))) continue;
+    const k = nodeKeyOf(e).split('|')[0], b = BigInt(e.bondSats || 0);
+    byKey.set(k, sumsBonds(contract) ? (byKey.get(k) || 0n) + b : ((byKey.get(k) || 0n) > b ? byKey.get(k) : b));
+  }
+  const have = [...byKey.values()].filter((b) => floor === null || b >= floor).length;
   // FOR GAME/VERIFY ONLY THE NODES HOSTING THE ROUND'S GAME COUNT (§0A.4): a game too few nodes host has no
   // paying rounds, and says why
   if (have < minimum && poolOfRole(role) === GAME_VERIFY)
@@ -982,7 +992,7 @@ function resolveBody(seen, entry, verifyAdvert) {
   }
 
   return {
-    ok: true, advert: taken.advert, advertId: taken.id, tx,
+    ok: true, advert: taken.advert, advertId: taken.id, tx, signature: taken.signature,
     signatureChecked: !!verifyAdvert,
   };
 }
@@ -1065,6 +1075,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
 
   let eligible = [];
   const excluded = [];
+  const ownSignatures = new Map();
 
   for (const e of entries) {
     let seen = null;
@@ -1219,6 +1230,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
       advert: read.advert,
       advertId: read.advertId,
     });
+    ownSignatures.set(`${Array.from(e.txid).join(',')}:${e.vout}`, read.signature);
   }
 
   // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544): each output was checked on its own above, and here a node's
@@ -1233,6 +1245,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     ok: true,
     eligible,
     excluded,
+    ownSignatures,   // kanban #2994: each eligible output's creation-body signature, by outpoint (deriveCensus checks it with verifyUpdate)
     // WHAT IS STILL UNCHECKED SHRINKS WHEN A CALLER BRINGS A CURVE. Reporting
     // the signature as unchecked after checking it would be as wrong as not
     // checking it: the list is what a reader is asked to take on trust.
@@ -1316,13 +1329,24 @@ export function floorOnSums(eligible, contract) {
  * output's own advertisement, at its bond's height) - the higher block wins, then the later position (an update beats a bond in one
  * block), then the larger txid, so every seat picks the same one.
  */
-export function newestPerNode(eligible, updates) {
+// A BODY THE NODE SIGNED BEATS ONE IT DID NOT (kanban #2994, audit census r2-1): `signedOwn` (deriveCensus) is the set of outputs whose
+// creation body verifies under the node key it names; an update is always signed. Measured before: a stranger's 330-sat output to
+// bondOutputKey(victim), committing an UNSIGNED body {serving: false}, was in a later block than the victim's bond and so decided for every
+// output of the node - the victim stepped out. Without `signedOwn` every body counts as signed, as before.
+// A REPLAYED SIGNED BODY DECIDES NOTHING EITHER (kanban #3142, refute of #2994; the #2426 timestamp rule): an output's own body ranks with the
+// signed ones only when it is in `updates.freshOwn` (advert-update.js newestUpdates) - strictly newer than every body of the node in an
+// earlier block. Every signed body is public, so a stranger's dust bond to the node's key could carry one; a replay is never newer than
+// what it copies. Without `freshOwn` (an updates map built by hand) every signed body ranks, as before.
+export function newestPerNode(eligible, updates, signedOwn = null) {
   const best = new Map();
+  const fresh = updates && updates.freshOwn instanceof Set ? updates.freshOwn : null;
   for (const e of eligible) {
-    const u = updates.get(`${Array.from(e.txid).join(',')}:${e.vout}`);
-    const c = u ? { u, height: u.height, pos: Number.isInteger(u.position) ? u.position : 0, tie: bondHexOf(u.txid) }
-      : { own: e, height: e.height, pos: -1, tie: bondHexOf(e.txid) };
+    const key = `${Array.from(e.txid).join(',')}:${e.vout}`;
+    const u = updates.get(key);
+    const c = u ? { u, height: u.height, pos: Number.isInteger(u.position) ? u.position : 0, tie: bondHexOf(u.txid), signed: true }
+      : { own: e, height: e.height, pos: -1, tie: bondHexOf(e.txid), signed: (!signedOwn || signedOwn.has(key)) && (!fresh || fresh.has(key)) };
     const k = nodeKeyOf(e), b = best.get(k);
+    if (b && c.signed !== b.signed) { if (c.signed) best.set(k, c); continue; }
     if (!b || c.height > b.height || (c.height === b.height && (c.pos > b.pos || (c.pos === b.pos && c.tie > b.tie)))) best.set(k, c);
   }
   return best;
@@ -1443,8 +1467,17 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
   let eligible = carried;
   const updatedOut = [];
   if (typeof verifyUpdate === 'function') {
-    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate });
-    const deciders = sumsBonds(contract) ? newestPerNode(eligible, updates) : null;
+    // kanban #2994: which outputs' own creation bodies the node signed - only those decide for its other outputs or set its newest timestamp
+    const signedOwn = new Set();
+    for (const e of eligible) {
+      const key = `${Array.from(e.txid).join(',')}:${e.vout}`;
+      const sig = resolved.ownSignatures && resolved.ownSignatures.get(key);
+      let ok = false;
+      try { ok = sig instanceof Uint8Array && sig.some((b) => b !== 0) && !!verifyUpdate(sig, e.advertId, e.advert.nodePubkey); } catch { ok = false; }
+      if (ok) signedOwn.add(key);
+    }
+    const updates = newestUpdates(chain, eligible, { atHeight: contract.censusHeight, network: network || 'regtest', verify: verifyUpdate, signedOwn });
+    const deciders = sumsBonds(contract) ? newestPerNode(eligible, updates, signedOwn) : null;
     const before = eligible;
     eligible = [];
     for (const raw of before) {

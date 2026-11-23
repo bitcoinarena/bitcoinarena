@@ -164,7 +164,8 @@ test('a federation that holds nothing is retired (kanban #577): its guardians\' 
   // five of seven is the threshold: four consents make no record, and a gatherer that did not consent still builds it OPEN
   const four = seven({ retiring: [0, 1, 2, 3] });
   const g4 = await four.seats[0].gather(FED, inviteFederationId);
-  assert.equal(g4.ok, false, 'four of seven do not retire it');
+  // ... and the record stays what it is, OPEN (kanban #1665: before, four consents left no body at a threshold, so no record at all)
+  assert.deepEqual([g4.ok, g4.status], [true, 'OPEN'], 'four of seven do not retire it');
   const five = seven({ retiring: [0, 1, 2, 3, 4] });
   assert.deepEqual([(await five.seats[0].gather(FED, inviteFederationId)).status], ['CLOSED']);
   const other = seven({ retiring: [1, 2, 3, 4, 5] });
@@ -756,7 +757,9 @@ test('#1157 recordStep: older refused, CLOSED final, a mirror never worse at one
   assert.equal(recordStep({ height: 5, status: 'CLOSED' }, { height: 5, status: 'OPEN' }).take, false);
   assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 5, status: 'CLOSED' }, 'mirror').take, true);
   assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 5, status: 'HALTED' }, 'mirror').take, false);
-  assert.equal(recordStep({ height: 5, status: 'HALTED' }, { height: 5, status: 'OPEN' }, 'mirror').take, true);
+  // kanban #1664: nor a better one - an older record of that height a peer still serves does not undo a worse one signed later
+  assert.equal(recordStep({ height: 5, status: 'HALTED' }, { height: 5, status: 'OPEN' }, 'mirror').take, false);
+  assert.equal(recordStep({ height: 5, status: 'HALTED' }, { height: 5, status: 'OPEN' }, 'gather').take, true);
   assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 5, status: 'DRAINING' }, 'gather').take, true);
   assert.equal(recordStep({ height: 5, status: 'OPEN' }, { height: 6, status: 'HALTED' }, 'mirror').take, true);
 });

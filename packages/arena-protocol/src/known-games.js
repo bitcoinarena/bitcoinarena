@@ -600,6 +600,32 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze([]),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
+  '71036e7a85aad1ed25e549bdcea82ce7479ab349294af74b90f7f827f0904116': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 11, parent 62899c8a - version 10 in every term but its client: the result from the open moves at once, "signed" added when the seats' signed result arrives (kanban #2864)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
+  '6bd6c0d1dbbd3a082c509576c6cc8b7d5e1cd3c9d7a739f12875101727aa6459': Object.freeze({
+    name: 'rock-paper-scissors',
+    //: manifest version 12, parent 71036e7a - version 11 in every term but its client: a move from a round the player was alone in is never entered again, no reveal before the result shows every player in, a move outside 0-2 never decides (kanban #2930, feedback #242/#248/#249)
+    requiredProtocolVersion: 2,
+    // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
+    // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
+    seatsPerTable: true,
+    cores: Object.freeze({
+      'f86afd62734989cca3004021d00879af5d57008958908ca28973100625d7f031': Object.freeze(['0d562087b31feef63e89c7b558f725f6ca44a1eb1e88f5c2779ea8055ae36172']),
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+  }),
   'b8b88e233baac6671c8ac6da8193f816d7f552423a3888b184018b7b49839651': Object.freeze({
     name: 'nextblock',
     // 2026.0.3: manifest version 3, parent c693585b, sells the larger truck (core f0cc7b7b), protocol 10 - added by hand
@@ -669,10 +695,36 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     periodMs: '900000',
     requiredProtocolVersion: 2,
   }),
+  // UP/DOWN VERSION 25 (kanban #2836, feedback #084; re-signed for #2908's amount stepper, never rolled before): version 24 in every term, with a client that quotes a market buy at the book's best
+  // ask and promises no payout without one
+  '30d66419115bf8c72cbf651de809212859f28448e632c55ca0d1762d29338946': Object.freeze({
+    name: 'btc-updown-15m',
+    cores: Object.freeze({
+
+    }),
+    sharedWorld: Object.freeze([]),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    attested: Object.freeze({ outcomes: Object.freeze(['Up','Down']), attestors: Object.freeze([]),
+      threshold: 0, devKey: '65bcaf4120e334b6c17f276376d0b7129866317ab2a9b178ae0188e9c358a11a', networks: Object.freeze(['1060078b1d4458b32c47aa68279f2260ad8e731ae365ce3f22260dbdc92d7a15']), attestDraw: Object.freeze({ count: 7, threshold: 5 }) }),
+    fee: Object.freeze({ nodeBps: 40, donationBps: 60 }),
+    terms: Object.freeze({ resolveAfterCloseMs: '0', deadlineAfterResolveMs: '600000' }),
+    periodMs: '900000',
+    requiredProtocolVersion: 2,
+  }),
   'bb29d4291673b4bd019216bc8da4d749ef3996e6184aa5d1f68a4feea3b0ed8c': Object.freeze({
     name: 'nextblock',
     cores: Object.freeze({
       '8cbc74b27bee78727fa395fcc5e5181beb4072f837adbee0e9ea278ff427d387': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
+    }),
+    sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
+    gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
+    requiredProtocolVersion: 11,
+  }),
+  // NEXT BLOCK VERSION 8 (kanban #2911, feedback #191): version 7 with core 7d197042 - the score's apron left forward from any door
+  'b6f824f777b069a02c56569162440ca935f780b2aef21038c939e24be7d668a6': Object.freeze({
+    name: 'nextblock',
+    cores: Object.freeze({
+      '7d1970426bc7146ef2cddcf2d4ad1aa1e53647a9dbef3bc1cfc319aae161fca7': Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d', 'f51759b6bdc6c738e46910816936c84d72d57e33d2cf04816618912557a76a7c']),
     }),
     sharedWorld: Object.freeze(['2170f25079f5652ba0633f4b44032c1c9b4dac094e6df99dd001e74b5586293d']),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',

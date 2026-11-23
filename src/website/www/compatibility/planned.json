@@ -1,8 +1,7 @@
 [
  {"name": "nos2x", "adapter": "nos2x", "kind": "Browser extension", "platform": "Chrome", "url": "https://github.com/fiatjaf/nos2x", "check": "extension", "versionFrom": {"chrome": "kpgefcfmnafjgpblomihpgmejjdanjjp"}},
  {"name": "Sidecar", "adapter": "sidecar", "kind": "Browser extension", "platform": "Chrome, Firefox", "url": "https://sidecar.top/", "check": "extension", "versionFrom": {"chrome": "moimlikilhheabdafocpmneehpblhiln"}},
- {"name": "Alby", "kind": "Browser extension", "platform": "Chrome, Firefox", "url": "https://getalby.com/", "check": "extension", "versionFrom": {"chrome": "iokeahhehimjnekafflcihljlcjccdbe"}},
- {"name": "Keys.band", "manualReason": "Store version 1.7.0 exposes NIP-04 but no NIP-44; our wallet login requires NIP-44. Recheck after an update.", "kind": "Browser extension", "platform": "Chrome, Firefox", "url": "https://keys.band/", "check": "extension", "versionFrom": {"chrome": "jdencabhccnfhedpfoojbbdlgmecnlkm"}},
+ {"name": "Alby", "adapter": "alby", "kind": "Browser extension", "platform": "Chrome, Firefox", "url": "https://getalby.com/", "check": "extension", "versionFrom": {"chrome": "iokeahhehimjnekafflcihljlcjccdbe"}},
  {"name": "Amber", "kind": "Remote signer", "platform": "Android", "url": "https://github.com/greenart7c3/Amber", "check": "android", "versionFrom": {"github": "greenart7c3/Amber"}},
  {"name": "Clave", "kind": "Remote signer", "platform": "iOS", "url": "https://github.com/dmnyc/clave", "check": "manual", "versionFrom": {"appstore": "6762104155"}},
  {"name": "nsec.app", "kind": "Remote signer", "platform": "Web", "url": "https://github.com/nostrband/noauth", "check": "signer", "secret": "COMPAT_NSEC_APP", "version": "hosted"},

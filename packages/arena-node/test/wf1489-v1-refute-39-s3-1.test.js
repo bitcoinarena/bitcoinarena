@@ -54,11 +54,14 @@ test('a new remote node, not bonded yet, is found by the owner page on the site 
   assert.equal(book.endpointOf(entry), AT);
 });
 
+// kanban #3059: the oldest goes only once it was not re-announced for ADDRESS_PENDING_KEEP_MS (a flood of fresh keys is refused 503 instead)
 test('the bucket for nodes outside the census holds at most ADDRESS_PENDING_MAX, the oldest announced goes first', async () => {
-  const { ADDRESS_PENDING_MAX } = await import('../src/address-book.js');
-  const book = createAddressBook({ db: new DatabaseSync(':memory:'), verify, nowMs: () => Date.now(), isCensusNode: () => false });
+  const { ADDRESS_PENDING_MAX, ADDRESS_PENDING_KEEP_MS } = await import('../src/address-book.js');
+  let later = 0;
+  const book = createAddressBook({ db: new DatabaseSync(':memory:'), verify, nowMs: () => Date.now() + later, isCensusNode: () => false });
   const keys = [];
   for (let i = 0; i < ADDRESS_PENDING_MAX + 20; i++) {
+    if (i === ADDRESS_PENDING_MAX) later = ADDRESS_PENDING_KEEP_MS + 1000;
     const s = new Uint8Array(randomBytes(32)); const k = Buffer.from(schnorr.getPublicKey(s)).toString('hex'); keys.push(k);
     assert.equal(book.take(signAddressAnnouncement({ node: k, endpoint: 'https://n' + i + '.example', atMs: T0 - 1000 }, (d) => schnorr.sign(d, s))).status, 409);
   }

@@ -10,6 +10,19 @@ import React from 'react';
 const satOf = (msat) => `${(BigInt(msat) / 1000n).toLocaleString('en-US')} sat`;
 const short = (id) => String(id || '').slice(0, 8);
 
+// THE AMOUNT AS TYPED, CHECKED BEFORE MOVE (kanban #2959, feedback #300): every non-digit was dropped, so "-1" became a 1 sat move, letters left
+// the button on, and 999,999 was offered while the line above said at most 3,000. A whole number (thousands separators , space ' _ allowed) from 1
+// to what the federation can send after the fees; otherwise the button is off and one line says why.
+export function moveAmountCheck(text, can) {
+  const raw = String(text ?? '').trim();
+  if (!raw) return { ok: false, words: '' };
+  if (!/^[0-9][0-9,' _]*$/.test(raw)) return { ok: false, words: 'Enter a whole number of sat (digits only).' };
+  const sat = Number(raw.replace(/[^0-9]/g, ''));
+  if (!(sat > 0)) return { ok: false, words: 'A move is more than 0 sat.' };
+  if (can !== null && can !== undefined && BigInt(sat) * 1000n > BigInt(can)) return { ok: false, words: `At most ${(Number(BigInt(can) / 1000n)).toLocaleString('en-US')} sat can be sent after the fees.` };
+  return { ok: true, sat, words: '' };
+}
+
 export class MovePanel extends React.Component {
   constructor(props) {
     super(props);
@@ -59,6 +72,7 @@ export class MovePanel extends React.Component {
     const { feds } = this.props;
     const { from, to, can, amount, status, busy } = this.state;
     const froms = (feds || []).filter((f) => f.from).sort((a, b) => b.sats - a.sats), tos = this.targets(from);
+    const check = moveAmountCheck(amount, can);
     if (!froms.length) return <div className="mv-panel"><div className="muted">No federation holds funds of this wallet yet, so there is nothing to move.</div></div>;
     return (
       <div className="mv-panel">
@@ -70,10 +84,11 @@ export class MovePanel extends React.Component {
             {tos.length ? tos.map((f) => <option key={f.id} value={f.id}>{f.label}</option>) : <option value="">no other federation takes deposits</option>}</select></label>
         <label className="mv-row">Amount (sat)
           <span className="mv-amt"><input id="arena-mv-amount" inputMode="numeric" value={amount} disabled={busy} placeholder={can === null ? 'reading …' : '0'}
-            onChange={(e) => this.set({ amount: e.target.value.replace(/[^0-9]/g, ''), edited: true })} />
+            onChange={(e) => this.set({ amount: e.target.value, edited: true, status: null })} />
             <button type="button" className="mv-all" disabled={busy || !can} onClick={() => this.set({ amount: String(can / 1000n), edited: false })}>All</button></span></label>
         <div className="muted" id="arena-mv-can">{can === null ? 'Reading what it can send …' : can > 0n ? `All it can send after the fees: ${satOf(can)}.` : 'Nothing to send from this federation after the fees.'}</div>
-        <button type="button" id="arena-mv-go" disabled={busy || !to || !can} onClick={() => this.go()}>{busy ? 'Moving …' : `Move ${amount ? Number(amount).toLocaleString('en-US') + ' sat' : ''}`}</button>
+        {check.words ? <div className="mv-status bad" id="arena-mv-check">{check.words}</div> : null}
+        <button type="button" id="arena-mv-go" disabled={busy || !to || !can || !check.ok} onClick={() => this.go()}>{busy ? 'Moving …' : check.ok ? `Move ${check.sat.toLocaleString('en-US')} sat` : 'Move'}</button>
         {status ? <div className={`mv-status ${status.kind}`} id="arena-mv-status">{status.words}</div> : null}
       </div>);
   }

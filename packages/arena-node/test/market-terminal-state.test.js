@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { gameMarkets, marketVoidOf, marketStateOf } from '../src/game-market.js';
+import { gameMarkets, marketVoidOf, marketStateOf, DEADLINE_VOID_GRACE_MS } from '../src/game-market.js';
 import { LockSettlement } from '../src/settlement.js';
 import { Round } from '../src/round.js';
 import { openStore } from '../src/store.js';
@@ -101,7 +101,7 @@ const heldLate = (round, [o, c], outcome, receivedMs) => {
 test('#1151 a terminal state never changes: a late row (as a pre-fix seat held it) is evidence only; a contradiction or a refund after FINAL changes nothing', async () => {
   // VOID, THEN A ROW RECEIVED AFTER THE DEADLINE (an old store's): still VOID - the row counts as evidence only
   { const { round, clock } = seatStore();
-    clock.ms = DEADLINE + 1;
+    clock.ms = DEADLINE + DEADLINE_VOID_GRACE_MS + 1;  // kanban #2753: a deadline VOID is persisted once the hand-on grace ends
     assert.equal(stateOf(round, clock.ms).state, MARKET_STATE.VOID);
     heldLate(round, BULLS, 0, DEADLINE + 5000);
     clock.ms = DEADLINE + 5000 + WINDOW + 1;
@@ -169,7 +169,7 @@ test('#1151 a seat that restarts keeps the state, and a store made before the ta
   try {
     const path = join(dir, 'seat.sqlite');
     // VOID AT THE DEADLINE, PERSISTED; THE SEAT STOPS
-    { const { round, clock } = seatStore(path, DEADLINE + 1);
+    { const { round, clock } = seatStore(path, DEADLINE + DEADLINE_VOID_GRACE_MS + 1);  // kanban #2753: a deadline VOID is persisted once the hand-on grace ends
       assert.equal(stateOf(round, clock.ms).state, MARKET_STATE.VOID);
       round.db.close(); }
     // IT STARTS AGAIN ON A CLOCK SET BACK (inside the deadline): the stored VOID stands, and a result it now takes is evidence only

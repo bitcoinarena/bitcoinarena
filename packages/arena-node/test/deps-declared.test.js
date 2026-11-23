@@ -23,12 +23,14 @@ const importsOf = (pkg) => {
   return out;
 };
 const declared = (pkg) => new Set(Object.keys(JSON.parse(readFileSync(join(PKG, pkg, 'package.json'), 'utf8')).dependencies || {}));
-// what the packages import that is no npm package: the monorepo's own packages and the app ids the node resolves itself
+// OPTIONAL IMPORTS (kanban #2915): loaded lazily and switched off when absent, never installed by the release - the faucet's Telegram
+// reader (telegram-userbot.js: "telegram reader off: the telegram package is not installed")
+const OPTIONAL = new Set(['telegram']);
 const OWN = /^(arena-|blwp-|btc-updown|nextblock|rock-paper-scissors|hello-world|arena:)/;
 
 for (const pkg of ['arena-node', 'arena-installer']) {
   test(`${pkg}: every third-party import is in its package.json`, () => {
-    const missing = [...importsOf(pkg)].filter((m) => !OWN.test(m) && !declared(pkg).has(m));
+    const missing = [...importsOf(pkg)].filter((m) => !OWN.test(m) && !OPTIONAL.has(m) && !declared(pkg).has(m));
     assert.deepEqual(missing, [], `${pkg} imports ${missing.join(', ')} without declaring it`);
   });
 }

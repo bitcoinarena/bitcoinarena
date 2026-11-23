@@ -22,10 +22,11 @@ import { LATE_JOIN_LAST_ENTRY_MS, entryItemDigest } from '../../arena-protocol/s
 export const ENTRY_CLOSE_GRACE_MS = 15000n;
 import { LATE_JOIN_MS } from '../../arena-protocol/src/series.js';
 import { ticksForMs } from '../../arena-protocol/src/tick.js';
+import { KNOWN_GOOD_GAMES } from '../../arena-protocol/src/known-games.js';
 import { worldSecretFits } from '../../arena-protocol/src/seed.js';
 import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../arena-protocol/src/transcript.js';
 import {
-  decodeCheckpoint, checkpointId, NO_PREVIOUS, splitSigned,
+  decodeCheckpoint, checkpointId, NO_PREVIOUS, splitSigned, encodeCheckpoint, joinSigned,
 } from '../../arena-protocol/src/checkpoint.js';
 import {
   encodeCheckpointReceipt, decodeCheckpointReceipt, receiptId,
@@ -53,7 +54,8 @@ import { stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
 import { lockClaimDigest, lockClaimKeyOf, LOCK_CLAIM_BYTES } from '../../arena-protocol/src/lock-claim.js';
 import { firstMarkOutcome, startDeadlineOf, roundEndMs } from '../../arena-protocol/src/first-mark.js';
 import { H2H_REVEAL_MIN_MS, marketOfRound } from '../../arena-protocol/src/manifest.js';
-import { marketWindowOf } from '../../arena-protocol/src/attested.js';
+import { marketWindowOf, decodeAttestation, encodeAttestation, attestationBodyId } from '../../arena-protocol/src/attested.js';
+import { isValueAttestationBytes, decodeValueAttestation, encodeValueAttestation, valueAttestationBodyId } from '../../arena-protocol/src/scalar.js';
 import { pluginForRound, hostedPlugins, runLengthFits } from './plugins.js';
 import { chainIndex } from './finality.js';
 import { withinTolerance } from '../../arena-protocol/src/window.js';
@@ -69,6 +71,9 @@ export const LATE_ENTRY_TICK_SLACK_MS = 10000n;
 // THE LOCKLESS ENTRIES A PAYING HEAD-TO-HEAD ROUND TAKES (kanban #1745): per player of its game, joined within the last minute
 export const LOCKLESS_PER_SEAT = 3;
 export const LOCKLESS_HOLD_MS = 60000;
+// THE CAP'S REFUSAL, BY ITS CODE (kanban #2174, a44 refute of #1745): POST /entry reads it and holds the entry aside, unstored; when its lock is
+// handed and the federation holds it, the entry is entered past the cap (enter's `stakeLockHeld`)
+export const LOCKLESS_CAP = 'LOCKLESS_CAP';
 
 /**
  * A STORED ROUND THIS NETWORK CANNOT PARSE IS ABSENT (RULED 2026-09-22 22:59, §23.6): "a record
@@ -82,17 +87,41 @@ export const LOCKLESS_HOLD_MS = 60000;
 // see that it parses, and a tick batch decoded it again for its blockTicks - on every batch from every player. Kept by
 // the contract's bytes (a contract never changes), up to 8192; only these two answers leave, never the decoded object.
 const contractFacts = new Map();
+// EVERY NEXT BLOCK GAME ID (kanban #2991, gap in #2654/#2655): the truck core's fifth input word is the practice switch in every version, and
+// the refusals compared against manifest v1 (495516ae) alone - the live v8 (b6f824f7) took practice ticks and player-declared liquidations in
+// paid runs. Every known-good game named 'nextblock' now (a new version is added there before seats host it).
+const NEXTBLOCK_GAME_HEXES = new Set(Object.entries(KNOWN_GOOD_GAMES).filter(([, g]) => g && g.name === 'nextblock').map(([id]) => id));
+// AND EVERY NEXT BLOCK VERSION THIS SEAT HOSTS (kanban #2991, measured on the live tree 2026-11-20: its known-games.js did not list v8
+// b6f824f7, the version it hosts): server.js names its hosted games here at start and at every install or update
+/** The Next Block game ids a staked round refuses practice ticks for (read by tests and the seat's checks). */
+export const nextblockGameIds = () => [...NEXTBLOCK_GAME_HEXES].sort();
+export function noteNextblockGames(hosted) {
+  for (const [id, g] of hosted || []) {
+    if (g && (g.name === 'nextblock' || (g.manifest && g.manifest.gameName === 'nextblock'))) NEXTBLOCK_GAME_HEXES.add(String(id).toLowerCase());
+  }
+}
 const factsOf = (contract) => {
   const key = Buffer.from(contract).toString('base64');
   let f = contractFacts.get(key);
   if (f === undefined) {
-    try { const c = decodeRoundContract(new Uint8Array(contract)); f = { blockTicks: c.blockTicks }; } catch { f = null; }
+    try {
+      const c = decodeRoundContract(new Uint8Array(contract));
+      // kanban #2654: a staked Next Block round, where the truck core's practice word (input word 4) is a shield
+      const staked = BigInt(c.stakeMsat || 0) > 0n;
+      f = { blockTicks: c.blockTicks, practiceRefused: staked && NEXTBLOCK_GAME_HEXES.has(Buffer.from(c.gameId || []).toString('hex')) };
+    } catch { f = null; }
     contractFacts.set(key, f);
     if (contractFacts.size > 8192) contractFacts.delete(contractFacts.keys().next().value);
   }
   return f;
 };
 const parses = (contract) => factsOf(contract) !== null;
+// a settlement's winners' shares as kept (lock_settlement_shares, lock_settlement_txids.shares); 'null' is a round's shares marked unknown (kanban #2277)
+const sharesToJson = (shares) => JSON.stringify(shares.map((x) => ({ pubkey: Buffer.from(x.pubkey).toString('hex'), msat: String(x.msat) })));
+const sharesFromJson = (json) => {
+  const v = JSON.parse(json);
+  return Array.isArray(v) ? v.map((x) => ({ pubkey: new Uint8Array(Buffer.from(x.pubkey, 'hex')), msat: BigInt(x.msat) })) : null;
+};
 
 function neededForRound(db, roundIdBytes) {
   const row = db.prepare('SELECT contract FROM rounds WHERE round_id = ?').get(roundIdBytes);
@@ -197,6 +226,9 @@ export const FINAL_SIG_EVIDENCE_PER_SIGNER = 4;
 export const PLAYER_CAUSED_REFUSAL = /send the batches first|names inputs this node has not seen|does not follow the chain head|expected a tick after/;
 export const playerCausedRefusal = (why) => PLAYER_CAUSED_REFUSAL.test(String(why || ''));
 
+/** A transcript's batch list is a u16 (kanban #2805). */
+const MAX_TRANSCRIPT_BATCHES = 65535;
+
 export class Round {
   /** How long openHeld trusts its last count of the open rows when this store wrote none (kanban #786). */
   static OPEN_HELD_MS = 250;
@@ -205,6 +237,7 @@ export class Round {
   // kanban #1548: refused marks kept per entry (keepOffered) - the first 64, then at most 8 that contradict the chain.
   static OFFERED_KEEP = 64;
   static OFFERED_PROOF_KEEP = 8;
+  static REFUSED_IDS_KEEP = 4096;   // kanban #3013: refused mark ids kept per entry (32 bytes each)
   constructor(db, now = () => Date.now(), { plugins = [] } = {}) {
     this.db = db;
     this.now = now;
@@ -356,10 +389,14 @@ export class Round {
    */
   holdsReceipt(bytes) {
     if (!(bytes instanceof Uint8Array) || bytes.length !== SIGNED_RECEIPT_BYTES) return false;
-    let r;
-    try { r = decodeCheckpointReceipt(splitSignedReceipt(bytes).body); } catch { return false; }
+    let r, body;
+    try { body = splitSignedReceipt(bytes).body; r = decodeCheckpointReceipt(body); } catch { return false; }
     const row = this.db.prepare('SELECT bytes FROM receipts WHERE checkpoint_id = ? AND node_pubkey = ?').get(r.checkpointId, r.nodePubkey);
-    return !!row && Buffer.from(row.bytes).equals(Buffer.from(bytes));
+    // THE SAME RECEIPT RE-SIGNED IS THE SAME RECEIPT (kanban #2742, #1489 r6-play-11): BIP-340 takes fresh aux randomness, so a seat re-signing
+    // its own receipt body made new bytes each time - not held by a byte compare, and every copy queued a whole-run replay (20 copies, 20
+    // replays, 0 results). The body (one node's word on one checkpoint) is compared; its signature adds nothing a held one did not.
+    if (!row) return false;
+    try { return Buffer.from(splitSignedReceipt(new Uint8Array(row.bytes)).body).equals(Buffer.from(body)); } catch { return false; }
   }
 
   takeReceipt(bytes) {
@@ -475,6 +512,12 @@ export class Round {
     return this.db.prepare(
       'SELECT COUNT(DISTINCT node_pubkey) n FROM receipts WHERE checkpoint_id = ?')
       .get(checkpointId).n;
+  }
+
+  /** kanban #2550: did this node refuse this mark itself as one that does not follow the chain head (kept in offered_marks)? */
+  refusedOfferedMark(checkpointIdBytes) {
+    return !!this.db.prepare('SELECT 1 FROM offered_marks WHERE checkpoint_id = ? LIMIT 1').get(checkpointIdBytes)
+      || !!this.db.prepare('SELECT 1 FROM refused_mark_ids WHERE checkpoint_id = ? LIMIT 1').get(checkpointIdBytes);   // kanban #3013
   }
 
   /**
@@ -643,7 +686,7 @@ export class Round {
    * it. What only a door decides goes - the round being open, entry close, a table this seat thinks is full - and everything about the entry itself stays:
    * the stake, the fee, the handout, the commitment, every item's owner signature.
    */
-  enter(contract, { accepted = false } = {}) {
+  enter(contract, { accepted = false, stakeLockHeld = false } = {}) {
     const round = this.get(contract.roundId);
     if (!round) throw new Error('no such round');
     if (round.state !== OPEN && !accepted) throw new Error('the round is closed');
@@ -804,19 +847,24 @@ export class Round {
           throw new Error(`that round's entries closed at ${new Date(Number(asks.entryCloseMs)).toISOString()}: a head-to-head round takes no entry after it - the moves are being revealed`);
         // ONLY ENTRIES BACKED BY A LOCK TAKE A SEAT OF A PAYING ROUND (kanban #1437, audit 8 R3); which ones, the same at every seat: seatedEntriesOf (kanban #1588)
         const me = entryId(contract);   // seats counted by entry id (kanban #1479)
-        const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat).filter((x) => !same(x.entryId, me)).length;
+        // kanban #2691: a table is full only with entries whose stake is SEEN - one still waiting for its fee lock yields its seat (seatedEntriesOf)
+        const seated = this.seatedEntriesOf(contract.roundId, asks.stakeMsat, { played: true }).filter((x) => !same(x.entryId, me)).length;
         if (seated >= m.players && !accepted) throw new Error(`that round already seats game "${m.gameName}"'s ${m.players} players`);
         // AND A PAYING ROUND HOLDS ONLY A FEW ENTRIES NOBODY LOCKED A STAKE FOR (kanban #1745, audit #1489 r5 h2h-1): the door takes an entry before its
         // lock and the seats above count only locked ones, so a stranger with fresh keys and no sats filled a paid RPS round with 24 lockless entries -
         // each stored, relayed to every seat and signed VOID at the close. At most LOCKLESS_PER_SEAT x players of them joined in the last
         // LOCKLESS_HOLD_MS are taken; an older lockless entry no longer counts, so an honest player who is slow to lock never keeps the next one out.
         // The same entry posted again and an entry the round accepted (entry-relay) are still taken.
-        if (asks.stakeMsat > 0n && !accepted && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(me))) {
+        // BUT NEVER AN ENTRY WHOSE OWN STAKE LOCK IS ALREADY MADE (kanban #2174, a44 refute of #1745): counted across the round, whoever posted them,
+        // 6 free lockless entries from a stranger refused every honest player for a minute, again each minute - the paid round seated nobody. The
+        // refusal carries LOCKLESS_CAP; POST /entry then holds the entry aside, unstored and unrelayed (server.js holdLockless), and POST /lock enters
+        // it with `stakeLockHeld` once the federation holds its own stake lock - a flooder who hands no lock is never stored, a player who locked is seated.
+        if (asks.stakeMsat > 0n && !accepted && !stakeLockHeld && !this.db.prepare('SELECT 1 FROM entries WHERE entry_id = ?').get(Buffer.from(me))) {
           const since = this.now() - LOCKLESS_HOLD_MS;
           const lockless = this.db.prepare('SELECT entry_id FROM entries WHERE round_id = ? AND joined_ms > ?').all(contract.roundId, since)
             .filter((r) => !this.stakeSeen(new Uint8Array(r.entry_id)) && !this.stakeLock(new Uint8Array(r.entry_id))).length;
           if (lockless >= LOCKLESS_PER_SEAT * m.players)
-            throw new Error(`that round already holds ${lockless} entries with no stake lock: try again in a minute`);
+            throw Object.assign(new Error(`that round already holds ${lockless} entries with no stake lock: try again in a minute, or once your stake lock is made`), { code: LOCKLESS_CAP });
         }
       } else if (hidden) throw new Error('that entry hides a move, and its round is not a head-to-head game\'s');
     }
@@ -1120,6 +1168,16 @@ export class Round {
     // The transport already refuses a frame that could not decode at all;
     // this refuses one that decodes and still could not be honest.
     const blockTicks = factsOf(round.contract).blockTicks;
+    // NO PRACTICE IN A PAID RUN (kanban #2654, audit #1489 r1-play-2): the truck core withholds every damage while the fifth input
+    // word is set and still scores the run DELIVERED, so a modified client signing practice ticks could not lose a staked round.
+    // The honest client never sends it in a signed run (b04de1f8a); a seat now refuses such a batch in a staked Next Block round.
+    if (factsOf(round.contract).practiceRefused && b.ticks.some((w) => w && w.length > 4 && Number(w[4]) !== 0))
+      throw new Error('a staked Next Block run takes no practice ticks (input word 4 must be 0)');
+    // NO PLAYER-DECLARED LIQUIDATIONS IN A PAID RUN (kanban #2655, audit #1489 r1-play-1; the owner 2026-11-14 "1"): the client names each
+    // strike's tick and size and nobody attests it, so a modified client cratered every tank near the front and won. Until the
+    // committee attests liquidations (the To Do card for it), a staked Next Block run takes none; free rounds keep them.
+    if (factsOf(round.contract).practiceRefused && (b.liquidations || []).some(([, size]) => Number(size) !== 0))
+      throw new Error('a staked Next Block run takes no player-declared liquidations until the committee attests them');
     if (b.ticks.length > blockTicks)
       throw new Error(
         `a batch carries at most the round's ${blockTicks} ticks, got ${b.ticks.length}`);
@@ -1159,6 +1217,17 @@ export class Round {
       if (at[0] !== next)
         throw new Error(`expected tick ${next}, got ${at[0]}`);
     }
+    // NO TICKLESS BATCH ONCE THE RUN HAS TICKS, AND NO MORE BATCHES THAN A TRANSCRIPT CAN CARRY (kanban #2805, #1489 r21-play-1): checkTranscript
+    // takes a batch of no ticks only before the first ticked one ("expected tick N, got undefined" after it), so one empty signed batch
+    // after the first stored a link no seat could build a transcript over - no seat could replay or sign the run, a player's way to block
+    // the result of a losing run. And a transcript's batch list is a u16: past 65,535 batches it cannot be encoded at all.
+    if (!seen) {
+      if (!at.length && this.db.prepare('SELECT 1 FROM ticks WHERE round_id = ? AND entry_id = ? LIMIT 1').get(b.roundId, b.entryId))
+        throw new Error(`a batch of no ticks after the run's first ticks cannot be carried in its transcript: send it with the batch that reaches tick ${this.nextTick(b.roundId, b.entryId)}`);
+      const held = this.db.prepare('SELECT COUNT(*) n FROM batches WHERE round_id = ? AND entry_id = ?').get(b.roundId, b.entryId);
+      if (held && Number(held.n) >= MAX_TRANSCRIPT_BATCHES)
+        throw new Error(`a run's transcript carries at most ${MAX_TRANSCRIPT_BATCHES} batches`);
+    }
 
     // AND THE LOAD IS ONE AN HONEST BED COULD HAVE DECLARED (kanban #1488): a room the parcels make, a fee for each of
     // them, no more than 20 BTC, at a tick this batch carries and before the truck was ever driven (load-checks.js).
@@ -1169,6 +1238,23 @@ export class Round {
         'SELECT 1 FROM ticks WHERE round_id = ? AND entry_id = ? AND substr(words, 1, 16) != zeroblob(16) LIMIT 1')
         .get(b.roundId, b.entryId), this.nextTick(b.roundId, b.entryId));
       if (why) throw new Error(why);
+    }
+
+    // AND EVERY OTHER EVENT AT A TICK THIS BATCH CARRIES, AS A LOAD IS (kanban #2689, audit #1489 r3-play-1, high): a liquidation, sample, tape
+    // or attestation could name any tick - one the run played and the committee receipted a mark over long before - and the row landed there
+    // (nothing stored at that tick yet): the seat's close replayed a past rewritten after its marks, and past the last carried mark the
+    // canonical transcript did not hold it at all (the #1568 split). The honest client sends each with the batch that reaches its tick
+    // (client.js publish: `at < through`, and its one tape at tick 0). A batch of no ticks carries them only at the next tick.
+    if (!seen) {
+      const next = this.nextTick(b.roundId, b.entryId);
+      const first = b.firstTick, last = at.length ? at[at.length - 1] : b.firstTick;
+      for (const [name, events] of [['liquidation', b.liquidations || []], ['sample', b.samples || []], ['tape', b.tapes || []], ['attestation', b.attests || []]]) {
+        for (const ev of events) {
+          const tick = Number(ev[0]);
+          if (!at.length ? tick !== next || first !== next : (tick < first || tick > last))
+            throw new Error(`the ${name} at tick ${tick} is not at a tick this batch carries (${at.length ? `${first} .. ${last}` : `the next tick, ${next}`}): an event goes out with the batch that reaches its tick`);
+        }
+      }
     }
 
     // AND ONE EVENT PER TICK, THE SAME IN THE TABLES AS IN THE BYTES (kanban #1568). The tables below keep the FIRST
@@ -1308,12 +1394,23 @@ export class Round {
     // that means "no signature", so it cannot be omitted by accident.
     const { body, signature } = splitSigned(bytes);
     const c = decodeCheckpoint(body);
+    // ONE MARK, ONE BYTE STRING (kanban #2446). decodeCheckpoint speaks every supported version, but checkpointId
+    // re-encodes at PROTOCOL_VERSION - so a mark with only its version byte changed is the same mark by id and
+    // signature, yet other bytes. Stored as received, two seats handed the two copies would put different bytes into
+    // the transcript and sign different transcript hashes for one run (no result at the threshold: a §13C VOID the
+    // player chose). From here on this node keeps, serves and compares only the canonical record: the encoding the
+    // id is taken over, then the signature.
+    bytes = joinSigned(encodeCheckpoint(c), signature);
     const round = this.get(c.roundId);
     if (!round) throw new Error('no such round');
     // AFTER THE CLOSE ONLY THE HELD-BACK FINAL MARK ITSELF, byte for byte (ruled 2026-09-23) - never another mark.
+    // Byte for byte in the canonical encoding (kanban #2446): the held copy is put in that form too before comparing.
     if (round.state !== OPEN) {
       const held = this.heldFinalAsk(c.entryId);
-      if (!held || !same(new Uint8Array(held.mark), bytes)) throw new Error('the round is closed');
+      let heldBytes = null;
+      try { const h = splitSigned(new Uint8Array(held.mark)); heldBytes = joinSigned(encodeCheckpoint(decodeCheckpoint(h.body)), h.signature); }
+      catch { heldBytes = null; }
+      if (!heldBytes || !same(heldBytes, bytes)) throw new Error('the round is closed');
     }
     const entry = this.db.prepare('SELECT round_id, contract FROM entries WHERE entry_id = ?')
       .get(c.entryId);
@@ -1467,6 +1564,26 @@ export class Round {
       if (!known) throw new Error('the checkpoint names inputs this node has not seen');
     }
 
+    // AND THE INPUTS NEVER GO BACK (kanban #2804, #1489 r21-play-2): the head above was checked only for being known, and GENESIS not at
+    // all - a mark naming GENESIS (or an earlier batch) after a mark that named a later one was receipted, and the transcript every seat
+    // then builds is refused by checkTranscript ("the mark commits to earlier inputs than the one before it"): no seat could replay or sign
+    // the run, a player's way to block the result of a losing run. The same rule at the door: refused and kept as offered.
+    if (head.tick !== null) {
+      const parentRow = this.db.prepare('SELECT bytes FROM checkpoints WHERE round_id = ? AND entry_id = ? AND tick = ?').get(c.roundId, c.entryId, head.tick);
+      if (parentRow) {
+        const parent = decodeCheckpoint(splitSigned(new Uint8Array(parentRow.bytes)).body);
+        const posOf = (h) => {
+          if (same(h, GENESIS)) return -1;
+          const r = this.db.prepare('SELECT seq FROM batches WHERE round_id = ? AND entry_id = ? AND batch_id = ?').get(c.roundId, c.entryId, h);
+          return r ? Number(r.seq) : -1;
+        };
+        if (posOf(c.inputChainHash) < posOf(parent.inputChainHash)) {
+          this.keepOffered(c, id, bytes);
+          throw new Error('the checkpoint commits to earlier inputs than the mark before it');
+        }
+      }
+    }
+
     // AND THE NODE HOLDS EVERY INPUT THAT STATE CAME FROM.
     //
     // A checkpoint at tick T is the core after T steps: it was produced by the
@@ -1539,6 +1656,23 @@ export class Round {
    * made the next verifier's problem out of its own.
    */
   handOver(roundIdBytes, entryIdBytes) {
+    // BUILT ONCE PER CHAIN, NOT PER ASK (kanban #2743, #1489 r6-play-12): GET /transcript is public, and a run cut into one-tick batches
+    // (10,800 rows) cost a whole decode, check, encode and hash per request - 132 ms of the seat's thread each, 40 asks 2.8 s. The answer is
+    // kept per entry with the chain's length and its head batch's id (the batches are hash-chained, so the head's id names the whole
+    // chain); a chain that grew or was taken back and written again is built again.
+    const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
+    const head = this.db.prepare('SELECT batch_id FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq DESC LIMIT 1').get(roundIdBytes, entryIdBytes);
+    const now = { n: this.db.prepare('SELECT COUNT(*) AS n FROM batches WHERE round_id = ? AND entry_id = ?').get(roundIdBytes, entryIdBytes).n, last: head ? toHex(new Uint8Array(head.batch_id)) : '' };
+    if (!this.handedOver) this.handedOver = new Map();
+    const kept = this.handedOver.get(key);
+    if (kept && kept.n === now.n && kept.last === now.last) return kept.out;
+    const out = this.#handOverBuilt(roundIdBytes, entryIdBytes);
+    this.handedOver.delete(key); this.handedOver.set(key, { n: now.n, last: now.last, out });
+    if (this.handedOver.size > 256) this.handedOver.delete(this.handedOver.keys().next().value);
+    return out;
+  }
+
+  #handOverBuilt(roundIdBytes, entryIdBytes) {
     const rows = this.db.prepare(
       'SELECT bytes FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq')
       .all(roundIdBytes, entryIdBytes);
@@ -1782,7 +1916,9 @@ export class Round {
   putForkPair({ a, b, receipted = false, peer = null }) {
     let ca, cb;
     try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
-    if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
+    // ONE MARK IS ONE ID, NOT ONE BYTE STRING (kanban #2445): a mark with only its version byte changed decodes to the
+    // same fields and the same checkpointId, and the player's signature still verifies - the same mark, never a pair.
+    if (same(a, b) || same(checkpointId(ca), checkpointId(cb)) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
     if (ca.tick !== cb.tick && !same(ca.previousHash, cb.previousHash)) return false;
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
     // A PAIR PULLED FROM A PEER (`peer`, its address) IS KEPT WITHIN A BOUND PER PEER, AND ITS MARKS' RECORDS AS PULLED (kanban
@@ -1834,6 +1970,7 @@ export class Round {
         // child" of that head and none receipted; verifying both signatures of every pair, on every call, held a seat's one
         // thread at 100% for minutes and five seats never signed the entry. A pair that cannot prove a fork costs a decode.
         const da = decodeCheckpoint(splitSigned(a).body), db = decodeCheckpoint(splitSigned(b).body);
+        if (same(checkpointId(da), checkpointId(db))) continue;   // one mark in two encodings (kanban #2445)
         if (!same(da.entryId, entryIdBytes) || !same(db.entryId, entryIdBytes)) continue;
         if (da.tick !== db.tick && !(same(da.previousHash, db.previousHash) && f.receipted === true)) continue;
         const ca = this.playerSigned(a), cb = this.playerSigned(b);
@@ -1864,7 +2001,8 @@ export class Round {
     let ca;
     let cb;
     try { ca = this.playerSigned(a); cb = this.playerSigned(b); } catch { return false; }
-    if (same(a, b) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
+    // the same mark by id is not two first marks, whatever its bytes (kanban #2445: a stranger's version-byte copy)
+    if (same(a, b) || same(checkpointId(ca), checkpointId(cb)) || !same(ca.entryId, cb.entryId) || !same(ca.roundId, cb.roundId)) return false;
     if (!same(ca.previousHash, NO_PREVIOUS) || !same(cb.previousHash, NO_PREVIOUS)) return false;
     const [x, y] = Buffer.compare(Buffer.from(a), Buffer.from(b)) < 0 ? [a, b] : [b, a];
     // A PAIR PULLED FROM A PEER (`peer`): within that peer's bound, its marks' records as pulled (kanban #2060, as putForkPair)
@@ -1899,6 +2037,8 @@ export class Round {
         if (window && !(this.markCounts(entryIdBytes, a, window.chain, window.end) && this.markCounts(entryIdBytes, b, window.chain, window.end))) continue;
         // two first marks only: the parents read before any signature is checked (as provenFork)
         const da = decodeCheckpoint(splitSigned(a).body), db = decodeCheckpoint(splitSigned(b).body);
+        // ONE MARK IN TWO ENCODINGS IS NOT TWO FIRST MARKS (kanban #2445): compared by id, as provesEquivocation does
+        if (same(checkpointId(da), checkpointId(db))) continue;
         if (!same(da.previousHash, NO_PREVIOUS) || !same(db.previousHash, NO_PREVIOUS)) continue;
         const ca = this.playerSigned(a);
         const cb = this.playerSigned(b);
@@ -1961,6 +2101,13 @@ export class Round {
     // of an entry are kept as before (one of them may pair with a mark the chain only takes later); past that only a mark
     // that already contradicts the stored chain (same tick, or a parent that has a child here) is kept, and only
     // OFFERED_PROOF_KEEP of those. The rest is refused without a write.
+    // THE REFUSAL IS REMEMBERED PAST THE CAP (kanban #3013, audit play r1-1, measured 2026-11-19: from the 73rd stale mark of a stuck page on,
+    // this seat refused and kept nothing; one seat listed that player-signed stale mark in its GET /checkpoints, the #2550 guard
+    // (refusedOfferedMark) did not find it, and this seat signed an honest stuck page FORFEIT 0). Only its id, at most REFUSED_IDS_KEEP an entry.
+    try {
+      const ids = this.db.prepare('SELECT COUNT(*) n FROM refused_mark_ids WHERE round_id = ? AND entry_id = ?').get(c.roundId, c.entryId).n;
+      if (ids < Round.REFUSED_IDS_KEEP) this.db.prepare('INSERT OR IGNORE INTO refused_mark_ids (checkpoint_id, round_id, entry_id) VALUES (?, ?, ?)').run(id, c.roundId, c.entryId);
+    } catch { /* an older store without the table: the capped record below as before */ }
     const held = this.db.prepare('SELECT COUNT(*) n FROM offered_marks WHERE round_id = ? AND entry_id = ?')
       .get(c.roundId, c.entryId).n;
     if (held >= Round.OFFERED_KEEP) {
@@ -2162,10 +2309,9 @@ export class Round {
    * THE SAME SEATS AT EVERY SEAT (kanban #1588, state audit 2026-11-12 sm1-h2h-1): the seats were the first LOCKS to reach this seat, and locks
    * reach the seats in network order - seat 0 seated {A, B}, seat 1 {A, C}, each refused the other's lock as full, and at the close each waited
    * for a lock its own door refused: no seat signed anything, the winner A included. Now /lock keeps every valid lock (no "full" refusal; the
-   * close fetches what is missing, server.js takeEntryParts), and a paying head-to-head round seats the game's `players` lock-backed entries in
-   * the order their ENTRIES were first taken here (rowid): a client posts its entry to every seat before it hands any lock, so the seats hold the
-   * entries in one order while their locks still cross - and a player who entered first is never unseated by a later entry's lock. A locked
-   * entry outside the seats is played against nobody and signed VOID: its lock is never claimed and expires back to its player.
+   * close fetches what is missing, server.js takeEntryParts), and a paying head-to-head round seats the game's `players` lock-backed entries
+   * with the lowest entry ids (kanban #2538: not the order the entries were taken here - entries posted at the same moment reach the seats in
+   * network order). A locked entry outside the seats is played against nobody and signed VOID: its lock is never claimed and comes back.
    */
   seatedEntriesOf(roundIdBytes, stakeMsat, { played = false } = {}) {
     const all = this.entriesOf(roundIdBytes);
@@ -2187,16 +2333,32 @@ export class Round {
     // before the close) seats it, and the entry is VOID as a lockless one (#1437). A fee lock whose door time stands before the close but whose
     // federation answer comes back after it writes the stake seen at that door time (#1805, #1822), which seats the entry again.
     const feeDoorShut = close !== null && BigInt(Math.floor(Number(this.now()))) >= close;
-    const locked = all.filter(({ entryId }) => { const seen = this.stakeSeen(entryId), lock = this.stakeLock(entryId);
+    // AN ENTRY THIS SEAT DECIDED IS NO MEMBER TAKES NO SEAT (kanban #2281, #2536): an entry fewer seats than the threshold took is ENTRY_VOID
+    // 'below-threshold' here (§17, server.js lookAtMembers), but it still counted among the lock-backed entries - with the lowest entry id it
+    // took a seat here while the other seats seated the member whose lock it pushed out: two seat sets, no threshold result.
+    const noMember = (entryId) => { const v = this.entryVoid(entryId); return !!v && v.evidenceKind === 'below-threshold'; };
+    const locked = all.filter(({ entryId }) => { if (noMember(entryId)) return false; const seen = this.stakeSeen(entryId), lock = this.stakeLock(entryId);
       return (!!seen && inTime(seen.seenMs)) || (!feeDoorShut && !!lock && inTime(lock.verifiedMs)); });
     // `played` (kanban #1544) keeps of the seats only the entries whose stake is SEEN - the seats themselves are the same as the door's (#1588)
     const playedOnly = (list) => played ? list.filter(({ entryId }) => { const seen = this.stakeSeen(entryId); return !!seen && inTime(seen.seenMs); }) : list;
     const players = this.#headToHeadPlayers(roundIdBytes);
     if (!players) return playedOnly(locked);
-    const order = new Map(this.db.prepare('SELECT entry_id FROM entries WHERE round_id = ? ORDER BY rowid').all(roundIdBytes)
-      .map((r, i) => [Buffer.from(r.entry_id).toString('hex'), i]));
-    const at = ({ entryId }) => order.get(Buffer.from(entryId).toString('hex'));
-    const seated = new Set([...locked].sort((x, y) => at(x) - at(y)).slice(0, players).map(({ entryId }) => Buffer.from(entryId).toString('hex')));
+    // SEATED BY ENTRY ID, NOT BY THE ORDER THIS SEAT TOOK THE ENTRIES (kanban #2538, state audit 2026-11-12 sm2-h2h-3): #1588 seated the first
+    // `players` lock-backed entries in this seat's insertion order (rowid), on the assumption that every seat took the entries in one order. Two
+    // players tapping the same table at the same moment (or the RPS bot entering beside a player) post to all seats in parallel and the entry
+    // relay hands each entry on 0.7-1.2 s later: seat 0 held [A, B, C], seat 1 [A, C, B], seat 0 seated {A, B} and seat 1 {A, C}, and no entry got
+    // a threshold result - the round was never decided. No order a seat sees locally is the same at every seat; the entry id is. So the seats are
+    // the `players` lowest entry ids among the lock-backed entries (`locked` is in entry id order, entriesOf): the same set at every seat that
+    // holds the same entries and locks. An entry left outside is VOID and its lock comes back at settlement (#1582). The /entry door still refuses
+    // a new entry once the round seats its players (#1437), so only entries that raced in before the seats filled compete for them.
+    // A SEEN STAKE GOES BEFORE A STAKE LOCK STILL WAITING FOR ITS FEE LOCK (kanban #2691, audit #1489 r3-h2h-1): a stake lock alone held its seat
+    // until the close with no limit, then seated nobody (#1861) - one cheap lock (its stake comes back as VOID) filled a paid table, the doors
+    // refused the real second player ("that table is full") and the honest player's round was VOID. The seats are now the entries whose stake is
+    // seen (stake and fee lock) by entry id, and only then those still waiting for a fee lock, by entry id - the same at every seat holding the
+    // same locks; a real player who locks both parts takes the seat from a stake-only one
+    const isSeen = ({ entryId }) => { const seen = this.stakeSeen(entryId); return !!seen && inTime(seen.seenMs); };
+    const order = [...locked.filter(isSeen), ...locked.filter((x) => !isSeen(x))];
+    const seated = new Set(order.slice(0, players).map(({ entryId }) => Buffer.from(entryId).toString('hex')));
     return playedOnly(locked.filter(({ entryId }) => seated.has(Buffer.from(entryId).toString('hex'))));   // answered in entry id order, as before
   }
 
@@ -2613,6 +2775,21 @@ export class Round {
     return [...byRound.values()];
   }
 
+  /**
+   * EVERY OUTCOME ATTESTATION KEPT BETWEEN TWO TIMES, by round (kanban #3069): a market round settles on an attested outcome and never gets a
+   * FINAL, so the node bounty check reads its committee's service from these. -> [{ roundId, attestations: [bytes] }]
+   */
+  attestationsBetween(fromMs, toMs) {
+    const byRound = new Map();
+    for (const r of this.db.prepare('SELECT round_id, bytes FROM outcome_attestations WHERE received_ms >= ? AND received_ms < ? ORDER BY round_id')
+      .all(Number(fromMs), Number(toMs))) {
+      const k = toHex(r.round_id);
+      if (!byRound.has(k)) byRound.set(k, { roundId: new Uint8Array(r.round_id), attestations: [] });
+      byRound.get(k).attestations.push(new Uint8Array(r.bytes));
+    }
+    return [...byRound.values()];
+  }
+
   /** The FINAL signatures refused for their time (§13A rule 3), as evidence. */
   finalSigEvidence(roundIdBytes, entryIdBytes) {
     return this.db.prepare('SELECT signer_pubkey, bytes, seen_ms, why FROM final_sig_evidence WHERE round_id = ? AND entry_id = ? ORDER BY seen_ms')
@@ -2670,6 +2847,63 @@ export class Round {
   /** How many handouts this signer node keeps for one round (kanban #1605: the door bounds the ones no entry names). */
   handoutCount(roundIdBytes) {
     return this.db.prepare('SELECT COUNT(*) AS n FROM handouts WHERE round_id = ?').get(Buffer.from(roundIdBytes)).n;
+  }
+
+  /**
+   * THE HANDOUTS OF ONE ROUND THAT NO ENTRY NAMES (kanban #2136, the #1489 a44 refute of #1605): `loose` counts the ones that may make room
+   * for a new one, `oldest` is the oldest of those past `graceMs`, `oldestYoung` the oldest of all of them (null when none). Never loose, never
+   * pushed out: one any entry here names (cancelled ones too: their settlement may still read it), one a kept refused-round lock stands on (its
+   * player's return reads it), and one whose stake lock the federation was shown holding (kanban #2415, #2481: pinHandout - a real lock,
+   * at the handout's A0 under the round's claim key, so a stranger's free junk can never be one).
+   * A LOOSE HANDOUT YOUNGER THAN `graceMs` IS THE PLAYER'S OWN, ON ITS WAY TO ITS ENTRY (kanban #2415, #2481: the page posts the handout,
+   * locks its stake - 2-20 s, measured - and only then posts the entry; #2136's oldest-first had a stranger's 256 junk posts in that gap push
+   * it out, and the entry was refused with the stake already locked): `oldest` skips it.
+   */
+  looseHandouts(roundIdBytes, { graceMs = 0 } = {}) {
+    const rid = Buffer.from(roundIdBytes);
+    const named = new Set();
+    for (const r of this.db.prepare('SELECT contract FROM entries WHERE round_id = ?').all(rid)) {
+      try { const ref = decodeEntryContract(new Uint8Array(r.contract)).vssSharesRef; if (ref) named.add(Buffer.from(ref).toString('hex')); } catch { /* not ours to judge here */ }
+    }
+    const pinned = new Set([...this.db.prepare('SELECT handout_id FROM refused_locks WHERE round_id = ?').all(rid),
+      ...this.db.prepare('SELECT handout_id FROM handout_locks WHERE round_id = ?').all(rid)].map((r) => Buffer.from(r.handout_id).toString('hex')));
+    const before = this.now() - Number(graceMs);
+    let loose = 0, oldest = null, oldestYoung = null;
+    for (const r of this.db.prepare('SELECT handout_id, accepted_ms FROM handouts WHERE round_id = ? ORDER BY accepted_ms, rowid').all(rid)) {
+      const hex = Buffer.from(r.handout_id).toString('hex');
+      if (named.has(hex) || pinned.has(hex)) continue;
+      loose++;
+      if (oldestYoung === null) oldestYoung = new Uint8Array(r.handout_id);
+      if (oldest === null && Number(r.accepted_ms) <= before) oldest = new Uint8Array(r.handout_id);
+    }
+    return { loose, oldest, oldestYoung };
+  }
+
+  /**
+   * A HANDOUT WHOSE STAKE LOCK THE FEDERATION WAS SHOWN HOLDING (kanban #2415, #2481): the door checked the lock a client showed with it
+   * (server.js stakeLockMadeFor - image A0, the player's refund key, the round's claim key, the contract at that outpoint). Such a handout
+   * is never pushed out by another: its player's entry, or its refused-round return, reads it.
+   * ONE LOCK PINS ONE HANDOUT (kanban #2644): `outpoint` ("txid:index") pins the first handout shown with it in this round and no other -
+   * nothing ties a lock to one handout, and one lock shown with endless forged handouts (the same A0, fresh coefficients) pinned them all,
+   * outside every cap. Answers whether this handout is pinned.
+   */
+  pinHandout(handoutIdBytes, roundIdBytes, outpoint) {
+    const id = Buffer.from(handoutIdBytes), rid = Buffer.from(roundIdBytes);
+    if (typeof outpoint !== 'string' || !outpoint) return false;
+    this.db.prepare('INSERT OR IGNORE INTO handout_lock_outpoints (round_id, outpoint, handout_id) VALUES (?, ?, ?)').run(rid, outpoint, id);
+    const first = this.db.prepare('SELECT handout_id FROM handout_lock_outpoints WHERE round_id = ? AND outpoint = ?').get(rid, outpoint);
+    if (!first || !Buffer.from(first.handout_id).equals(id)) return false;
+    this.db.prepare('INSERT OR IGNORE INTO handout_locks (handout_id, round_id, pinned_ms) VALUES (?, ?, ?)').run(id, rid, this.now());
+    return true;
+  }
+
+  /**
+   * A NEW HANDOUT TAKES THE ROW OF THE ROUND'S OLDEST LOOSE ONE (kanban #2136): the row is rewritten in place, so the round's store stays
+   * bounded and nothing is dropped beside it. Answers whether the row was taken (false when that old one is gone or now named).
+   */
+  replaceHandout(oldId, { id, roundId, bytes }) {
+    return this.db.prepare('UPDATE OR IGNORE handouts SET handout_id = ?, bytes = ?, accepted_ms = ? WHERE handout_id = ? AND round_id = ?')
+      .run(Buffer.from(id), Buffer.from(bytes), this.now(), Buffer.from(oldId), Buffer.from(roundId)).changes === 1;
   }
 
   /** Every handout this signer node accepted for one round: its id and bytes. */
@@ -2986,7 +3220,7 @@ export class Round {
 
   heldFinalAsk(entryIdBytes) {
     const r = this.db.prepare('SELECT * FROM held_final_ask WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
-    return r ? { entryId: new Uint8Array(r.entry_id), roundId: new Uint8Array(r.round_id), mark: new Uint8Array(r.mark), tick: r.tick } : null;
+    return r ? { entryId: new Uint8Array(r.entry_id), roundId: new Uint8Array(r.round_id), mark: new Uint8Array(r.mark), tick: r.tick, heldMs: r.held_ms } : null;
   }
 
   dropHeldFinalAsk(entryIdBytes) {
@@ -3016,6 +3250,17 @@ export class Round {
 
   holdsMark(checkpointIdBytes) {
     return !!this.db.prepare('SELECT 1 k FROM checkpoints WHERE checkpoint_id = ?').get(checkpointIdBytes);
+  }
+
+  /**
+   * WHOSE MARK IS IT (kanban #2151, #1489 audit44 refute of #1636): 'entry' when this node holds the mark under that round and
+   * entry, 'other' when it holds it under another, null when it does not hold it at all - one indexed read, no curve work, so
+   * carryReceipts can tell a peer's record that is about this entry from one that is not before it verifies anything.
+   */
+  markOfEntry(roundIdBytes, entryIdBytes, checkpointIdBytes) {
+    const rows = this.db.prepare('SELECT round_id, entry_id FROM checkpoints WHERE checkpoint_id = ?').all(checkpointIdBytes);
+    if (!rows.length) return null;
+    return rows.some((r) => same(new Uint8Array(r.round_id), roundIdBytes) && same(new Uint8Array(r.entry_id), entryIdBytes)) ? 'entry' : 'other';
   }
 
   /** This signer node's own receipt of a mark it holds, or null - never a new one. */
@@ -3529,6 +3774,47 @@ export class Round {
     return r ? { outpoint: r.outpoint, fields: JSON.parse(r.fields), contractId: r.contract_id, verifiedMs: Number(r.verified_ms) } : null;
   }
 
+  /**
+   * AN ENTRY'S LOCKS YIELD TO ANOTHER ENTRY OF ITS PLAYER KEY (kanban #2477, state audit 2026-11-12 sm1-entry-4): the one-key rule (#1215) kept the
+   * entry whose lock came first at each seat, so two entries of one key whose locks crossed were staked one at one seat and the other at another,
+   * and the round's settlement never formed. The key's entry is now the one with the lowest entry id among those whose locks the seat verified
+   * (stake-lock-signer-node.js keyHolderYields); a seat that took the other one first lets it go here: its stake lock, fee lock, stake seen and
+   * donation rows, in one transaction. Only while nothing was built on it yet: no lock fate of its locks, no settlement of the round, no result of
+   * the entry signed here and no forfeit of it - otherwise false and nothing is changed (the later lock is then refused, as before).
+   */
+  /**
+   * A STAKE A RUN WAS PLAYED ON (kanban #3223, state audit 2026-11-12 sm1-entry-2): yieldEntryLocks read lock fates, a settlement, a forfeit and
+   * this seat's own result, not the run - so a lower entry of the same player key (a second device on the seed, a reload that PLAYs again, or
+   * anyone dealing a handout under the player's public key with a lock to his refund key) took the stake of a run every seat had already seen
+   * staked and receipted: the played run was unstaked at every seat, left out of the settlement, and its lock had no early return. A stake is
+   * built on once it is seen here and a mark of its run holds a receipt (any committee member's - receipts travel to every seat, so the seats
+   * read this alike, unlike this seat's own result): such an entry keeps the key, and the lower entry's lock is refused as before #2477.
+   */
+  stakePlayedOn(entryIdBytes) {
+    const eid = Buffer.from(entryIdBytes);
+    if (!this.db.prepare('SELECT 1 FROM stake_seen WHERE entry_id = ?').get(eid)) return false;
+    return !!this.db.prepare('SELECT 1 FROM entries e JOIN checkpoints c ON c.round_id = e.round_id AND c.entry_id = e.entry_id '
+      + 'JOIN receipts r ON r.checkpoint_id = c.checkpoint_id WHERE e.entry_id = ? LIMIT 1').get(eid);
+  }
+
+  yieldEntryLocks(entryIdBytes, roundIdBytes) {
+    const eid = Buffer.from(entryIdBytes), rid = Buffer.from(roundIdBytes);
+    const outs = [this.stakeLock(eid), this.feeLock(eid)].filter(Boolean).map((l) => String(l.outpoint));
+    if (outs.some((o) => this.lockFate(o))) return false;
+    if (this.db.prepare('SELECT 1 FROM lock_settlements WHERE round_id = ?').get(rid)) return false;
+    if (this.db.prepare('SELECT 1 FROM forfeits WHERE entry_id = ?').get(eid)) return false;
+    if (this.identity && this.hasResult(rid, eid, Buffer.from(this.pubkey))) return false;
+    if (this.stakePlayedOn(eid)) return false;
+    const own = !this.db.isTransaction;
+    if (own) this.db.exec('BEGIN');
+    try {
+      for (const t of ['stake_seen', 'stake_seen_tick', 'stake_locks', 'fee_locks', 'donation_outputs'])
+        this.db.prepare(`DELETE FROM ${t} WHERE entry_id = ?`).run(eid);
+      if (own) this.db.exec('COMMIT');
+    } catch (e) { if (own) { try { this.db.exec('ROLLBACK'); } catch { /* none open */ } } throw e; }
+    return true;
+  }
+
   /** The round's one settlement of its losers' locks (W4): its intent, then where it stands. */
   putLockSettlement({ roundId, txid, message, signature, state, why }) {
     // A SUBMITTING ROW IS ON THE DISK BEFORE ITS SUBMIT (kanban #1243)
@@ -3542,7 +3828,7 @@ export class Round {
       const m = this.lockSettlementMoves(roundId);
       if (!m || m.txid !== String(txid)) {
         const h = typeof this.settlementTxidsOf === 'function' ? this.settlementTxidsOf(roundId).find((x) => x.txid === String(txid)) : null;
-        if (h && Array.isArray(h.claims)) this.putLockSettlementMoves({ roundId, txid: String(txid), claims: h.claims, payouts: h.payouts });
+        if (h && Array.isArray(h.claims)) this.#movesFromHistory(roundId, h);
       }
     }
     return done;
@@ -3578,7 +3864,11 @@ export class Round {
     if (!feds.length) return null;
     // EVERY FEDERATION OF THE SPLIT, NOT ONLY THE ROWS THERE ARE (kanban #1576): a federation the split names with no row yet (its part never built) keeps it SUBMITTING
     const accepted = new Set(feds.filter((r) => r.state === 'ACCEPTED').map((r) => r.federation));
-    return feds.every((r) => r.state === 'ACCEPTED') && this.fedLockSplitOf(roundIdBytes).every((f) => accepted.has(f)) ? 'ACCEPTED' : 'SUBMITTING';
+    // NO SPLIT KEPT AT ALL (kanban #2352, #1489 a44-refute-88-s2-1): a store from the build before #1576/#1838 holds federation rows and no split -
+    // a federation never reached has no row there, so its rows alone cannot say the round is settled. It is SUBMITTING until a settlement
+    // pass keeps the split (#settleFederations writes it from the plan before anything is signed)
+    const split = this.fedLockSplitOf(roundIdBytes);
+    return split.length && feds.every((r) => r.state === 'ACCEPTED') && split.every((f) => accepted.has(f)) ? 'ACCEPTED' : 'SUBMITTING';
   }
 
   /**
@@ -3598,8 +3888,17 @@ export class Round {
   }
 
   /** A series' proven publication fee (§5A.5): kept once; { txid, feeSats } or null. */
-  putSeriesPublication(seriesIdBytes, { txid, feeSats }) {
+  putSeriesPublication(seriesIdBytes, { txid, feeSats, tx = null, parents = null }) {
     this.db.prepare('INSERT OR IGNORE INTO series_publications (series_id, txid, fee_sats) VALUES (?, ?, ?)').run(Buffer.from(seriesIdBytes), String(txid), String(feeSats));
+    // THE PROOF KEPT TOO (kanban #2638): what another seat of the round pulls and checks itself - hex, the parents a JSON list
+    if (typeof tx === 'string' && Array.isArray(parents))
+      this.db.prepare('INSERT OR IGNORE INTO series_publication_proofs (series_id, tx, parents) VALUES (?, ?, ?)').run(Buffer.from(seriesIdBytes), tx, JSON.stringify(parents));
+  }
+
+  /** A series' kept publication proof (kanban #2638): { tx, parents } hex, or null - a row kept before the proof was kept has none. */
+  seriesPublicationProof(seriesIdBytes) {
+    const r = this.db.prepare('SELECT tx, parents FROM series_publication_proofs WHERE series_id = ?').get(Buffer.from(seriesIdBytes));
+    return r ? { tx: r.tx, parents: JSON.parse(r.parents) } : null;
   }
 
   seriesPublication(seriesIdBytes) {
@@ -3642,9 +3941,24 @@ export class Round {
         AND NOT EXISTS (SELECT 1 FROM settle_retries t WHERE t.round_id = r.round_id AND t.scope = '' AND t.state IN ('SETTLED', 'EXPIRED'))
         AND NOT (EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id)
           AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = r.round_id AND f.state <> 'ACCEPTED')
+          AND EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = r.round_id)   -- kanban #2352: no split kept (an old build's store): asked again
           AND NOT EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = r.round_id AND NOT EXISTS
             (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = p.round_id AND f.federation_id = p.federation_id AND f.state = 'ACCEPTED')))`)
       .all(CLOSED, fromMs, toMs).map((r) => new Uint8Array(r.round_id));
+  }
+
+  /**
+   * THE LANDED TXID'S MOVES AND ITS WINNERS' SHARES TOGETHER (kanban #2277, state audit 2026-11-12 sm9-settle-1): #1249 put back only the moves, so a row
+   * made ACCEPTED on another txid of the history (the other asker's T0, after this seat's own rebuild T1 was kept while the row was SUBMITTING) kept T1's
+   * stakeShares, and every late loser's stake was split by a transaction that never landed - another late settlement than the seats that kept T0's.
+   * The history keeps each txid's shares now; a txid kept before it has none, and the round's shares are then marked unknown, to be derived from this
+   * seat's own plan when the payout count matches (lateMessage, as #1240 does), never read from the other txid.
+   */
+  #movesFromHistory(roundId, h) {
+    this.putLockSettlementMoves({ roundId, txid: h.txid, claims: h.claims, payouts: h.payouts });
+    if (Array.isArray(h.shares)) this.putLockSettlementShares(roundId, h.shares);
+    else if (this.db.prepare('SELECT 1 FROM lock_settlement_shares WHERE round_id = ?').get(Buffer.from(roundId)))
+      this.db.prepare("UPDATE lock_settlement_shares SET shares = 'null' WHERE round_id = ?").run(Buffer.from(roundId));
   }
 
   /** What the signed settlement moves (W6): its claimed outpoints ("txid:idx") and its payout count. */
@@ -3654,14 +3968,19 @@ export class Round {
   }
 
   /** A settlement txid of the round (kanban #1171): kept once with what it moves; its signature filled in when it is known. */
-  putSettlementTxid({ roundId, txid, message, signature = null, claims = null, payouts = null }) {
+  putSettlementTxid({ roundId, txid, message, signature = null, claims = null, payouts = null, shares = null }) {
     const had = this.db.prepare('SELECT 1 FROM lock_settlement_txids WHERE round_id = ? AND txid = ?').get(Buffer.from(roundId), String(txid));
+    // AND THE WINNERS' SHARES IT PAYS (kanban #2277): what a row made ACCEPTED on this txid splits a late stake by
+    const sharesJson = Array.isArray(shares) ? sharesToJson(shares) : null;
     if (!had) {
       if (claims === null || payouts === null) return;
-      this.db.prepare('INSERT INTO lock_settlement_txids (round_id, txid, message, signature, claims, payouts, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)')
-        .run(Buffer.from(roundId), String(txid), Buffer.from(message || new Uint8Array(0)), Buffer.from(signature || new Uint8Array(0)), JSON.stringify(claims), Number(payouts), this.now());
-    } else if (signature && signature.length) {
-      this.db.prepare('UPDATE lock_settlement_txids SET signature = ? WHERE round_id = ? AND txid = ? AND length(signature) = 0').run(Buffer.from(signature), Buffer.from(roundId), String(txid));
+      this.db.prepare('INSERT INTO lock_settlement_txids (round_id, txid, message, signature, claims, payouts, made_ms, shares) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(Buffer.from(roundId), String(txid), Buffer.from(message || new Uint8Array(0)), Buffer.from(signature || new Uint8Array(0)), JSON.stringify(claims), Number(payouts), this.now(), sharesJson);
+    } else {
+      if (signature && signature.length)
+        this.db.prepare('UPDATE lock_settlement_txids SET signature = ? WHERE round_id = ? AND txid = ? AND length(signature) = 0').run(Buffer.from(signature), Buffer.from(roundId), String(txid));
+      if (sharesJson !== null)
+        this.db.prepare('UPDATE lock_settlement_txids SET shares = ? WHERE round_id = ? AND txid = ? AND shares IS NULL').run(sharesJson, Buffer.from(roundId), String(txid));
     }
   }
 
@@ -3678,14 +3997,26 @@ export class Round {
     } catch { return 0; }
     for (const r of rows) {
       const h = this.settlementTxidsOf(r.round_id).find((x) => x.txid === String(r.txid));
-      if (h && Array.isArray(h.claims)) { this.putLockSettlementMoves({ roundId: new Uint8Array(r.round_id), txid: String(r.txid), claims: h.claims, payouts: h.payouts }); n++; }
+      if (h && Array.isArray(h.claims)) { this.#movesFromHistory(new Uint8Array(r.round_id), h); n++; }
     }
     return n;
   }
 
+  /** Where each payout output of a settlement txid sends (kanban #1988): [{ kind, paymentHash, donationId }] in output order, kept once per txid. */
+  putSettlementPayoutKeys({ roundId, txid, payouts }) {
+    this.db.prepare('INSERT OR IGNORE INTO lock_settlement_payout_keys (round_id, txid, payouts) VALUES (?, ?, ?)')
+      .run(Buffer.from(roundId), String(txid), JSON.stringify(payouts));
+  }
+
+  settlementPayoutKeys(roundIdBytes, txid) {
+    const r = this.db.prepare('SELECT payouts FROM lock_settlement_payout_keys WHERE round_id = ? AND txid = ?').get(Buffer.from(roundIdBytes), String(txid));
+    return r ? JSON.parse(r.payouts) : null;
+  }
+
   settlementTxidsOf(roundIdBytes) {
-    return this.db.prepare('SELECT txid, message, signature, claims, payouts FROM lock_settlement_txids WHERE round_id = ? ORDER BY made_ms').all(Buffer.from(roundIdBytes))
-      .map((r) => ({ txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claims: JSON.parse(r.claims), payouts: Number(r.payouts) }));
+    return this.db.prepare('SELECT txid, message, signature, claims, payouts, shares FROM lock_settlement_txids WHERE round_id = ? ORDER BY made_ms').all(Buffer.from(roundIdBytes))
+      .map((r) => ({ txid: r.txid, message: new Uint8Array(r.message), signature: new Uint8Array(r.signature), claims: JSON.parse(r.claims), payouts: Number(r.payouts),
+        shares: r.shares == null ? null : sharesFromJson(r.shares) }));
   }
 
   lockSettlementMoves(roundIdBytes) {
@@ -3696,12 +4027,18 @@ export class Round {
   /** What the round's settlement paid each winner, in the table's order (slice C3b-1): [{ pubkey, msat }] or null. */
   putLockSettlementShares(roundIdBytes, shares) {
     this.db.prepare('INSERT OR REPLACE INTO lock_settlement_shares (round_id, shares) VALUES (?, ?)')
-      .run(Buffer.from(roundIdBytes), JSON.stringify(shares.map((x) => ({ pubkey: Buffer.from(x.pubkey).toString('hex'), msat: String(x.msat) }))));
+      .run(Buffer.from(roundIdBytes), sharesToJson(shares));
   }
 
   lockSettlementShares(roundIdBytes) {
     const r = this.db.prepare('SELECT shares FROM lock_settlement_shares WHERE round_id = ?').get(Buffer.from(roundIdBytes));
-    return r ? JSON.parse(r.shares).map((x) => ({ pubkey: new Uint8Array(Buffer.from(x.pubkey, 'hex')), msat: BigInt(x.msat) })) : null;
+    return r ? sharesFromJson(r.shares) : null;
+  }
+
+  /** The round's kept shares were another txid's than the landed one, and the history held none of it (kanban #2277): derive, never read. */
+  lockSettlementSharesUnknown(roundIdBytes) {
+    const r = this.db.prepare('SELECT shares FROM lock_settlement_shares WHERE round_id = ?').get(Buffer.from(roundIdBytes));
+    return !!r && r.shares === 'null';
   }
 
   /** A txid of a federation's or a late entry's settlement (kanban #1172), `scope` 'fed:<hex>' | 'late:<hex>': kept once with what it moves; its signature filled in. */
@@ -3807,6 +4144,11 @@ export class Round {
       },
       putWinnings() { /* the first round's row stands; the late payment is its late_winnings_sends row */ },
       lockSettlement(roundIdBytes) { return base.lateLockSettlement(roundIdBytes, late); },
+      // THE LATE ROW ONLY (kanban #2178): a late settlement is its one late_lock_settlements row. Without these two, a round that takes
+      // any federation fell through to the round's own federation rows (all ACCEPTED before any late settlement exists), so a late plan
+      // nothing had signed read ACCEPTED: never replaced by a lower plan, never dropped when stale, and contractFate's GONE check read them too.
+      settlementState(roundIdBytes) { const s = base.lateLockSettlement(roundIdBytes, late); return s ? s.state : null; },
+      fedLockSettlementsOf() { return []; },
     });
   }
 
@@ -3836,6 +4178,7 @@ export class Round {
           OR (NOT EXISTS (SELECT 1 FROM lock_settlements s WHERE s.round_id = o.round_id)
             AND EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id)
             AND NOT EXISTS (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = o.round_id AND f.state <> 'ACCEPTED')
+            AND EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = o.round_id)
             AND NOT EXISTS (SELECT 1 FROM fed_lock_split p WHERE p.round_id = o.round_id AND NOT EXISTS
               (SELECT 1 FROM fed_lock_settlements f WHERE f.round_id = p.round_id AND f.federation_id = p.federation_id AND f.state = 'ACCEPTED'))))`).all()
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
@@ -3890,10 +4233,46 @@ export class Round {
     return this.db.prepare("SELECT COUNT(*) AS n FROM donation_outputs WHERE round_id = ? AND contract_id LIKE 'settlement:%'").get(Buffer.from(roundIdBytes)).n;
   }
 
-  /** A standing outcome attestation of an attested round (§0A.7a), kept once by the id of its signed body. */
+  /**
+   * A standing outcome attestation of an attested round (§0A.7a), kept once by the id of its signed body. Answers whether the body is new.
+   * A LATER COPY OF THE SAME BODY ADDS ITS SIGNATURES (kanban #3131, #1489 r1120-4-s4, refute of #3069): the drawn seats combine on a
+   * fixed 10 s pass, so in every round the 5th seat in pass phase combines exactly 5 words and its copy is kept first everywhere; the 6th
+   * and 7th seats' fuller copy of the same body was ignored (INSERT OR IGNORE), and an honest drawn attestor late in that order never
+   * showed in any kept bytes (the node bounty read it "0 signed rounds" forever). Now a copy over a body already kept merges into the
+   * kept bytes: the kept signatures stay as they are, each key they lack is added (sorted by key, as combine writes them). Only a copy
+   * whose bytes encode exactly this body id is merged. The caller holds only what stood (server.js holdOutcome: attestationStands /
+   * valueAttestationStands check EVERY signature against the round's attestors), so the merged copy is signed by attestors alone, each
+   * once - it still stands. The body, its id, the round's outcome and the received time do not change.
+   */
   putOutcomeAttestation({ bodyId, roundId, outcome, observedAtMs, bytes, receivedMs = Date.now() }) {
-    return this.db.prepare('INSERT OR IGNORE INTO outcome_attestations (body_id, round_id, outcome, observed_ms, bytes, received_ms) VALUES (?, ?, ?, ?, ?, ?)')
+    const fresh = this.db.prepare('INSERT OR IGNORE INTO outcome_attestations (body_id, round_id, outcome, observed_ms, bytes, received_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(Buffer.from(bodyId), Buffer.from(roundId), outcome, Number(observedAtMs), Buffer.from(bytes), receivedMs).changes === 1;
+    if (!fresh) this.mergeAttestationSignatures(bodyId, bytes);
+    return fresh;
+  }
+
+  /** kanban #3131: add the signatures of `bytes` (a copy over body `bodyId`) that the kept copy lacks. Answers how many were added. */
+  mergeAttestationSignatures(bodyId, bytes) {
+    const id = toHex(bodyId);
+    const row = this.db.prepare('SELECT bytes FROM outcome_attestations WHERE body_id = ?').get(Buffer.from(bodyId));
+    if (!row) return 0;
+    const read = (b) => {
+      try {
+        const u = new Uint8Array(b), valued = isValueAttestationBytes(u);
+        const a = valued ? decodeValueAttestation(u) : decodeAttestation(u);
+        return toHex(valued ? valueAttestationBodyId(a) : attestationBodyId(a)) === id ? { a, valued } : null;
+      } catch { return null; }
+    };
+    const kept = read(row.bytes), more = read(bytes);
+    if (!kept || !more || kept.valued !== more.valued) return 0;
+    const sigs = new Map(kept.a.signatures.map((s) => [toHex(s.key), s]));
+    let added = 0;
+    for (const s of more.a.signatures) { const k = toHex(s.key); if (!sigs.has(k)) { sigs.set(k, s); added++; } }
+    if (!added) return 0;
+    const signatures = [...sigs].sort((x, y) => (x[0] < y[0] ? -1 : 1)).map(([, s]) => s);
+    const merged = kept.valued ? encodeValueAttestation({ ...kept.a, signatures }) : encodeAttestation({ ...kept.a, signatures });
+    this.db.prepare('UPDATE outcome_attestations SET bytes = ? WHERE body_id = ?').run(Buffer.from(merged), Buffer.from(bodyId));
+    return added;
   }
 
   /**
@@ -4027,6 +4406,15 @@ export class Round {
     return b.length >= 96 ? Buffer.from(b.subarray(64, 96)).toString('hex') : null;
   }
 
+  /**
+   * THE ROUNDS A CONSENTED NAME RECORD NAMES AN IDENTITY IN (kanban #2167): [{ roundId, playerPubkey }] - held at the join, before the round's
+   * reveals (and their h2h_identities rows) reach this seat, so a round still being decided here is seen as the round before in its match.
+   */
+  roundsNamingIdentity(identity) {
+    return this.db.prepare('SELECT round_id, player_pubkey FROM lobby_names WHERE identity_sig IS NOT NULL AND substr(record, 65, 32) = ?').all(Buffer.from(identity))
+      .map((r) => ({ roundId: new Uint8Array(r.round_id), playerPubkey: new Uint8Array(r.player_pubkey) }));
+  }
+
   /** A head-to-head entry's identity, kept once: the key and its signature over matchProofId. */
   putIdentity({ roundId, entryId, identity, sig }) {
     return this.db.prepare('INSERT OR IGNORE INTO h2h_identities (entry_id, round_id, identity, sig) VALUES (?, ?, ?, ?)')
@@ -4042,6 +4430,16 @@ export class Round {
   roundsOfIdentity(identity) {
     return this.db.prepare('SELECT round_id, entry_id FROM h2h_identities WHERE identity = ?').all(Buffer.from(identity))
       .map((r) => ({ roundId: new Uint8Array(r.round_id), entryId: new Uint8Array(r.entry_id) }));
+  }
+
+  /**
+   * The rounds an identity is a side of only through its consented name record (kanban #2280): the rounds whose lobby_names record, with the
+   * identity's own signature, names it (record bytes 64..96, lobby-name.js) - a forfeiter sent no reveal, so h2h_identities holds no row for him
+   * there, yet matchOf names his side by that record (#1401). [{ roundId }].
+   */
+  roundsOfConsentedIdentity(identity) {
+    return this.db.prepare('SELECT DISTINCT round_id FROM lobby_names WHERE identity_sig IS NOT NULL AND length(record) >= 96 AND substr(record, 65, 32) = ?')
+      .all(Buffer.from(identity)).map((r) => ({ roundId: new Uint8Array(r.round_id) }));
   }
 
   /** A head-to-head entry's stood reveal, kept once: a second for the same entry changes nothing. */
@@ -4230,6 +4628,17 @@ export class Round {
       out.push({ entryId: new Uint8Array(r.entry_id), joinedMs: Number(r.joined_ms), bytes: new Uint8Array(r.contract), sig: new Uint8Array(r.sig) });
     }
     return out;
+  }
+
+  /**
+   * EVERY ROUND THIS SEAT STORED A STAKE OR FEE LOCK AT THIS OUTPOINT FOR (kanban #2417, a44 refute of #1757/#2176): stake_locks and fee_locks
+   * are this seat's own tables, so one outpoint can sit under entries of two rounds here (a player names his round-1 lock in a round-2 entry at
+   * a seat that never stored it for round 1). Round ids as lowercase hex, distinct.
+   */
+  lockRoundsAt(outpointStr) {
+    const o = String(outpointStr).toLowerCase();
+    const rows = this.db.prepare('SELECT round_id FROM stake_locks WHERE lower(outpoint) = ? UNION SELECT round_id FROM fee_locks WHERE lower(outpoint) = ?').all(o, o);
+    return [...new Set(rows.map((r) => Buffer.from(r.round_id).toString('hex')))];
   }
 
   /** The entry a verified lock at this outpoint already stakes, or null: one lock is one entry. */

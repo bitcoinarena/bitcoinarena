@@ -30,14 +30,16 @@
 // already learned outran its slice on the slower machine and held seven seats at 105-170 % of a core): a pass reads at most
 // `maxBlocksPerPass` blocks over all proposals, each proposal keeps how far it has read, nothing already read or decided is
 // asked again, and the vote cache drops every height below the lowest phase still open.
-import { tally, CLASS, decodeVote, voteMessage } from '../../arena-protocol/src/ballot.js';
+import { tally, CLASS, decodeVote, voteMessage, censusByKeyPrefix } from '../../arena-protocol/src/ballot.js';
 import { liveConfig, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { decodeConfigProposalBody } from '../../arena-protocol/src/ballot.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { stateOf, PROPOSAL_STATE as S } from './proposals.js';
+import { stateOf, isLate, PROPOSAL_STATE as S } from './proposals.js';
 
 /** THE FEWEST CONFIRMATIONS AN OUTCOME IS WRITTEN AT (kanban #1152): a one- or two-block reorg never moves a decided proposal - a repeal's included. */
 export const MIN_DECIDE_DEPTH = 3;
+/** HOW FAR ABOVE ITS OLD PUBLICATION HEIGHT AN ORPHANED PROPOSAL'S DEPOSIT IS LOOKED FOR (kanban #1941): about six hours of blocks. */
+export const REFIND_SPAN = 36;
 
 /**
  * A BLOCK'S HASH AT A HEIGHT, WITH ITS THREE ANSWERS (kanban #1152), over a bitcoind `call(method, params)` (chain-rpc.js): the
@@ -76,8 +78,10 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   const open = new Map();                   // proposal id -> { readTo, readHash, census, votes: [], result } while undecided
   const reorgs = [];                        // what the reorg checks did, newest last (GET /proposals shows the last few)
   const bodies = new Map();                 // proposal id -> its decoded body (parent, configHash, config bytes)
+  const refindSeen = new Map();             // orphaned proposal id -> height -> the block hash its deposit was looked for in (#1941)
   let tip = null;
   let lives = new Map();                    // network hex -> liveConfig at the tip
+  let livesAt = null;                       // the tip `lives` was built at (kanban #2266)
   let spansAll = new Map();                 // network hex -> liveConfig over every passed proposal (no height cut)
   let running = false;
 
@@ -97,12 +101,18 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   // different speeds disagreeing. Now a COUNTING proposal that was undecided keeps its last outcome for liveConfig until it is
   // decided again (then the new outcome rules, the same one when no vote moved) or orphaned (its publication left: nothing held).
   // Held in memory from the undecide, and read back after a restart from the record (proposals.js keeps it as undecided.outcome).
+  // THE RECORD RULES, MEMORY NEVER OUTLIVES A MOVE (kanban #2229, #1489 audit44 refute of #1635): the memory hold was cleared
+  // only in the counting loop, so an orphan in a pass that stopped at an RPC error before the loop reached it left the hold in
+  // memory; once restored, the running seat served the old config while a seat restarted then (record: the hold stripped at the
+  // orphan, SM-B15) served genesis. Now a record that carries `undecided` (proposals.js) is the only answer, and the memory
+  // hold (for a store that keeps no undecided record) is dropped where the move happens: orphan, restore, reschedule.
   const heldOutcome = new Map();            // proposal id -> the outcome its recount replaces, while it is COUNTING again
   const outcomeOf = (p) => {
     const st = stateOf(p);
     if (st === S.PASSED) return p.decided;
     if (st !== S.COUNTING) return null;
-    return heldOutcome.get(p.id) || (p.undecided && p.undecided.outcome) || null;
+    if (p.undecided) return p.undecided.outcome || null;
+    return heldOutcome.get(p.id) || null;
   };
   // A DEPOSIT THAT BACKS TWO KEPT PROPOSALS BACKS NONE (kanban #1840, proposals.js counts): such a proposal is not tallied,
   // not live, and its phase is 'void' - the same answer at every seat that holds both
@@ -119,8 +129,13 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       l.set(net, liveConfig({ genesis, passed, height: tip === null ? 0 : tip }));
       s.set(net, liveConfig({ genesis, passed, height: Number.MAX_SAFE_INTEGER }));
     }
-    lives = l; spansAll = s;
+    lives = l; spansAll = s; livesAt = tip;
   };
+  // `LIVE` IS ALWAYS THE TIP'S (kanban #2266, #1489 fix-refute of #1751): a pass that read the tip and then threw (a votesAt /
+  // getblock timeout, the #1633 hash recheck) never reached refreshLive, so `lives` stayed at the height it was built at - after a
+  // restart the construction's height 0, i.e. genesis - while GET /config named the new tip beside it. Every reader of `lives` goes
+  // through here: built again whenever the tip moved since it was built, and every pass refreshes it in its finally as well.
+  const livesNow = () => { if (livesAt !== tip) refreshLive(); return lives; };
   // A KEPT OUTCOME IS THIS SEAT'S STATE FROM ITS FIRST ANSWER (kanban #1570): after a restart `spans` (the serving rule) and
   // `live` (GET /config) are read from the PASSED records in the store at once - not only at the end of the first pass that got
   // through the reorg check, which a bitcoind still loading its block index (-28) holds off for minutes. Until then the seat
@@ -164,14 +179,17 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       const { p, st } = c;
       let what = null;
       if (c.kind === 'back') {
-        if (c.got === 'same' && proposals.restore(p.id, { at: tip })) what = 'its publication block is on this chain again: counted again';
+        if (c.got === 'same' && proposals.restore(p.id, { at: tip })) { heldOutcome.delete(p.id); what = 'its publication block is on this chain again: counted again'; }
       } else if (c.got === 'above' && c.kind === 'read') {
         open.delete(p.id);                                  // this chain is shorter than the count: read again when it is there (memory only)
+        // AND THE CACHE ABOVE THE TIP GOES WITH IT (kanban #2019): a chain seen shorter may be a reorg seen part way - the
+        // heights above it are read again from the chain that grows there, never from the branch it may have left
+        for (const h of [...votesByHeight.keys()]) if (h > tip) { votesByHeight.delete(h); hashByHeight.delete(h); }
       } else if (c.got === 'other') {
         open.delete(p.id);
         const published = c.kind === 'published' ? 'other' : c.pub;
         if (published === 'other') {
-          if (proposals.orphan(p.id, { at: tip })) what = `its publication block left this chain${st === S.COUNTING ? '' : ` (it had ${st} at ${p.decided.decidedAt})`}: orphaned, kept with its bytes`;
+          if (proposals.orphan(p.id, { at: tip })) { heldOutcome.delete(p.id); what = `its publication block left this chain${st === S.COUNTING ? '' : ` (it had ${st} at ${p.decided.decidedAt})`}: orphaned, kept with its bytes`; }
         } else if (st !== S.COUNTING) {
           if (p.decided) heldOutcome.set(p.id, p.decided);    // kanban #1635: in force until the recount decides
           if (proposals.undecide(p.id, `the chain under its outcome changed at ${p.decided.anchor.height}`)) what = `the chain under its outcome (${st} at ${p.decided.decidedAt}) changed: counted again`;
@@ -182,6 +200,37 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       moved++;
       reorgs.push({ id: p.id, at: tip, what }); if (reorgs.length > 16) reorgs.shift();
       log(`[ballot] reorg: proposal ${p.id.slice(0, 16)}: ${what}`);
+    }
+    // ITS DEPOSIT MINED AGAIN IN ANOTHER BLOCK (kanban #1941): a reorg across the publication height usually puts the deposit
+    // back in the mempool and into a later block of the winning branch. Its old block never returns, and every peer holds the
+    // same old block hash, so the proposal stayed ORPHANED for good, deposit paid and confirmed. Now each orphaned proposal looks
+    // for its deposit in this chain's blocks from its old publication height up to REFIND_SPAN above it, and a block that holds
+    // it is handed to proposals.add - the ORPHANED -> COUNTING path that checks everything again (deposit, set, census,
+    // schedule). Bounded: each height is asked once per hash it has (memory only; a restart asks each once again).
+    for (const p of proposals.list()) {
+      if (stateOf(p) !== S.ORPHANED || typeof p.proposal !== 'string' || !Number.isInteger(p.publishedAt)) continue;
+      let seen = refindSeen.get(p.id);
+      if (!seen) { seen = new Map(); refindSeen.set(p.id, seen); }
+      const top = Math.min(tip === null ? p.publishedAt : tip, p.publishedAt + REFIND_SPAN);
+      for (let h = p.publishedAt; h <= top; h++) {
+        const x = await blockHashAt(h);                        // throws on an RPC error: the pass is skipped
+        if (!x) break;
+        const hash = String(x).toLowerCase();
+        if (hash === p.blockHash || seen.get(h) === hash) continue;
+        let got = null;
+        try { got = await proposals.add({ proposal: p.proposal, blockHash: hash }, { own: true }); } catch { got = null; }
+        if (!got || got.status === 503) break;                 // not answerable yet: asked again next pass
+        seen.set(h, hash);
+        if (got.ok && got.status === 201) {
+          refindSeen.delete(p.id);
+          open.delete(p.id);
+          const what = `its deposit is on this chain in block ${h}: taken again from that block, counted again`;
+          moved++;
+          reorgs.push({ id: p.id, at: tip, what }); if (reorgs.length > 16) reorgs.shift();
+          log(`[ballot] reorg: proposal ${p.id.slice(0, 16)}: ${what}`);
+          break;
+        }
+      }
     }
     // a moved chain: no vote read before is trusted again - every open proposal reads its heights afresh
     if (moved) { votesByHeight.clear(); hashByHeight.clear(); }
@@ -202,15 +251,23 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   // A BOUND PROPOSAL'S TWINS (kanban #2607, ruling #2591 (c), proposals.js twins): the same body re-signed on the same deposit is the
   // same proposal, so a vote under any twin's id counts for the one that stands for them, the seq rule across all of them
   const twinIdsOf = (p) => (boundOf(p) && typeof proposals.twins === 'function' ? proposals.twins(p.id) : [p.id]).map((x) => String(x).toLowerCase());
+  // A KEYED PROPOSAL (kanban #2671, ruled 2026-11-14): published at or above its network's BALLOT_KEY_HEIGHT - its votes name their bond
+  const keyedOf = (p) => !!(proposals && typeof proposals.keyed === 'function' && proposals.keyed(p));
   const keepVote = (p, o, v) => {
     const d = decodeVote(v.payload);
-    // a bound proposal (kanban #2125) reads only the 80-byte seq votes, an older one only the 77-byte ones
-    const bound = boundOf(p);
-    if (!d || d.bound !== bound) return 'other';
+    // a bound proposal (kanban #2125) reads only the 80-byte seq votes, an older one only the 77-byte ones; a keyed one only keyed votes
+    const keyed = keyedOf(p);
+    const bound = keyed || boundOf(p);
+    if (!d || d.bound !== bound || !!d.keyed !== keyed) return 'other';
     const named = (o.twins || [p.id]).filter((x) => toHex(d.idPrefix) === x.slice(0, 2 * d.idPrefix.length));
     if (!named.length) return 'other';
     const msgs = named.map((x) => (bound ? voteMessage(fromHex(x), d.choice, d.seq) : voteMessage(fromHex(x), d.choice)));
-    const results = msgs.flatMap((msg) => o.census.map((b) => { let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } return [pairKey(d.signature, msg, b.pubkey), good]; }));
+    // ONE LOOKUP, NOT THE CENSUS (kanban #2671): a keyed vote is checked only against the bond key(s) it names - junk under a proposal's
+    // prefix costs one check at most, where it cost one per census bond (10,000 junk outputs x a census of 20 = 200,000 checks a block)
+    if (keyed && !o.byKey) o.byKey = censusByKeyPrefix(o.census);
+    const against = keyed ? o.byKey.get(toHex(d.keyPrefix)) || [] : o.census;
+    if (!against.length) return 'junk';
+    const results = msgs.flatMap((msg) => against.map((b) => { let good = false; try { good = !!verify(d.signature, msg, b.pubkey); } catch { good = false; } return [pairKey(d.signature, msg, b.pubkey), good]; }));
     if (!results.some(([, good]) => good)) return 'junk';     // nothing remembered for junk: memory grows with kept votes only
     for (const [key, good] of results) o.checked.set(key, good);
     return 'kept';
@@ -247,9 +304,20 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         const sched = typeof proposals.reschedule === 'function' ? proposals.reschedule(p.id, { at: tip }) : 'same';
         if (sched === 'pending' && stateOf(p) === S.COUNTING) continue;
         if (sched === 'moved') {
-          open.delete(p.id);
+          open.delete(p.id); heldOutcome.delete(p.id);         // kanban #2229: a rewritten schedule holds nothing (proposals.js drops undecided)
           p = proposals.list().find((x) => x.id === listed.id) || listed;
           log(`[ballot] proposal ${p.id.slice(0, 16)}: its schedule read again from the history at ${p.publishedAt}: ${p.repeal ? 'repeal' : 'ordinary'}, voting ${p.votingFrom}-${p.votingUntil}${stateOf(p) === S.FAILED ? ' (void)' : ''}`);
+        }
+        // NO SIGHTINGS QUORUM BY THE BLOCK BEFORE ITS ACTIVATION: FAILED (kanban #2700, ruling #2776): a bound proposal counts only once bonds
+        // holding more than half of the census weight signed that they held it before its voting ended (proposals.js vouch); sightings only
+        // grow and arrive by the peer pull, so a seat does not decide "failed" for want of them at the decide depth - it keeps pulling and
+        // decides at activation_height - 1 at the latest: passed if the quorum is held by then (counted below), failed otherwise.
+        if (stateOf(p) === S.COUNTING && isLate(p) && tip >= p.activationHeight - 1
+          && (typeof proposals.twinOf !== 'function' || proposals.twinOf(p.id) === p.id)) {
+          const outcome = { passed: false, why: `no census majority signed that it held it before its voting ended by ${p.activationHeight - 1}, the block before its activation (kanban #2432, #2700)`,
+            decidedAt: tip, sightingsWeight: p.late && p.late.agreed ? p.late.agreed.weight : null };
+          if (proposals.decide(p.id, outcome)) { decided++; log(`[ballot] proposal ${p.id.slice(0, 16)} FAILED at ${tip}: ${outcome.why}`); }
+          open.delete(p.id); heldOutcome.delete(p.id); continue;
         }
         if (stateOf(p) !== S.COUNTING || !counted(p)) { open.delete(p.id); heldOutcome.delete(p.id); continue; }       // decided, orphaned, or void (#1840): not counted
         if (tip < p.votingFrom) continue;                       // review: votes are not counted yet (27A.7.4)
@@ -270,6 +338,14 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         const fromTo = o.readTo, fromHash = o.readHash;
         while (o.readTo < last && read < maxBlocksPerPass) {
           const h = o.readTo + 1;
+          // A CACHED HEIGHT IS USED ONLY WHILE ITS BLOCK IS STILL THIS SEAT'S (kanban #2019): its hash is asked again, and a
+          // block that changed is read afresh - so a count's votes always come from the chain its anchor (the last block read)
+          // is on, whatever the reorg checks saw before
+          if (votesByHeight.has(h) && typeof blockHashAt === 'function') {
+            const now = await blockHashAt(h);
+            if (!now) break;                                                 // above this seat's tip after all: the next pass
+            if (String(now).toLowerCase() !== hashByHeight.get(h)) { votesByHeight.delete(h); hashByHeight.delete(h); }
+          }
           if (!votesByHeight.has(h)) {
             // the block's hash first, and its votes from THAT block: the hash the count is later held to is the block it read
             const hash = typeof blockHashAt === 'function' ? await blockHashAt(h) : null;
@@ -296,6 +372,24 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         // Every height this pass added (and the block it went on from) is asked once more: one that differs, or is above the
         // tip now, means the count is not this chain's - it is dropped with the vote cache and its phase is read again next pass
         if (typeof blockHashAt === 'function' && o.readTo > fromTo) {
+          // THE FIRST BLOCKS OF A PHASE ARE HELD TO ITS PUBLICATION BLOCK TOO (kanban #2414): the reorg check asks a proposal's
+          // publication block only while nothing of its phase is read ('published'); from its first read block on it holds the
+          // count to readHash alone. A reorg landing after that check and before this pass's first reads (its census is read
+          // in between - minutes when cold) put the census and the phase on a branch without the deposit, readHash named that
+          // branch, and every later check answered 'same': counted, PASSED and live here, orphaned at a seat that first looked
+          // after the reorg. So when this pass read the phase's first blocks (no block to go on from), the publication block is
+          // asked once more: another block there orphans it, as the reorg check would; above the tip, the count is dropped
+          if (!fromHash && p.blockHash) {
+            const pub = await blockHashAt(p.publishedAt);      // throws on an RPC error: the pass stops, nothing written
+            if (!pub || String(pub).toLowerCase() !== String(p.blockHash).toLowerCase()) {
+              open.delete(p.id); votesByHeight.clear(); hashByHeight.clear(); reorged++;
+              const what = pub && proposals.orphan(p.id, { at: tip }) ? 'its publication block left this chain before its phase was read: orphaned, kept with its bytes'
+                : 'the chain changed while its phase was read: its votes are read again';
+              reorgs.push({ id: p.id, at: tip, what }); if (reorgs.length > 16) reorgs.shift();
+              log(`[ballot] reorg: proposal ${p.id.slice(0, 16)}: ${what}`);
+              continue;
+            }
+          }
           let broken = false;
           for (let h = fromHash ? fromTo : fromTo + 1; h <= o.readTo && !broken; h++) {
             const want = h === fromTo ? fromHash : hashByHeight.get(h);
@@ -312,7 +406,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         }
         if (o.dirty) {
           o.result = tally({ proposal: { class: CLASS[p.class] }, standing: { id: fromHex(p.id), votingFrom: p.votingFrom, votingUntil: p.votingUntil, twins: o.twins.filter((x) => x !== p.id).map(fromHex) },
-            census: o.census, votes: o.votes, verify: (sig, msg, pk) => checkedVerify(o, sig, msg, pk), bound: boundOf(p) });
+            census: o.census, votes: o.votes, verify: (sig, msg, pk) => checkedVerify(o, sig, msg, pk), bound: keyedOf(p) || boundOf(p), keyed: keyedOf(p) });
           o.dirty = false;
         }
         // DECIDED ONCE: the whole phase read, and its last block deep enough - no later than the block before its activation
@@ -339,7 +433,11 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       for (const h of votesByHeight.keys()) if (h < floor) { votesByHeight.delete(h); hashByHeight.delete(h); }
       refreshLive();
       return { tip, read, decided, reorged };
-    } finally { running = false; }
+    } finally {
+      running = false;
+      // kanban #2266: whatever the pass decided or wherever the tip went before it threw, `live`/`spans` follow it now
+      try { refreshLive(); } catch (e) { log(`[ballot] the live config could not be rebuilt (${e.message}): rebuilt on the next read`); livesAt = null; }
+    }
   }
 
   /** The phase of a kept proposal at the tip (27A.7.4): review, voting, cooldown, activated, failed - or void (27A.7.2). */
@@ -348,11 +446,12 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     const stands = typeof proposals.twinOf === 'function' ? proposals.twinOf(p.id) : p.id;
     if (stands && stands !== p.id) { const q = proposals.list().find((x) => x.id === stands); if (q) return phaseOf(q); }
     if (stateOf(p) === S.ORPHANED) return 'orphaned';
+    if (isLate(p)) return p.late && Number.isFinite(p.late.at) && p.late.at < p.votingUntil ? 'sightings' : 'late';   // kanban #2432; #2700: held in time here, waiting for a census majority's sightings
     if (!counted(p)) return 'void';
     if (!p.decided) return tip !== null && tip >= p.votingFrom ? 'voting' : 'review';
     if (!p.decided.passed) return 'failed';
     if (tip === null || tip < p.activationHeight) return 'cooldown';
-    const l = lives.get(p.networkId);
+    const l = livesNow().get(p.networkId);
     return l && l.void.some((v) => toHex(v.id) === p.id) ? 'void' : 'activated';
   };
   const historyJson = (h) => h.map((x) => ({ configHash: toHex(x.configHash), config: x.config ? toHex(x.config) : null, since: x.since, by: x.by ? toHex(x.by) : null }));
@@ -372,7 +471,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     live(net) {
       // kanban #1751: no tip yet, and a kept proposal could have moved the config - nothing is said rather than genesis
       if (tip === null && networks().has(net)) return null;
-      const l = lives.get(net) || liveConfig({ genesis: genesisFor(net), passed: [], height: tip === null ? 0 : tip });
+      const l = livesNow().get(net) || liveConfig({ genesis: genesisFor(net), passed: [], height: tip === null ? 0 : tip });
       const now = l.history[l.history.length - 1];
       return { network: net, tip, configHash: toHex(l.configHash), since: now.since, by: now.by ? toHex(now.by) : null,
         history: historyJson(l.history), void: l.void.map((v) => ({ id: toHex(v.id), why: v.why })) };

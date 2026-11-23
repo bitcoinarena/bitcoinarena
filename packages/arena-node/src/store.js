@@ -270,6 +270,15 @@ export function openStore(path = ':memory:') {
       PRIMARY KEY (round_id, entry_id, checkpoint_id)
     );
 
+    -- kanban #3013: the ids of marks this seat refused (stale head, tick back), past the offered_marks cap too - 32 bytes a mark,
+    -- at most Round.REFUSED_IDS_KEEP per entry - so the #2550 guard does not end where the evidence table's cap ends
+    CREATE TABLE IF NOT EXISTS refused_mark_ids (
+      checkpoint_id BLOB PRIMARY KEY,
+      round_id      BLOB NOT NULL,
+      entry_id      BLOB NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS refused_mark_ids_entry ON refused_mark_ids (round_id, entry_id);
+
     CREATE TABLE IF NOT EXISTS foreign_receipts (
       checkpoint_id BLOB NOT NULL,
       node_pubkey   BLOB NOT NULL,
@@ -356,6 +365,26 @@ export function openStore(path = ':memory:') {
       round_id    BLOB NOT NULL,
       bytes       BLOB NOT NULL,
       accepted_ms INTEGER NOT NULL
+    );
+
+    -- A HANDOUT SHOWN WITH ITS STAKE LOCK (kanban #2415, #2481): the door checked the lock with the federation (image A0, the player's
+    -- refund key, the round's claim key), so no other handout pushes this one out of a full round (round.js looseHandouts). A table of its
+    -- own so a store written before it existed gains it.
+    CREATE TABLE IF NOT EXISTS handout_locks (
+      handout_id  BLOB PRIMARY KEY,
+      round_id    BLOB NOT NULL,
+      pinned_ms   INTEGER NOT NULL
+    );
+
+    -- ONE PIN PER LOCK (kanban #2644, a bypass of #1605/#2136/#2415 found by the #1489 audit): nothing ties a lock to one handout - the same
+    -- A0 with fresh coefficients is a new handout id every time - so one real lock (even another player's, copied from public data) pinned any
+    -- number of forged handouts, never loose, and the round's store grew without bound. A lock's outpoint pins the FIRST handout shown with
+    -- it in its round, and only that one (round.js pinHandout); a later one shown with it stays loose, under the cap.
+    CREATE TABLE IF NOT EXISTS handout_lock_outpoints (
+      round_id    BLOB NOT NULL,
+      outpoint    TEXT NOT NULL,
+      handout_id  BLOB NOT NULL,
+      PRIMARY KEY (round_id, outpoint)
     );
 
     -- (NO HOLDS TABLE IN A NEW STORE: it was the hold invoice's record of a stake in flight - the withdrawn Lightning
@@ -984,6 +1013,14 @@ export function openStore(path = ':memory:') {
       fee_sats  TEXT NOT NULL
     );
 
+    -- ...AND THE PROOF ITSELF (kanban #2638): the publication's raw bytes and the parents that prove its fee, hex, kept beside the row so
+    -- every other seat of the series' paying round can pull it (GET /series-publication) and check it against its own chain
+    CREATE TABLE IF NOT EXISTS series_publication_proofs (
+      series_id BLOB PRIMARY KEY,
+      tx        TEXT NOT NULL,
+      parents   TEXT NOT NULL
+    );
+
     -- A ROUND'S CREATOR SIGNATURE (§6): the BIP-340 signature by the key the contract names over its id, kept
     -- beside the round as the id is (a signature is never inside the bytes it signs), and served at GET /round-creator.
     CREATE TABLE IF NOT EXISTS round_creators (
@@ -1033,6 +1070,14 @@ export function openStore(path = ':memory:') {
       claims       TEXT NOT NULL,
       payouts      INTEGER NOT NULL,
       made_ms      INTEGER NOT NULL,
+      PRIMARY KEY (round_id, txid)
+    );
+    -- WHERE EACH SEND'S FIRST CONTRACT SITS IN A SETTLEMENT TXID (kanban #1988): per payout output, in order, its kind, payment hash and donation send
+    -- id - kept with the txid, so a round ACCEPTED on it drives its sends against what landed, not against a rebuild a restart may make otherwise
+    CREATE TABLE IF NOT EXISTS lock_settlement_payout_keys (
+      round_id     BLOB NOT NULL,
+      txid         TEXT NOT NULL,
+      payouts      TEXT NOT NULL,
       PRIMARY KEY (round_id, txid)
     );
     -- A LATE LOSER'S SECOND SETTLEMENT (§13A, RULED 2026-09-24, slice C3b-1): one per (round, entry), never a second
@@ -1367,6 +1412,22 @@ export function openStore(path = ':memory:') {
   // the prune's deletes included) and recounted once here at open. Per entry, round and accused node the sums stay queries over an
   // index, each bounded by its own cap; relayed_accused (slash rows only) serves the per-accused-node cap over all rounds.
   db.exec('CREATE INDEX IF NOT EXISTS relayed_accused ON relayed (accused) WHERE accused IS NOT NULL');
+  // THE LOOKUPS A SEAT MAKES EVERY ROUND, BY INDEX (kanban #2901, measured 2026-11-16 on seat 1: handoutCount alone ~20 % of the seat's CPU, a
+  // full scan of handouts per call; stake_locks, fee_locks, batches, rounds by time and the rest scanned 4,000-275,000 rows each; with these the
+  // seat went from ~1.5 % to ~65 % idle). Each one alone, so a table another module creates later is indexed on the next open.
+  for (const sql of [
+    'CREATE INDEX IF NOT EXISTS handouts_by_round ON handouts (round_id)',
+    'CREATE INDEX IF NOT EXISTS stake_locks_by_round ON stake_locks (round_id)',
+    'CREATE INDEX IF NOT EXISTS stake_locks_by_outpoint ON stake_locks (outpoint)',
+    'CREATE INDEX IF NOT EXISTS fee_locks_by_outpoint ON fee_locks (outpoint)',
+    'CREATE INDEX IF NOT EXISTS batches_by_entry_seq ON batches (entry_id, seq)',
+    'CREATE INDEX IF NOT EXISTS rounds_by_opened ON rounds (opened_ms)',
+    'CREATE INDEX IF NOT EXISTS entries_by_joined ON entries (joined_ms)',
+    'CREATE INDEX IF NOT EXISTS final_sigs_by_seen ON final_sigs (seen_ms)',
+    'CREATE INDEX IF NOT EXISTS market_orders_by_received ON market_orders (received_ms)',
+    'CREATE INDEX IF NOT EXISTS tx_steps_by_at ON tx_steps (at_ms)',
+    'CREATE INDEX IF NOT EXISTS tx_round_events_by_at ON tx_round_events (at_ms)',
+  ]) { try { db.exec(sql); } catch { /* that table is not in this store (yet) */ } }
   db.exec('CREATE TABLE IF NOT EXISTS relayed_tally (k TEXT PRIMARY KEY, n INTEGER NOT NULL)');
   const rowCost = (t) => `(LENGTH(${t}.bytes) + ${RELAY_ROW_COST})`;
   const tallyOf = (t) => ({
@@ -1414,6 +1475,9 @@ export function openStore(path = ':memory:') {
     db.exec('ALTER TABLE relayed ADD COLUMN capped INTEGER NOT NULL DEFAULT 0');
   if (!db.prepare('PRAGMA table_info(lobby_names)').all().some((c) => c.name === 'identity_sig'))
     db.exec('ALTER TABLE lobby_names ADD COLUMN identity_sig BLOB');
+  // THE ROUNDS A CONSENTED NAME RECORD PUTS AN IDENTITY IN (kanban #2167, refutes #1748): the record's identity key (bytes 64..96, lobby-name.js),
+  // read by match.js before any reveal of that round has reached this seat
+  db.exec('CREATE INDEX IF NOT EXISTS lobby_names_consented_identity ON lobby_names (substr(record, 65, 32)) WHERE identity_sig IS NOT NULL');
   for (const t of ['objections', 'rerun_objections'])
     if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'block_hash'))
       db.exec(`ALTER TABLE ${t} ADD COLUMN block_hash BLOB`);
@@ -1424,6 +1488,10 @@ export function openStore(path = ':memory:') {
       db.exec(`ALTER TABLE ${t} ADD COLUMN bundle BLOB`);
   // A FORK PAIR SAYS WHETHER BOTH ITS MARKS WERE RECEIPTED BY A SEAT (§13BRULED 2026-10-05 (b)): a
   // same-parent pair forfeits only then. A row from before counts as not receipted.
+  // A SETTLEMENT TXID OF THE HISTORY KEEPS THE WINNERS' SHARES IT PAYS (kanban #2277): a row made ACCEPTED on it splits a late stake by them. A row
+  // from before carries none (NULL), and the round's shares are then derived from this seat's own plan instead of kept from another txid
+  if (!db.prepare('PRAGMA table_info(lock_settlement_txids)').all().some((c) => c.name === 'shares'))
+    db.exec('ALTER TABLE lock_settlement_txids ADD COLUMN shares TEXT');
   if (!db.prepare('PRAGMA table_info(fork_pairs)').all().some((c) => c.name === 'receipted'))
     db.exec('ALTER TABLE fork_pairs ADD COLUMN receipted INTEGER NOT NULL DEFAULT 0');
   // A DONATION OUTPUT SAYS WHETHER THE SENDER'S KEY IS ON ITS CONTRACT (2026-10-05): 1 when its payment

@@ -32,7 +32,7 @@ const botGuards = () => {
   const minLeft = Number((BOT.match(/MIN_LEFT_MS\s*=\s*Number\(env\.MIN_LEFT_MS\s*\|\|\s*(\d+)\)/) || [])[1]);
   const beforeLock = Number((BOT.match(/Number\(c\.entryCloseMs\)\s*-\s*Date\.now\(\)\s*<\s*(\d+)\)\s*return\s*\{\s*ok:\s*false,\s*why:\s*'too late to enter'/) || [])[1]);
   const body = BOT.slice(BOT.indexOf('async function enter('), BOT.indexOf('// A TABLE IS WATCHED'));
-  return { minLeft, beforeLock, lockAt: body.indexOf('await lockEntry('), handoutAt: body.indexOf('/handout') };
+  return { minLeft, beforeLock, lockAt: body.indexOf('lockEntry(') /* since #2910 (955b1839d) started beside the handout, not awaited (#2915) */, handoutAt: body.indexOf('/handout') };
 };
 
 test('#1489 refute 3 #1485: the test opponent makes no head-to-head lock the seats will refuse the handout of', async () => {

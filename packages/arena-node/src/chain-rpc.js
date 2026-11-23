@@ -132,9 +132,47 @@ function bestOf(call, cache) {
 export const HASH_BATCH = 500;
 export const BLOCK_BATCH = 32;
 export const BLOCK_BATCH_BYTES = 16 * 1024 * 1024;
+// HOW MANY BLOCKS GO IN ONE REQUEST IS SET BY THE SIZES OF THE BLOCKS IN IT, READ FIRST (kanban #2441, #2492, #1489 a44 refute of
+// #1968 after #2217). #2217 learned a count from the largest block of the last answer: a run of tiny blocks - which anyone who mines
+// testnet4 at minimum difficulty can put in front of large ones - taught it 32, and the next request was 32 large blocks in one answer
+// (64 MB of hex at 1 MB blocks, ~256 MB at 4 MB). Now each part's blocks are sized before they are asked: one getblockstats
+// [hash, ['total_size']] batch for the blocks a chunk wants (a few dozen bytes an answer; bitcoind reads its own disk, nothing crosses a
+// lane), and they are packed in order up to BLOCK_BATCH_BYTES of hex, at most BLOCK_BATCH blocks, never fewer than one. A block whose
+// size bitcoind did not say counts as the largest a block can be (MAX_BLOCK_BYTES raw: two to a request).
+// AND A REQUEST THAT FAILED IS NEVER ASKED AGAIN AT ITS SIZE (kanban #2492): a getblock batch that is refused or times out (the 30 s
+// fetch timeout counts the queue behind the other lane) halves cache.blockBatchPer, the most blocks one request may hold, before the
+// error goes up - so every retry asks at most half of what failed, down to one block a request (the walk before #1968). The halved
+// count holds for BLOCK_BATCH_HOLD_MS (cache.blockBatchHeldUntil): doubling it again on the next answer would ask the size that just
+// failed (a 30 s timeout every other request); after that, each answer read whole raises it again, at most twofold.
+export const BLOCK_BATCH_HOLD_MS = 10 * 60 * 1000;
+export const MAX_BLOCK_BYTES = 4_000_000;
+/** Pack `hashes` (in order) into requests: each one's hex at most BLOCK_BATCH_BYTES, at most `per` blocks, never empty. */
+export function packBlockBatches(hashes, sizeOf, per = BLOCK_BATCH) {
+  const most = Math.max(1, Math.min(BLOCK_BATCH, Number.isInteger(per) ? per : BLOCK_BATCH));
+  const parts = [];
+  let part = [], bytes = 0;
+  for (const x of hashes) {
+    const s = sizeOf(x);
+    const hex = 2 * (Number.isSafeInteger(s) && s > 0 && s <= MAX_BLOCK_BYTES ? s : MAX_BLOCK_BYTES);
+    if (part.length && (part.length >= most || bytes + hex > BLOCK_BATCH_BYTES)) { parts.push(part); part = []; bytes = 0; }
+    part.push(x); bytes += hex;
+  }
+  if (part.length) parts.push(part);
+  return parts;
+}
+// the raw sizes of `hashes` as bitcoind says them; a bitcoind that does not answer getblockstats leaves them unknown (the largest)
+async function blockSizes(call, hashes) {
+  const sizes = new Map();
+  if (!hashes.length) return sizes;
+  try {
+    const r = await call.batch(hashes.map((x) => ['getblockstats', [x, ['total_size']]]));
+    hashes.forEach((x, i) => { const s = r[i] && r[i].total_size; if (Number.isSafeInteger(s) && s > 0) sizes.set(x, s); });
+  } catch { /* unknown: each counts as MAX_BLOCK_BYTES */ }
+  return sizes;
+}
 async function readDeepInBatches(call, from, to, cache) {
   const deepTo = to - DEEP_BLOCKS;
-  let per = BLOCK_BATCH;
+  const perNow = () => (Number.isInteger(cache.blockBatchPer) && cache.blockBatchPer >= 1 ? Math.min(BLOCK_BATCH, cache.blockBatchPer) : BLOCK_BATCH);
   for (let lo = from; lo <= deepTo; lo += HASH_BATCH) {
     const hi = Math.min(deepTo, lo + HASH_BATCH - 1);
     const need = [], waits = [];
@@ -160,16 +198,22 @@ async function readDeepInBatches(call, from, to, cache) {
       const fly = cache.inFlight.get(hash);
       if (fly) held.push(fly); else if (!want.includes(hash)) want.push(hash);
     }
+    const sizes = await blockSizes(call, want);
     for (let i = 0; i < want.length;) {
       // another view may have taken some of these meanwhile: those are waited for, not read again
-      const part = [];
-      while (i < want.length && part.length < per) {
-        const x = want[i++];
+      const left = [];
+      for (; i < want.length; i++) {
+        const x = want[i];
         if (cache.get(x)) continue;
         const fly = cache.inFlight.get(x);
-        if (fly) held.push(fly); else part.push(x);
+        if (fly) held.push(fly); else left.push(x);
+        if (left.length >= BLOCK_BATCH) { i++; break; }
       }
-      if (!part.length) continue;
+      if (!left.length) continue;
+      const per = perNow();
+      const part = packBlockBatches(left, (x) => sizes.get(x), per)[0];
+      // the blocks of `left` not in this part are looked at again for the next request
+      i = want.indexOf(part[part.length - 1]) + 1;
       const ask = Promise.resolve(call.batch(part.map((x) => ['getblock', [x, 0]])));
       const each = part.map((x, k) => {
         const p = ask.then((r) => {
@@ -181,10 +225,16 @@ async function readDeepInBatches(call, from, to, cache) {
         p.then(() => cache.inFlight.delete(x), () => cache.inFlight.delete(x));
         return p;
       });
-      const answers = await ask;
+      try {
+        await ask;
+      } catch (e) {
+        // the next request - this view's retry or any other view's - holds at most half of the one that failed
+        cache.blockBatchPer = Math.max(1, Math.min(perNow(), Math.floor(part.length / 2)));
+        cache.blockBatchHeldUntil = Date.now() + BLOCK_BATCH_HOLD_MS;
+        throw e;
+      }
       await Promise.all(each);
-      const bytes = answers.reduce((n, a) => n + String(a).length, 0);
-      per = Math.max(1, Math.min(BLOCK_BATCH, Math.floor(BLOCK_BATCH_BYTES / Math.max(1, bytes / part.length))));
+      if (!(cache.blockBatchHeldUntil > Date.now())) cache.blockBatchPer = Math.min(BLOCK_BATCH, perNow() * 2);
     }
     await Promise.all(held);
   }
@@ -192,6 +242,9 @@ async function readDeepInBatches(call, from, to, cache) {
 
 export async function blocksOver(call, from, to, { cache = null } = {}) {
   const blocks = [];
+  // THE HASH EACH BLOCK WAS READ UNDER, height by height (kanban #2191, #1841): a caller that keys what it derives by a block's hash
+  // checks the view's own block at that height came under that hash - not whether its cache happens to hold that block
+  const hashes = [];
   let best = null;
   if (cache && cache.hashes && cache.hashInFlight && cache.inFlight && call && typeof call.batch === 'function') await readDeepInBatches(call, from, to, cache);
   for (let h = from; h <= to; h++) {
@@ -221,6 +274,7 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
       if (deep) cache.putHash(h, hash);
       else if (top && cache.topBest === best) cache.topHashes.set(h, hash);
     }
+    hashes.push(String(hash));
     const had = cache ? cache.get(hash) : undefined;
     if (had) { blocks.push(had); continue; }
     // THE BLOCK, TURNED FROM HEX INTO BYTES, IS THIS THREAD'S WORK (2026-09-18 02:40: name the leftover). The
@@ -244,7 +298,9 @@ export async function blocksOver(call, from, to, { cache = null } = {}) {
     } else block = await read();
     blocks.push(block);
   }
-  return { blocks, firstHeight: from };
+  const view = { blocks, firstHeight: from };
+  Object.defineProperty(view, 'hashes', { value: hashes, enumerable: false });
+  return view;
 }
 
 /**
@@ -268,6 +324,8 @@ export function blockCache({ max = 50000 } = {}) {
     topHashes: new Map(),                    // height -> hash near the views' tops, valid while topBest is bitcoind's best (blocksOver)
     topBest: null, bestInFlight: null,
     hashInFlight: new Map(),                 // `d<height>` / `t<best>:<height>` -> the getblockhash still out (blocksOver)
+    blockBatchPer: BLOCK_BATCH,              // the most blocks one getblock request may hold, halved by a request that failed (kanban #2492)
+    blockBatchHeldUntil: 0,                  // until then it is not raised again (kanban #2492)
     putHash: (height, hash) => {
       hashes.set(height, hash);
       if (hashes.size > max) hashes.delete(hashes.keys().next().value);

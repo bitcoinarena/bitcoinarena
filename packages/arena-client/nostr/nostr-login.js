@@ -16,6 +16,37 @@ import * as nip19 from 'nostr-tools/nip19';
 import * as nip44 from 'nostr-tools/nip44';
 import { BunkerSigner, parseBunkerInput, createNostrConnectURI } from 'nostr-tools/nip46';
 import { SimplePool } from 'nostr-tools/pool';
+import { minePow } from 'nostr-tools/nip13';
+
+/**
+ * PUBLISH, AND PAY THE PROOF OF WORK A RELAY ASKS FOR (kanban #2847, ruling 2026-11-16): the game's relay asks an author it has never kept for
+ * NIP-13 proof of work while it is nearly full ('pow: difficulty N required'). The event is mined here to the highest difficulty asked (`onMining`
+ * says so meanwhile: "preparing your profile ..."), signed again and sent to those relays. Answers the relays that took it.
+ */
+/** The most proof of work the page mines for one event (kanban #3030): the game relay's POW_MAX. */
+export const POW_MINE_MAX = 28;
+export async function publishWithPow(pool, relays, ev, signer, { onMining = () => {} } = {}) {
+  const res = await Promise.allSettled(pool.publish([...relays], ev));
+  const took = [], asked = [];
+  res.forEach((r, i) => {
+    if (r.status === 'fulfilled') { took.push(relays[i]); return; }
+    const m = /pow: difficulty (\d+) required/.exec(String((r.reason && r.reason.message) || r.reason || ''));
+    if (m) asked.push([relays[i], Number(m[1])]);
+  });
+  // A CAPPED DIFFICULTY (kanban #3030, audit nostr r2-1): minePow is a synchronous loop on the page's one thread, and the highest difficulty any
+  // relay of the list asked was mined - one public relay answering 'pow: difficulty 64 required' froze the first Nostr login for good. The game's
+  // relay never asks more than POW_MINE_MAX (its POW_MAX, 28); a relay asking more is taken as refusing and is not mined for
+  const fair = asked.filter(([, n]) => Number.isInteger(n) && n >= 0 && n <= POW_MINE_MAX);
+  asked.length = 0; asked.push(...fair);
+  if (!asked.length) return took;
+  const need = Math.max(...asked.map(([, n]) => n));
+  onMining(need);
+  const mined = minePow({ kind: ev.kind, created_at: ev.created_at, tags: (ev.tags || []).filter((t) => t[0] !== 'nonce'), content: ev.content, pubkey: ev.pubkey }, need);
+  const signed = await signer.signEvent({ kind: mined.kind, created_at: mined.created_at, tags: mined.tags, content: mined.content });
+  const again = await Promise.allSettled(pool.publish(asked.map(([u]) => u), signed));
+  again.forEach((r, i) => { if (r.status === 'fulfilled') took.push(asked[i][0]); });
+  return took;
+}
 import { sha256 } from '@noble/hashes/sha2.js';
 import { ARENA_RELAY } from '../../arena-protocol/src/nostr-relays.js';
 
@@ -132,6 +163,13 @@ export async function seedFor(signer, { pool = new SimplePool(), relays = NOSTR_
     // our relay is in the list it must be one of them (public relays prune NIP-78 app data, ours keeps it)
     if (!found && (asked.unanswered.length || (relays.includes(NOSTR_RELAYS[0]) && !up.includes(NOSTR_RELAYS[0]))))
       throw new Error(`your Nostr relays did not answer in time (${(asked.unanswered.length ? asked.unanswered : [NOSTR_RELAYS[0]]).join(', ')}): try again in a moment (no new wallet is made, so it cannot replace yours)`);
+    // A SIGNER'S SEED IS RANDOM, SO THE GAME'S OWN RELAY MUST HAVE SAID "NOTHING" (kanban #2713, #1489 r4-nostr-6): the check above held
+    // only for our default list - a list (the account's own relays) whose first relay, the one the seed is kept on, did not even connect let
+    // another relay's empty answer mint a second random seed, published and taken by every later login: the wallet funded under the first
+    // was no longer the account's. The list's first relay is the game's own (NOSTR_RELAYS[0] by default); without its answer no random seed
+    // is made. An nsec's seed is derived (the same every time), so for it a relay out changes nothing.
+    if (!found && signer.method !== 'nsec' && relays.length && !up.includes(relays[0]))
+      throw new Error(`your game's Nostr relay (${relays[0]}) did not answer: try again in a moment (no new wallet is made, so it cannot replace yours)`);
   }
   if (found) {
     let plain;
@@ -143,7 +181,7 @@ export async function seedFor(signer, { pool = new SimplePool(), relays = NOSTR_
   const seed = signer.method === 'nsec' ? derivedSeed(signer.secret) : random(32);
   const content = await signer.encrypt(signer.pubkey, JSON.stringify({ v: 1, game: 'bitcoin-arena', seed: hex(seed) }));
   const ev = await signer.signEvent({ kind: SEED_KIND, created_at: Math.floor(Date.now() / 1000), tags: [['d', SEED_D]], content });
-  const took = (await Promise.allSettled(pool.publish(up, ev))).map((r, i) => (r.status === 'fulfilled' ? up[i] : null)).filter(Boolean);
+  const took = await publishWithPow(pool, up, ev, signer);   // kanban #2847: with proof of work where a relay asks for it
   if (!took.length) throw new Error('no relay took your game seed: nothing was made, try again');
   return { seed, created: true, from: signer.method === 'nsec' ? 'derived' : 'random', relays: took };
 }
@@ -157,7 +195,7 @@ export async function profileOf(pubkey, { pool = new SimplePool(), relays = NOST
 /** A new account's profile, so the lobby has a name to show: kind 0 { name }, published where the seed is. */
 export async function publishProfile(signer, name, { pool = new SimplePool(), relays = NOSTR_RELAYS } = {}) {
   const ev = await signer.signEvent({ kind: 0, created_at: Math.floor(Date.now() / 1000), tags: [], content: JSON.stringify({ name: String(name).slice(0, 40) }) });
-  return (await Promise.allSettled(pool.publish([...relays], ev))).filter((r) => r.status === 'fulfilled').length;
+  return (await publishWithPow(pool, [...relays], ev, signer)).length;   // kanban #2847
 }
 export const npubOf = (pubkey) => nip19.npubEncode(pubkey);
 export { SimplePool };

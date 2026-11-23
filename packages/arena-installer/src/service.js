@@ -46,6 +46,10 @@ Wants=network-online.target
 [Service]
 WorkingDirectory=${join(release, 'packages/arena-node')}
 ExecStart=${node} src/run.js ${join(home, 'arena.conf')}
+# EVERY START AND STOP IN THE SETUP LOG (kanban #2867, feedback #088: a seat restart left no line saying it stopped or why): systemd hands the
+# stop's result, exit code and status to ExecStopPost; the seat's own last lines come from its journal
+ExecStartPre=-/bin/sh -c 'mkdir -p %h/.cache && echo "$$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ) seat on port ${port} starting" >> %h/.cache/bitcoin-arena-node-setup.log'
+ExecStopPost=-/bin/sh -c 'mkdir -p %h/.cache && echo "$$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ) seat on port ${port} stopped: result=$$SERVICE_RESULT code=$$EXIT_CODE status=$$EXIT_STATUS; its last lines: $$(journalctl --user -u %n -n 3 -o cat --no-pager 2>/dev/null | tr -s \"\\\\n\" \" \" | cut -c1-600)" >> %h/.cache/bitcoin-arena-node-setup.log'
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=60

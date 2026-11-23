@@ -65,8 +65,10 @@ const CHUNK = 6;
 /** A round with one driver, publishing as the page does. */
 function driving(ticks, { liquidations = [], loads = [], joinTick = 0 } = {}) {
   const round = new Round(openStore(':memory:'), undefined, { plugins: HOSTED });
-  const rid = round.open(contract());
-  const entry = entryFor(rid, joinTick);
+  // a run that carries liquidations plays in a FREE round: a staked Next Block run takes no player-declared strikes (kanban #2655)
+  const free = liquidations.length > 0;
+  const rid = round.open(free ? { ...contract(), stakeMsat: 0n } : contract());
+  const entry = free ? { ...entryFor(rid, joinTick), stakeMsat: 0n, feeMsat: entryFeeMsat(0n) } : entryFor(rid, joinTick);
   const eid = round.enter(entry);
   const ghosts = new Ghosts(round, { plugins: HOSTED, randomnessFor: () => BEACON });
   let previousHash = GENESIS;

@@ -14,10 +14,11 @@
 //      the old release started, and the update said refused, with why.
 // A data migration is the seat's own: openStore migrates its database on start (store.js), and the backup is what a failed one
 // is rolled back from.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync, statSync, statfsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, renameSync, rmSync, statSync, statfsSync, linkSync } from 'node:fs';
 import { join } from 'node:path';
+import { readDurableJson, writeDurableJson } from '../../arena-node/src/durable-json.js';
 import { homedir, uptime } from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { checkAsset } from './release-verify.js';
 import { seatUnit, bridgeUnit, unitDir, UNIT, BRIDGE_UNIT, TUNNEL_UNIT, waitHealthy, launchdPlist, LAUNCHD_LABEL, interactivePlist, windowsLauncher, withWindowsRestart, removeProgram, unitName, waitPortLine } from './service.js';
 import { adhocSign } from './tor.js';
@@ -47,7 +48,11 @@ import { newerVersion } from '../../arena-node/src/release-latest.js';
 
 /** Files that are the node: kept across an update, backed up before it. */
 export const NODE_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'arena.conf', 'node.env', 'state.json', 'seed.hex', 'node.db.owner.json',
-  'node.db.operator-tokens.json', 'bitcoind.auth', 'cloudflared.yml']);
+  'node.db.owner.json.bak', 'node.db.operator-tokens.json', 'node.db.operator-tokens.json.bak', 'bitcoind.auth', 'cloudflared.yml']);
+// THE DURABLE PAIRS (kanban #2227, #1489 a44 refute of #1630): the node writes these with writeDurableJson (<file>.bak, then <file>) and
+// reads a torn <file> from its .bak. A restore puts each back as ONE value into both - read from the backup's pair as the node reads it,
+// written .bak first, each atomic - never the file alone by a plain copy beside a .bak that holds another owner.
+export const DURABLE_FILES = Object.freeze(['node.db.owner.json', 'node.db.operator-tokens.json']);
 
 /** Is it inside a market seating window now (minutes 11-14 of a quarter hour)? The update waits it out. */
 export const inSeatingWindow = (nowMs = Date.now()) => { const q = Math.floor(nowMs / 1000) % 900; return q >= 660 && q < 840; };
@@ -253,9 +258,16 @@ export function roomForUpdate(home, { extra = 0, freeBytes = freeBytesAt } = {})
  *  closed yet) is tried again each second for a while; one that never frees is named, and the others still go back. { ok, failed } */
 export async function restoreNode(home, backup, { tries = 30, pause = (ms) => new Promise((ok) => setTimeout(ok, ms)), copy = copyFileSync } = {}) {
   const failed = [];
+  const durableBak = new Set(DURABLE_FILES.map((f) => `${f}.bak`));
   for (const f of backup.files) {
+    if (durableBak.has(f)) continue; // put back with its file (kanban #2227)
+    const durable = DURABLE_FILES.includes(f);
     for (let i = 0; ; i++) {
-      try { copy(join(backup.dir, f), join(home, f)); break; } catch (e) {
+      try {
+        if (durable) writeDurableJson(join(home, f), readDurableJson(join(backup.dir, f)));
+        else copy(join(backup.dir, f), join(home, f));
+        break;
+      } catch (e) {
         if (i + 1 >= tries || !['EBUSY', 'EPERM', 'EACCES'].includes(e.code)) { failed.push(`${f}: ${e.code || e.message}`); break; }
         await pause(1000);
       }
@@ -308,15 +320,21 @@ export function beginJournal(home, j, { nowMs = Date.now() } = {}) {
   return next;
 }
 /** The files of the backup that hold what a running seat writes (its signing state): not put back once the new release answered. */
-export const SEAT_DATA_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'node.db.owner.json', 'node.db.operator-tokens.json']);
+export const SEAT_DATA_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db-shm', 'node.db.owner.json', 'node.db.owner.json.bak', 'node.db.operator-tokens.json',
+  'node.db.operator-tokens.json.bak']);
 /** Never put back by a rollback: the update does not change them, and the state may hold what another process recorded meanwhile (kanban #1165). */
 const NEVER_RESTORED = new Set(['state.json', 'seed.hex']);
 
 /** THE ROLLBACK: the old service files, the backup (as `keepDb` says), the old release started. { put, back, dbKept } */
-async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, backup, keepDb, to, port, fetcher, waitMs, sleep }) {
+async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, backup, keepDb, from = null, to, port, fetcher, waitMs, sleep, note = () => {}, decided = false }) {
   // started whatever the restore says (measured in the Windows VM: copying the backup back threw while the stopped seat still held its
   // database, and the node was left with nothing running)
   try { await svc.stop(moving, to); } catch { /* the start below is what matters */ }
+  // THE DATABASE'S PRINT READ AFTER THE STOP (kanban #2097, state audit 2026-11-12 SM7 NODE-1): the callers read dbChangedSince while the new
+  // release still ran - one that reached serve() as the wait ran out could use a nonce, take a lock or an entry between that read and this stop,
+  // and the backup went back over it. Read again here, the new release stopped: a database written at any time before the restore is kept
+  // ... unless a resumed ROLLING_BACK already decided it (kanban #1646): its own half copy is what changed the print
+  keepDb = !!keepDb || (!decided && dbChangedSince(home, backup));
   // and nothing here throws before that start (kanban #1440): a service file or arena.conf that cannot be written is named, not fatal
   const notPut = [];
   for (const [f, t] of Object.entries(oldTexts)) { try { writeFileSync(f, t); } catch (e) { notPut.push(`${String(f).split(/[\\/]/).pop()}: ${e.code || e.message}`); } }
@@ -324,11 +342,26 @@ async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, back
   // stopped before its backup (STOPPING): nothing was changed yet - the old services start again
   const files = backup ? backup.files.filter((f) => !NEVER_RESTORED.has(f) && !(keepDb && SEAT_DATA_FILES.includes(f))) : [];
   let put = backup ? { ok: false, failed: ['not tried'] } : { ok: true, failed: [] };
+  // THE DATABASE COPY ON THE JOURNAL (kanban #1646, state audit 2026-11-12 sm1-node-3): copyFileSync truncates node.db and then writes about
+  // 1 GB - an updater killed in between left a torn node.db, and the resume, seeing the print changed by that very copy, kept it. Noted
+  // `dbRestoring` before the first byte and `dbRestored` once the copy is whole and the stale WAL dropped (before the old release starts):
+  // a resume puts the backup back again while only the first is there, and keeps the database once the second is (the old release may run on it)
+  const restoringDb = !keepDb && files.includes('node.db');
   if (backup) try {
+    if (restoringDb) note({ dbRestoring: true });
     put = await restoreNode(home, { ...backup, files }, { pause: sleep });
     // the database put back: a WAL the new release left beside it belongs to the newer file - replayed on the old one it would corrupt it
     if (!keepDb && files.includes('node.db')) for (const f of ['node.db-wal', 'node.db-shm']) if (!backup.files.includes(f)) rmSync(join(home, f), { force: true });
+    if (restoringDb && put.ok) note({ dbRestored: true });
   } catch (e) { put = { ok: false, failed: [e.message] }; }
+  // THE RECORDED RELEASE IS THE ONE THE UNITS RUN (kanban #1972, state audit 2026-11-12): state.json is never put back from the backup
+  // (NEVER_RESTORED), but its release may already name the new one - set just before KEPT, whose write then failed (a full disk, #1440) or
+  // before a crash the resume rolls back. nodeOf() reads the running version there, so the node answered "up to date" for good on the old
+  // release. Only the release is set back, and only when it names the release rolled back from: whatever else was saved meanwhile stays.
+  if (from) {
+    try { nodeState(home).update((n) => (n && n.release && n.release.path === to ? { release: { path: from, rolledBackFrom: to, atMs: Date.now() } } : {})); }
+    catch (e) { notPut.push(`state.json release: ${e.code || e.message}`); }
+  }
   if (notPut.length) put = { ok: false, failed: [...(put.ok ? [] : put.failed), ...notPut] };
   try { await svc.start(moving); } catch { /* the answer below says whether it runs */ }
   const back = await waitHealthy({ port, fetcher, waitMs });
@@ -341,7 +374,7 @@ async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, back
  * { resumed: 'kept' | 'rolled-back', from, to, ... }.
  */
 export async function resumeUpdate({ home, env = process.env, sh = run, fetcher = fetch, platform = process.platform, node = process.execPath, waitMs = null,
-  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), log = () => {} }) {
+  sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), log = () => {}, refreshGames = async (o) => (await import('./change-roles.js')).refreshHostedGames(o) }) {
   waitMs = waitMs ?? 300000;
   const j = readJournal(home);
   if (!openJournal(j)) return null;
@@ -366,14 +399,30 @@ export async function resumeUpdate({ home, env = process.env, sh = run, fetcher 
     if (j.migrating && existsSync(envFile)) renameSync(envFile, `${envFile}.migrated`);
     try { writeCommand({ home, release: j.to, node, platform, env, run: sh }); } catch { /* the next update writes it */ }
     journalStep(home, j.id, U.KEPT);
-    return { resumed: 'kept', from: j.from, to: j.to, why };
+    // A RELEASE THE RESUME KEPT IS ADVERTISED WITH ITS APP VERSIONS AS A KEPT MOVE IS (kanban #2463, audit #1489 sm1-node-5): moveNode posts
+    // the games update after its KEPT; this path did not, and the next check finds the node up to date ('that release is the one running'),
+    // so nothing ever posted it - the census never drew the node for the new versions. Same injection and default as moveNode; never fatal
+    // (refreshHostedGames answers `unchanged` when the advertisement already names them, and an open on-chain action is finished, not sent twice)
+    let games = null;
+    if (refreshGames) { try { games = await refreshGames({ home, release: j.to, post: true }); } catch (e) { games = { ok: false, why: e.message }; } }
+    if (games && !games.ok) log(`#2463 the advertisement's app versions of ${j.to} not posted: ${games.why}`);
+    return { resumed: 'kept', from: j.from, to: j.to, why, games };
   }
-  // a database written since the backup is kept whatever `served` says (kanban #1227)
-  if (!served && dbChangedSince(home, j.backup)) { served = true; why += '; node.db changed since the backup: kept'; }
+  // a database written since the backup is kept whatever `served` says (kanban #1227) - decided only before ROLLING_BACK (kanban #1646):
+  // a ROLLING_BACK that said served false decided to put the backup back, and its own copy is what changed the print since. It is put back
+  // again (the whole copy, over whatever part of it was written) unless `dbRestored` says the copy was whole: then the old release may
+  // have run on it, and it is kept. A ROLLING_BACK an older updater wrote with no `served` at all is read as before.
+  const decided = j.phase === U.ROLLING_BACK && typeof j.served === 'boolean';
+  const alreadyBack = decided && !j.served && !!j.dbRestored;
+  if (alreadyBack) { served = true; why += '; node.db was put back already: kept'; }
+  else if (decided) { if (!served && j.dbRestoring) why += '; node.db was being put back: put back again'; }
+  else if (!served && dbChangedSince(home, j.backup)) { served = true; why += '; node.db changed since the backup: kept'; }
   if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served, why });
   const r = await rollBack({ svc, home, moving, oldTexts: j.oldTexts || {}, migrating: j.migrating, confFile: join(home, 'arena.conf'), backup: j.backup, keepDb: served,
-    to: j.to, port: j.port, fetcher, waitMs, sleep });
-  journalStep(home, j.id, U.ROLLED_BACK, { restored: r.back.ok, dbKept: r.dbKept });
+    from: j.from, to: j.to, port: j.port, fetcher, waitMs, sleep, note: (x) => journalNote(home, j.id, x), decided });
+  // the backup was put back (by the rollback that died after it): not a kept database
+  const dbKept = r.dbKept && !alreadyBack;
+  journalStep(home, j.id, U.ROLLED_BACK, { restored: r.back.ok, dbKept });
   // A ROLLBACK THE RESUME MADE IS RECORDED AS THE AUTO UPDATER RECORDS ITS OWN (kanban #1581, audit #1489 sm1-node-2): without it the #1369
   // day's wait never applied to a release whose updater died, and the first check after the service's restart (or the move right after this
   // resume inside updateNode) stopped the node again for the same broken release - every ~10 min for good when it kills the updater each time
@@ -382,7 +431,7 @@ export async function resumeUpdate({ home, env = process.env, sh = run, fetcher 
     try { writeFileSync(join(home, 'auto-update.json'), JSON.stringify({ atMs: Date.now(), ok: false, from: releaseIdOf(j.from).version, to: id.version, why, rolledBack: true, resumed: true, ...(id.commit ? { commit: id.commit } : {}) }, null, 2) + '\n', { mode: 0o600 }); }
     catch { /* the log has it */ }
   }
-  return { resumed: 'rolled-back', from: j.from, to: j.to, why, restored: r.back.ok, dbKept: r.dbKept, ...(r.put.ok ? {} : { notRestored: r.put.failed }) };
+  return { resumed: 'rolled-back', from: j.from, to: j.to, why, restored: r.back.ok, dbKept, ...(r.put.ok ? {} : { notRestored: r.put.failed }) };
 }
 
 /** The release a launchd agent runs: its WorkingDirectory less packages/arena-node. */
@@ -522,9 +571,24 @@ function servicesOf({ platform, env, sh, home, port, node, selfPid = process.pid
     seatFor: (release) => seatUnit({ node, release, home, port }), seatFile,
     bridgeFor: (release, state) => bridgeUnit({ node, release, home, bridgePort: bridgePortOf(home, state) }),
     stop: async (fs) => { const r = await sh('systemctl', ['--user', 'stop', ...fs.map(unit)]); return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${r.err.trim().slice(0, 200)}` }; },
-    start: async (fs) => { await sh('systemctl', ['--user', 'daemon-reload']); const r = await sh('systemctl', ['--user', 'start', ...fs.map(unit)]); return r.ok ? { ok: true } : { ok: false, why: (r.err || '').trim().slice(0, 200) }; },
+    // and the units PartOf one of them (kanban #3272): systemd stopped them with it, but PartOf= never starts them again
+    start: async (fs) => { await sh('systemctl', ['--user', 'daemon-reload']); const r = await sh('systemctl', ['--user', 'start', ...[...fs, ...partOfCompanions(fs, files())].map(unit)]); return r.ok ? { ok: true } : { ok: false, why: (r.err || '').trim().slice(0, 200) }; },
     prepare: async () => {},
   };
+}
+
+/**
+ * THE UNITS A STOP TOOK ALONG (kanban #3272, a local seat 2026.1.9.28 -> .29, 2026-11-21: LND stayed dead, the gateway Disconnected): LND is
+ * PartOf its Tor, so stopping Tor stops LND too, but PartOf= passes on no start. An LND that names no release is not in the units an update
+ * moves, so starting them again left it stopped. Answers the files of `all` not in `started` whose PartOf= names one of `started`.
+ */
+export function partOfCompanions(started, all) {
+  const base = (f) => String(f).split(/[\\/]/).pop();
+  const names = new Set(started.map(base));
+  return all.filter((f) => !started.includes(f) && !names.has(base(f)) && (() => {
+    let t = ''; try { t = readFileSync(f, 'utf8'); } catch { return false; }
+    return [...t.matchAll(/^PartOf=(.*)$/gm)].some((m) => m[1].trim().split(/\s+/).some((n) => names.has(n)));
+  })());
 }
 
 /** A release's own VERSION and COMMIT (tools/release/build-release.sh writes them at its root), or nulls for a tree without them. */
@@ -588,23 +652,57 @@ export async function seatLogTail({ home, platform = process.platform, sh = run,
 // THE MACHINE'S START, IN MINUTES (kanban #1166): a lock taken before the machine last started is no lock - its pid may be any process now
 // (a reboot reused it, and the lock blocked updates for up to 45 min). Read from the uptime, the same on every system; a minute either way
 export const bootMinute = (now = Date.now(), up = uptime()) => Math.round((now - up * 1000) / 60000);
+// A STALE LOCK IS TAKEN OVER BY RENAME, NOT BY REMOVE (kanban #1975): read -> judged stale -> remove let two updaters that found the same
+// dead holder both hold the lock - the one that judged second removed the lock the first had just made for itself. Now the lock is moved
+// aside to a name of this process's own (a rename is atomic: of two, one moves it, the other finds none and reads again), and only when the
+// moved file is the very lock that was judged stale is it kept aside (as update.lock.stale, the last one taken over). A lock another updater
+// made in between is put back where it was, by a link, which never lands over a newer lock (the aside name is left; nothing reads it); then
+// this one reads again and waits for it.
+function takeOverStaleLock(file, heldText, pid) {
+  const aside = `${file}.taking-${pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  try { renameSync(file, aside); } catch { return; /* gone: another updater took it over - read again */ }
+  let moved = null; try { moved = readFileSync(aside, 'utf8'); } catch { /* the same */ }
+  if (moved !== heldText) { try { linkSync(aside, file); } catch { /* a newer lock is there already: it holds */ } return; }
+  try { renameSync(aside, `${file}.stale`); } catch { /* left aside: it names no holder */ }
+}
+
+// THE MACHINE'S START, BY A NAME THE CLOCK DOES NOT MOVE (kanban #2334): bootMinute is wall clock minus uptime, so an NTP step of more than
+// 2 minutes after the lock was written (a machine without a real-time clock that boots behind, then syncs) gave every later reader another
+// minute - a live, seconds-old lock read as "from before the machine started" and a second updater moved the node beside the first (#809).
+// The kernel's own id of this boot: Linux /proc/sys/kernel/random/boot_id, macOS kern.bootsessionuuid; read once. Where there is none
+// (Windows), or the lock was written by an older updater without one, the boot minute decides as before.
+let bootIdCache;
+export function bootId() {
+  if (bootIdCache !== undefined) return bootIdCache;
+  bootIdCache = null;
+  try {
+    if (process.platform === 'linux') bootIdCache = readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim() || null;
+    else if (process.platform === 'darwin') bootIdCache = execFileSync('/usr/sbin/sysctl', ['-n', 'kern.bootsessionuuid'], { encoding: 'utf8', timeout: 5000 }).trim() || null;
+  } catch { bootIdCache = null; }
+  return bootIdCache;
+}
 export async function takeUpdateLock(home, { pid = process.pid, now = Date.now, alive = (p) => { try { process.kill(p, 0); return true; } catch (e) { return e.code === 'EPERM'; } },
-  waitLockMs = 20 * 60000, staleMs = 45 * 60000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), onWait = () => {}, boot = bootMinute() } = {}) {
+  waitLockMs = 20 * 60000, staleMs = 45 * 60000, sleep = (ms) => new Promise((ok) => setTimeout(ok, ms)), onWait = () => {}, boot = bootMinute(),
+  bootKey = bootId(), up = uptime } = {}) {
   // no node home, nothing to hold: the update says itself why it cannot move it
   if (!home || !existsSync(home)) return { file: null, waited: false, release: () => {} };
   const file = join(home, 'update.lock');
   const t0 = now();
-  let waited = false;
+  let waited = false, slept = 0;
   for (;;) {
-    try { writeFileSync(file, JSON.stringify({ pid, atMs: now(), boot }), { flag: 'wx' }); return { file, waited, release: () => { try { const h = JSON.parse(readFileSync(file, 'utf8')); if (h.pid === pid) rmSync(file, { force: true }); } catch { /* gone */ } } }; }
+    try { writeFileSync(file, JSON.stringify({ pid, atMs: now(), boot, ...(bootKey ? { bootId: bootKey, up: up() } : {}) }), { flag: 'wx' }); return { file, waited, release: () => { try { const h = JSON.parse(readFileSync(file, 'utf8')); if (h.pid === pid) rmSync(file, { force: true }); } catch { /* gone */ } } }; }
     catch (e) { if (e.code !== 'EEXIST') throw e; }
-    let held = null; try { held = JSON.parse(readFileSync(file, 'utf8')); } catch { /* half written or gone: read again */ }
+    let held = null, heldText = null; try { heldText = readFileSync(file, 'utf8'); held = JSON.parse(heldText); } catch { /* half written or gone: read again */ }
     // left over: from before the machine started (a lock an older updater wrote names no boot: its pid and age decide, as before), its process gone, or too old
-    const beforeBoot = held && Number.isFinite(held.boot) && Math.abs(held.boot - boot) > 2;
-    if (held && (beforeBoot || !alive(held.pid) || now() - held.atMs > staleMs)) { rmSync(file, { force: true }); continue; }
-    if (now() - t0 > waitLockMs) throw new Error(`another update of this node is still running (pid ${held ? held.pid : '?'}); try again when it has ended`);
+    // kanban #2334: when both name the kernel's boot id, it alone says "another boot", and the age is read from the uptime, which no clock step moves
+    const sameKey = held && typeof held.bootId === 'string' && bootKey;
+    const beforeBoot = held && (sameKey ? held.bootId !== bootKey : Number.isFinite(held.boot) && Math.abs(held.boot - boot) > 2);
+    const age = held && (sameKey && Number.isFinite(held.up) ? (up() - held.up) * 1000 : now() - held.atMs);
+    if (held && (beforeBoot || !alive(held.pid) || age > staleMs)) { takeOverStaleLock(file, heldText, pid); continue; }   // by rename (#1975)
+    // kanban #2334: the wait counts its own sleeps too - a clock stepped back never makes it wait for ever
+    if (Math.max(now() - t0, slept) > waitLockMs) throw new Error(`another update of this node is still running (pid ${held ? held.pid : '?'}); try again when it has ended`);
     if (!waited) onWait(held); waited = true;
-    await sleep(2000);
+    await sleep(2000); slept += 2000;
   }
 }
 
@@ -736,7 +834,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     const bk = backup || j.backup || null;
     const keepDb = !!j.served || dbChangedSince(home, bk);
     try { if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served: keepDb, why: e.message }); } catch { /* the resume finishes it */ }
-    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup: bk, keepDb, to: newRelease, port, fetcher, waitMs, sleep });
+    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup: bk, keepDb, from, to: newRelease, port, fetcher, waitMs, sleep, note: (x) => journalNote(home, j.id, x) });
     try { journalStep(home, j.id, U.ROLLED_BACK, { restored: back.ok, dbKept }); } catch { /* the resume finishes it */ }
     step(`rolled back after the failure: the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}${put.ok ? '' : `; not put back: ${put.failed.join(', ')}`}`);
     return { ok: false, rolledBack: true, from, to: newRelease, backup: bk ? bk.dir : null, failedAt: failedStep, dbKept,
@@ -945,7 +1043,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     // lose them, and a nonce put back after its use could sign twice
     const written = !sameKey && dbChangedSince(home, backup);
     journal = journalStep(home, journal.id, U.ROLLING_BACK, { served: sameKey || written });
-    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup, keepDb: sameKey || written, to: newRelease, port, fetcher, waitMs, sleep });
+    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup, keepDb: sameKey || written, from, to: newRelease, port, fetcher, waitMs, sleep, note: (x) => journalNote(home, journal.id, x) });
     journalStep(home, journal.id, U.ROLLED_BACK, { restored: back.ok, dbKept });
     step(`rolled back: the backup ${put.ok ? 'put back' : `not all put back (${put.failed.join(', ')})`}${dbKept ? (sameKey ? ' (its database kept: the new release had answered as this node)' : ' (its database kept: the new release wrote it since the backup)') : ''}; the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}`);
     return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir, failedAt: failedStep, dbKept,

@@ -100,17 +100,47 @@ export function acceptedWithoutEvent(db, sinceMs, limit = 50) { return acceptedN
  * The same rounds, not yet in `table` (its `round_id` the hex id): how the badge book (nostr-badges.js) finds each newly
  * ACCEPTED round on the same clock as the results, in its own ledger. `table` is one of this package's own names, never input.
  */
-export function acceptedNotIn(db, table, sinceMs, limit = 50) {
+export function acceptedNotIn(db, table, sinceMs, limit = 50) { return acceptedNotInPage(db, table, sinceMs, limit).map((r) => r.rid); }
+
+/**
+ * ONE PAGE OF THEM after the cursor `after` ({ at, rid } of the last row of the page before; null: from the oldest), ordered by
+ * (at, rid): [{ rid, at }].
+ */
+export function acceptedNotInPage(db, table, sinceMs, limit = 50, after = null) {
   if (!/^[a-z_]+$/.test(table)) throw new Error('a table name is lowercase letters');
+  const at = after ? Number(after.at) : -1, rid = after ? String(after.rid) : '';
   return db.prepare(`SELECT lower(hex(round_id)) AS rid, MAX(made_ms) AS at FROM (
       SELECT round_id, made_ms FROM lock_settlements WHERE state = 'ACCEPTED' AND made_ms >= ?
       UNION ALL SELECT round_id, made_ms FROM fed_lock_settlements WHERE state = 'ACCEPTED' AND made_ms >= ?)
-    WHERE lower(hex(round_id)) NOT IN (SELECT round_id FROM ${table}) GROUP BY round_id ORDER BY at LIMIT ?`)
-    .all(Number(sinceMs), Number(sinceMs), limit).map((r) => r.rid);
+    WHERE lower(hex(round_id)) NOT IN (SELECT round_id FROM ${table}) GROUP BY round_id
+    HAVING at > ? OR (at = ? AND lower(hex(round_id)) > ?) ORDER BY at, rid LIMIT ?`)
+    .all(Number(sinceMs), Number(sinceMs), at, at, rid, limit).map((r) => ({ rid: r.rid, at: Number(r.at) }));
 }
 
+/**
+ * THE BOOK'S WALK OVER THOSE ROUNDS (kanban #2526): a book skips a round without writing its row (its settlement not ACCEPTED
+ * at this seat yet - one federation's part stuck -, a result it cannot say), so the oldest `limit` rows alone could be the
+ * same skipped rounds on every tick and hold every later round out for good. Each call reads the next page after the last
+ * one; a short page means the end was reached, and the next call starts from the oldest again (a skipped round is asked
+ * again then). Every round in the window is reached within a bounded number of ticks, whatever waits before it.
+ */
+export function acceptedNotInWalk(db, table, limit = 50) {
+  let after = null;
+  return (sinceMs) => {
+    const page = acceptedNotInPage(db, table, sinceMs, limit, after);
+    after = page.length < limit ? null : page[page.length - 1];
+    return page.map((r) => r.rid);
+  };
+}
+
+/**
+ * THE MOST ONE RELAY FRAME MAY BE (kanban #2693, #1489 r3-nostr-1): an answer to EVENT is ["OK", id, bool, short text]. Without a bound the ws
+ * default of 100 MiB per message applied - a relay a zap payer names (any public wss:// host) answered with one 48 MiB frame and the zap server
+ * held ~230 MiB for that one socket, 32 sends at once. A larger frame closes the socket (ws 1009): the send counts as not answered and is retried.
+ */
+export const RELAY_FRAME_MAX = 64 * 1024;
 /** Send `events` to one relay and gather its OK for each: Map id -> { ok, why }; an id with no answer in time is left out. */
-export async function sendToRelay(url, events, { connect = (u) => new WebSocket(u), timeoutMs = 10000 } = {}) {
+export async function sendToRelay(url, events, { connect = (u) => new WebSocket(u, { maxPayload: RELAY_FRAME_MAX }), timeoutMs = 10000 } = {}) {
   const answers = new Map();
   if (!events.length) return answers;
   let ws;
@@ -184,6 +214,7 @@ export function nostrResults({ db, secret, resultOf, relays = [], settled = () =
   const startedMs = now();
   const notOurs = new Set();                     // rounds whose result this node cannot say (a game it does not host): not asked again
   const sentAt = [];                             // when each event was sent, for the per-minute bound
+  const nextAccepted = acceptedNotInWalk(db, 'nostr_results');   // kanban #2526: pages past skipped rounds
   let timer = null, busy = false, stopped = false;
 
   const rowOf = (r) => (r ? { round: r.round_id, event: JSON.parse(r.event), madeMs: Number(r.made_ms),
@@ -211,7 +242,7 @@ export function nostrResults({ db, secret, resultOf, relays = [], settled = () =
     try {
       // 1. EVERY NEWLY ACCEPTED ROUND GETS ITS EVENT, kept (looked back a day before this start: switching publishing on
       // publishes yesterday's rounds, not the whole archive)
-      for (const rid of acceptedWithoutEvent(db, startedMs - lookbackMs)) {
+      for (const rid of nextAccepted(startedMs - lookbackMs)) {
         if (notOurs.has(rid) || !settled(rid)) continue;
         const got = eventFor(rid);
         if (!got.ok && got.status === 404) notOurs.add(rid);

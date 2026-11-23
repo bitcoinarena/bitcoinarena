@@ -20,11 +20,17 @@
 //     asked again with the same key answers the one done (the owner page's double click, a lost answer);
 //   - VOID only when the chain says it can never confirm: refused as a conflict (its inputs spent elsewhere) and seen neither in the
 //     mempool nor in a block since it was built. Anything else (no answer, a fee refused) keeps it open, to be sent again.
+//   - NEVER VOID ONCE ANY OF ITS TRANSACTIONS IS THERE (kanban #2291, after #1776): an action's transactions are a chain (funding, bond,
+//     then for a key move one step-out funding and step-out per old bond). A later one refused as "missing inputs" while an earlier one
+//     was just accepted or is seen (a backend that has not seen the parent yet) says nothing about it never confirming; voiding it would
+//     drop the record of a bond already in the mempool, and the next ask would build a second one (the #1165 double bond). Only the
+//     FIRST transaction refused as a conflict, with none of them seen anywhere, voids the action; a later one is sent once more at once
+//     (its parent may simply not have reached the backend) and otherwise the action stays open, sent again at the next try.
 // A state.json from before has no `onchain`: it reads as no action open. One written here reads in an older installer, which ignores it.
 import { randomBytes } from 'node:crypto';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
-import { bondsOf } from './state.js';
+import { bondsOf, withoutSpentBonds } from './state.js';
 
 export const ACTION = Object.freeze({ BUILT: 'built', SENT: 'sent', DONE: 'done', VOID: 'void' });
 const A = ACTION;
@@ -32,7 +38,7 @@ const A = ACTION;
 const MOVES = Object.freeze({ [A.BUILT]: [A.SENT, A.VOID], [A.SENT]: [A.DONE], [A.DONE]: [], [A.VOID]: [] });
 
 /** A broadcast answer that means the transaction is there already: a success. */
-export const ALREADY = /already in (the )?(block ?chain|mempool|utxo set)|txn-already-(known|in-mempool)|already have transaction|outputs already in utxo set|transaction already exists/i;
+export const ALREADY = /txn-same-nonwitness-data-in-mempool|already in (the )?(block ?chain|mempool|utxo set)|txn-already-(known|in-mempool)|already have transaction|outputs already in utxo set|transaction already exists/i;
 /** A refusal that means the transaction's inputs are spent by another one. */
 export const CONFLICT = /missing ?inputs|missingorspent|txn-mempool-conflict|rejecting replacement|spends-conflicting|bad-txns-inputs-spent/i;
 
@@ -53,6 +59,8 @@ export function applyOps(n, ops = [], atMs = Date.now()) {
     else if (o.op === 'merge') patch[o.key] = { ...(cur(o.key) || {}), ...o.value };
     else if (o.op === 'push') patch[o.key] = [...(o.key === 'bonds' ? bondsOf({ ...n, ...patch }) : cur(o.key) || []), ...o.values];
     else if (o.op === 'replace-first') { patch.bond = o.value; patch.bonds = [o.value, ...bondsOf({ ...n, ...patch }).slice(1)]; }
+    // kanban #2098: the bond outputs the chain shows spent (a withdrawal the record missed) leave bond / bonds before the new one is written
+    else if (o.op === 'drop-bonds') Object.assign(patch, withoutSpentBonds({ ...n, ...patch }, o.values, { txid: o.txid || null, atMs }) || {});
     else if (o.op === 'done') patch.done = { ...(cur('done') || {}), [o.step]: atMs };
     else throw new Error(`not an op an on-chain record knows: ${o.op}`);
   }
@@ -92,7 +100,8 @@ export const EFFECTS = {
     const { nodeKeyOf } = await import('./seed.js');
     const next = nodeKeyOf(fromHex(String(state.readSecret('seed.hex') || '').trim()));
     if (toHex(schnorr.getPublicKey(next)) !== a.meta.to) throw new Error('the key from the words is not the one this action was built for');
-    const db = new DatabaseSync(state.path('node.db'));
+    // a busy timeout (kanban #2297): the seat's own write of a moment no longer leaves the move open at once
+    const db = new DatabaseSync(state.path('node.db'), { timeout: 2000 });
     try {
       db.exec('BEGIN IMMEDIATE');
       try {
@@ -123,6 +132,7 @@ export async function settleOpen(state, { chainKit, log = () => {}, nowMs = () =
   const chain = a.chain || s.chain;   // an action of another node's wallet names the chain it is sent on
   if (a.phase === A.BUILT) {
     let from = 0;
+    const resent = new Set();   // kanban #2291: a child refused right after its parent was accepted is sent once more in this pass
     while (from < a.txs.length) {
       let at = -1, why = null, conflict = false;
       for (let i = from; i < a.txs.length; i++) {
@@ -131,16 +141,22 @@ export async function settleOpen(state, { chainKit, log = () => {}, nowMs = () =
       }
       if (at < 0) break;
       // refused: one the chain has already (the funding is refused as "missing inputs" once its bond spent it in a block) - the newest seen
-      // counts for every one before it, which it spends
+      // counts for every one before it, which it spends. Every one is asked, down to the first (kanban #2291): one before the refused one
+      // seen means the action is there, never void
       let seen = -1, asked = typeof chainKit.seen === 'function';
       if (asked) {
-        for (let j = a.txs.length - 1; j >= at && seen < 0; j--) {
+        for (let j = a.txs.length - 1; j >= 0 && seen < 0; j--) {
           try { if (await chainKit.seen(chain, a.txs[j].txid, { sinceTip: a.tip })) seen = j; } catch { asked = false; break; }
         }
       }
       if (seen >= at) { from = seen + 1; continue; }
+      // kanban #2291: at > 0 means every one before the refused one was accepted in this pass or is seen (from > 0 only after a seen one):
+      // its parent is there, so a conflict is a backend behind it, not a transaction that can never confirm. Sent once more at once, then
+      // kept open - never void (that would drop the record of a bond in the mempool and the next ask would build a second bond)
+      const before = at > 0 || seen >= 0;
+      if (before && conflict && !resent.has(at)) { resent.add(at); from = at; continue; }
       // (only with the tip it was built at: without it a mined one is not found in its block, and a mined bond must never be void)
-      if (conflict && asked && Number.isInteger(a.tip)) {
+      if (!before && conflict && asked && Number.isInteger(a.tip)) {
         log(`${a.kind}: ${a.txs[at].txid} can never confirm (${why}; seen nowhere since block ${a.tip}): void`);
         const closed = transition(state, a.id, A.BUILT, A.VOID, { why, nowMs: nowMs() });
         return closed ? { void: lastActionOf(closed, a.kind), why } : settleOpen(state, { chainKit, log, nowMs });

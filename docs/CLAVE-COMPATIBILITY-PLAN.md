@@ -1,6 +1,6 @@
 # Clave compatibility automation — implementation plan only
 
-Split from #2952 into [#3072](https://beelink.tail1723e2.ts.net/kanban/task/3072). Unassigned backlog; plan only. Owner decision: no Mac exists yet; assume a future M-series MacBook Pro with latest macOS/Xcode. Initial scope is foreground NIP-46 only. Do not provision a Mac, implement Clave automation, or set up APNs/proxy infrastructure.
+Split from #2952 into #3072. Unassigned backlog; plan only. Assume an Apple-silicon Mac with current macOS/Xcode. Initial scope is foreground NIP-46 only. Do not provision a Mac, implement Clave automation, or set up APNs/proxy infrastructure.
 
 ## Verified feasibility (2026-11-20)
 

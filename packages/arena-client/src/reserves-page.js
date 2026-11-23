@@ -27,12 +27,21 @@ export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher
         // key that seat's guardian seats agreed on at their threshold - every seat that knows the federation names it. Five must still agree.
         const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || x.reserveKey || '')));
         const k = f ? String(f.key || f.reserveKey) : null;
-        if (k) { said.set(k, (said.get(k) || 0) + 1); if (said.get(k) >= needed) done(); }
+        if (k) said.set(k, (said.get(k) || 0) + 1);
       } catch { /* a node that does not answer names nothing */ }
-    })().finally(() => { left -= 1; if (!left) done(); });
+    })().finally(() => {
+      left -= 1;
+      // NOT THE FIRST KEY TO REACH `needed` (kanban #2652): the nodes are URLs from a lobby link, and five extra paths of one stranger answering
+      // at once made five votes for the stranger's key before the real seats answered. Done early only when no other key - one named already
+      // or one still unheard - can reach `needed` with the answers still out; two keys that both reach it are refused below.
+      const top = [...said.values()].sort((a, b) => b - a);
+      if (!left || ((top[0] || 0) >= needed && (top[1] || 0) + left < needed)) done();
+    });
   });
   const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
   if (!best) return { ok: false, why: `none of the round's ${asked.length} signer nodes names a reserve key for federation ${fed.slice(0, 8)}` };
+  const rival = [...said.entries()].find(([k, n]) => k !== best[0] && n >= needed);
+  if (rival) return { ok: false, why: `the round's signer nodes name two reserve keys, ${best[0].slice(0, 16)} and ${rival[0].slice(0, 16)}, each at least ${needed} times - the reserves are not paid to either` };
   if (best[1] < needed) return { ok: false, why: `only ${best[1]} of the round's signer nodes name reserve key ${best[0].slice(0, 16)}, and ${needed} must` };
   return { ok: true, key: fromHex(best[0]), agreeing: best[1], asked: asked.length };
 }

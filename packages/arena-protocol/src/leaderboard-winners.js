@@ -7,8 +7,9 @@ import { FUNDING_CAP_PCT } from './funding.js';
 import { season } from './season.js';
 import { refundKeyOf } from './stake-lock.js';
 import { placeAmounts } from './leaderboard-payout.js';
+import { placeStanding, placeOrder } from './place-eligibility.js';   // kanban #2841
 
-const LB_HEX64 = /^[0-9a-f]{64}$/;
+const lower = (x) => String(x || '').toLowerCase();
 
 /**
  * THE WINNERS OF A SEASON: `rounds` the network season's rounds (season.js shape, each entry with its `roundKey`), `games` the scope's
@@ -20,20 +21,15 @@ const LB_HEX64 = /^[0-9a-f]{64}$/;
 export function leaderboardWinners({ rounds, games, fromMs, toMs, top, amountMsat, splitBps = [] }) {
   const s = season(rounds, { games, fromMs, toMs });
   if (!s.ok) return { ok: false, why: s.why };
-  const gameSet = new Set([...games].map((g) => String(g).toLowerCase()));
-  const keysOf = new Map();
-  for (const r of rounds) {
-    if (!gameSet.has(String(r.game || r.gameId || '').toLowerCase())) continue;
-    for (const e of r.entries || []) {
-      if (e.bot === true) continue;   // a bot's entry is no player's (kanban #581)
-      const p = String(e.player || '').toLowerCase();
-      if (!keysOf.has(p)) keysOf.set(p, []);
-      keysOf.get(p).push(String(e.roundKey || '').toLowerCase());
-    }
-  }
-  const isIdentity = (p) => { const ks = keysOf.get(p) || []; return ks.length > 0 && ks.every((k) => LB_HEX64.test(k) && k !== p); };
-  const skipped = [], ranked = [];
-  for (const row of s.rows) (isIdentity(row.player) ? ranked : skipped).push(row);
+  // WHO MAY TAKE A PLACE (kanban #2841, ruling 2026-11-16; place-eligibility.js): a proven identity older than the week, with at least 3 distinct
+  // opponents older than the week, ranked by the P&L of its rounds against older opponents only, and paid at most 10x the entry fees it paid in
+  // the window - the rest of its place stays in the reserves. It keeps #2450 (it staked) and #2656 (it won money): fresh identities made for free
+  // rounds or at one fee each still fill no place. A place nobody qualifies for stays in the reserves.
+  const standing = placeStanding({ rounds, games, fromMs, toMs });
+  const ranked = placeOrder(standing);
+  const placedKeys = new Set(ranked.map((r) => r.player));
+  const skipped = s.rows.filter((row) => !placedKeys.has(lower(row.player))).map((row) => row);
+  const nameOf = new Map(s.rows.map((row) => [lower(row.player), row.name]));
   const places = placeAmounts({ amountMsat, top, splitBps });
   const winners = [];
   let place = 0, i = 0;
@@ -43,8 +39,13 @@ export function leaderboardWinners({ rounds, games, fromMs, toMs, top, amountMsa
     const span = Math.min(group.length, top - place);
     const pot = places.slice(place, place + span).reduce((t, x) => t + x, 0n);
     const each = pot / BigInt(group.length);
-    group.forEach((row, k) => winners.push({ player: row.player, name: row.name, netMsat: String(row.netMsat), payoutPk: toHex(refundKeyOf(fromHex(row.player))),
-      msat: each + (k === 0 ? pot - each * BigInt(group.length) : 0n), places: group.length > 1 ? `${place + 1}-${place + span} shared by ${group.length}` : String(place + 1) }));
+    group.forEach((row, k) => {
+      const due = each + (k === 0 ? pot - each * BigInt(group.length) : 0n);
+      const msat = due < row.capMsat ? due : row.capMsat;   // rule 5: at most 10x its entry fees; the rest stays in the reserves
+      winners.push({ player: row.player, name: nameOf.get(row.player) ?? null, netMsat: String(row.netMsat), payoutPk: toHex(refundKeyOf(fromHex(row.player))),
+        msat, places: group.length > 1 ? `${place + 1}-${place + span} shared by ${group.length}` : String(place + 1),
+        ...(msat < due ? { cappedFromMsat: String(due) } : {}) });
+    });
     place += span; i = j;
   }
   return { ok: true, winners, skipped: skipped.map((r) => r.player), totalMsat: winners.reduce((t, w) => t + w.msat, 0n), paidPlaces: place };

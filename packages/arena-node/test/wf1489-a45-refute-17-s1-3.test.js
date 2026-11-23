@@ -29,7 +29,7 @@ test('#2249 a receipt no relay took yet survives a restart and is sent then', as
   const base = { port: 0, publicHost: 'zap.example', names: ['bob'], secret: server.secret, curve, invoice, statePath, watchMs: 3600000,
     lookup: async () => ({ settled: true, preimage: null, settledAtS: Math.floor(Date.now() / 1000) }) };
   let tries = 0;
-  const z = await serveZapAddresses({ ...base, publish: async () => { tries++; throw new Error('no relay answered'); } });
+  const z = await serveZapAddresses({ allowPrivateRelays: true,   /* local test relays (kanban #2454, #2915) */ ...base, publish: async () => { tries++; throw new Error('no relay answered'); } });
   const request = signNostr(zapRequestTemplate({ recipient: to.pubkey, amountMsat: 1000n, relays: ['wss://a.example', 'wss://b.example'] }), { secret: payer.secret, curve });
   const said = await (await fetch(`http://127.0.0.1:${z.port}/lnurlp/bob/cb?amount=1000&nostr=${encodeURIComponent(JSON.stringify(request))}`)).json();
   assert.ok(said.pr, JSON.stringify(said));
@@ -42,7 +42,7 @@ test('#2249 a receipt no relay took yet survives a restart and is sent then', as
   assert.equal(st.owed.length, 1, 'the receipt is still owed');
   assert.deepEqual(st.owed[0].relays.sort(), ['wss://a.example', 'wss://b.example']);
   const sent = [];
-  const z2 = await serveZapAddresses({ ...base, publish: async (e, relays) => { sent.push([e.id, ...relays]); } });
+  const z2 = await serveZapAddresses({ allowPrivateRelays: true,   /* local test relays (kanban #2454, #2915) */ ...base, publish: async (e, relays) => { sent.push([e.id, ...relays]); } });
   await new Promise((x) => setTimeout(x, 50));
   assert.deepEqual(sent.map((s) => s[1]).sort(), ['wss://a.example', 'wss://b.example']);
   assert.equal(sent[0][0], st.owed[0].receipt.id);

@@ -26,6 +26,9 @@ import { TAG, TYPE_LOCK_SET, TYPE_LOCK_SET_CERTIFICATE, LOCK_SET_VERSION, speaks
 
 /** No certificate by the entry close + this: the round is VOID (the ruling's "close + 3 s"). */
 export const LOCK_SET_WINDOW_MS = 3000;
+/** A seat takes and assembles a round's set until the close + LOCK_SET_WINDOW_MS + this, and says VOID only from then (kanban #2588; arena-node
+ *  lock-set-book.js). A page that waits for the certificate takes no VOID before it (kanban #2984). */
+export const LOCK_SET_FINAL_AFTER_MS = 2000;
 /** A seat signs its set once it holds every committee seat's view, or at the latest this long after the close (with a threshold of views). */
 export const LOCK_SET_VIEW_WAIT_MS = 1200;
 /** At most a committee's worth of signatures in a certificate (9 drawn for 7 seats). */

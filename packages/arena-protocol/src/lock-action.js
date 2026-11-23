@@ -88,8 +88,9 @@ export function lockAction({
  * qualifier `stake + share`, the stake half is their own money returning, and only the share half comes out of the pool.
  */
 // `payoutShares`: the round's game's top split (manifest.js payoutRuleForRound), or null for the rank curve.
-export function lockActions({ roundId, entries, minScore = 0, payoutShares = null }) {
-  const table = computePayoutTable({ roundId, entries, minScore, payoutShares });
+// `protocolVersion`: the round's (computePayoutTable: from 29 ties go by H(round_id || pubkey), kanban #1614).
+export function lockActions({ roundId, entries, minScore = 0, payoutShares = null, protocolVersion = null }) {
+  const table = computePayoutTable({ roundId, entries, minScore, payoutShares, protocolVersion });
   const claims = new Set(table.settling);
   const paidTo = new Map(table.table.map((r, i) => [i, r.amountMsat]));
 
@@ -139,13 +140,15 @@ export function lockActions({ roundId, entries, minScore = 0, payoutShares = nul
   });
 
   const remainderMsat = remainder ? poolMsat : 0n;
-  if (rows.length && poolMsat !== sharesMsat + remainderMsat)
+  // a protocol-31 tie's odd msat (payout.js evenTieShares, kanban #2687): the reserves', handed to no player
+  const reserveMsat = remainder ? 0n : (table.reserveMsat || 0n);
+  if (rows.length && poolMsat !== sharesMsat + remainderMsat + reserveMsat)
     throw new Error(
       `the operator would keep ${poolMsat - sharesMsat} msat: a pool of ${poolMsat} `
       + `against ${sharesMsat} handed out`);
 
   return {
-    actions, poolMsat, refundedMsat, sharesMsat, remainderMsat, table,
+    actions, poolMsat, refundedMsat, sharesMsat, remainderMsat, reserveMsat, table,
     settledMsat: poolMsat, paidMsat: sharesMsat,
   };
 }

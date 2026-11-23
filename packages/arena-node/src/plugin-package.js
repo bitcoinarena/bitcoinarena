@@ -10,20 +10,23 @@
 //   - and every core's source passes the scan: no module loading, no network, no file system, no process, no eval.
 // A decide adapter is pure: it takes the revealed moves and answers verdicts. Replayed games' wasm cores are not packaged
 // here (their cores are installed with their engine); attested markets have no core and package their manifest and client.
-import { sandboxFor } from './core-sandbox.js';
+import { sandboxChecked, lingeringCores } from './core-sandbox.js';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join, dirname } from 'node:path';
+import { pathToFileURL, fileURLToPath } from 'node:url';
+import { coreTree, coreRelPath } from './core-hash.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { decodeManifest, encodeManifest, gameIdOf } from '../../arena-protocol/src/manifest.js';
 import { gameInfoJson } from '../../arena-protocol/src/game-info.js';
-import { checkPackage, packageWindow } from './plugin-check.js';
+import { checkPackage, packageWindow, TREE_ENTRY } from './plugin-check.js';
 import { trialRun, TRIAL_MS } from './plugin-trial.js';
 /** THE FIRST LOAD OF EACH OF AN ADOPTED PACKAGE'S CORES (kanban #2058, #2078): no longer than the trial that passed it. */
 export const REGISTER_MS = TRIAL_MS;
 /** The file an installed core is kept in - and the name its module has in the trial too (kanban #2058, #2078). */
 const coreFileOf = (hash) => `core-${hash}.mjs`;
+/** The directory a tree core is kept in (kanban #3085). */
+const coreDirOf = (hash) => `core-${hash}`;
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const b64 = (b) => Buffer.from(b).toString('base64');
@@ -34,6 +37,17 @@ export function packageOf(game, { ancestors = [], cut = null } = {}) {
   const cores = [];
   for (const [hash, core] of game.cores || []) {
     if (!core || !core.url || !String(core.url).startsWith('file:')) return null;
+    if (core.root) {
+      // A TREE CORE (kanban #3085, feedback #367): every file below its root and its entry, so a peer checks it by its tree hash
+      const root = String(core.root).startsWith('file:') ? fileURLToPath(core.root) : String(core.root);
+      const { files } = coreTree(root);
+      // kanban #3097, #3099: a tree core is packaged only when it runs from TREE_ENTRY (the one entry checkPackage takes, so the tree hash signs it)
+      const entry = coreRelPath(root, fileURLToPath(core.url));
+      if (entry !== TREE_ENTRY) return null;
+      cores.push({ hash, name: core.name || '', configs: [...(core.configs ? core.configs.keys() : [])], entry,
+        files: [...files].map(([path, bytes]) => ({ path, body: b64(bytes) })) });
+      continue;
+    }
     cores.push({ hash, name: core.name || '', configs: [...(core.configs ? core.configs.keys() : [])], source: b64(readFileSync(new URL(core.url))) });
   }
   const clients = (game.clientUrls || []).map((u) => { const body = readFileSync(new URL(u)); return { hash: sha(body), body: b64(body) }; });
@@ -47,12 +61,19 @@ export function packageOf(game, { ancestors = [], cut = null } = {}) {
 // THE CHECKS ARE plugin-check.js's (the page runs them too); THE SEAT ADDS THE TRIAL RUN (plugin-trial.js) on every core
 export { scanSource, SCAN_RULES } from './plugin-check.js';
 /** The page's report plus the seat's trial run: { ok, why, checks, findings, gameId, name, version, devKey, parent }. */
+// A CORE'S NAME IS NOBODY'S SIGNATURE (kanban #2990, audit hosting r2-1): a relaying seat that served the genuine package with
+// cores[0].name = {"toString":1} made loadCore throw, the trial answered a plain refusal, and the seat kept the GENUINE version as refused
+// by its trial for 24 h (autoUpdateSweep) - every honest source after it skipped. Only a short string is a core's name; else its hash's start.
+export const coreNameOf = (c) => (typeof c.name === 'string' && c.name ? c.name.slice(0, 80) : String(c.hash).slice(0, 16));
 export function verifyPackage(pkg, { verify, want = null, parentOf } = {}) {
   const r = checkPackage(pkg, { verify, want, parentOf });
   if (!r.ok) return r;
   const manifest = decodeManifest(fromHex(String(pkg.manifest)));
   for (const c of pkg.cores) {
-    const t = trialRun(Buffer.from(c.source, 'base64').toString('utf8'), manifest, { name: c.name || String(c.hash).slice(0, 16) });
+    // kanban #3085: a tree core runs from its entry with all its files
+    const core = Array.isArray(c.files) ? { files: new Map(c.files.map((f) => [f.path, Buffer.from(f.body, 'base64').toString('utf8')])), entry: c.entry }
+      : Buffer.from(c.source, 'base64').toString('utf8');
+    const t = trialRun(core, manifest, { name: coreNameOf(c) });
     r.checks.push({ check: `core ${c.hash.slice(0, 12)}… runs in the sandbox`, ok: t.ok, detail: t.ok ? `${t.cases} move combinations, each answered the same twice` : t.why });
     // `trial` (kanban #1880, #1913): the verdict on these signed bytes, which a seat may remember; `retry`: none yet (try again)
     if (!t.ok) return { ...r, ok: false, trial: !t.retry, retry: !!t.retry, why: `the trial run refuses it: ${t.why}` };
@@ -74,7 +95,15 @@ export function seatTitleAt(at) {
 export function installPackage(dir, pkg, gameId, { title = null } = {}) {
   const at = join(dir, gameId);
   mkdirSync(at, { recursive: true });
-  for (const c of pkg.cores) writeFileSync(join(at, coreFileOf(c.hash)), Buffer.from(c.source, 'base64'));
+  for (const c of pkg.cores) {
+    if (Array.isArray(c.files)) {
+      // kanban #3085: each file below core-<hash>/ at its checked path (checkPackage refused any path leaving the tree)
+      const base = join(at, coreDirOf(c.hash));
+      for (const f of c.files) { const to = join(base, ...f.path.split('/')); mkdirSync(dirname(to), { recursive: true }); writeFileSync(to, Buffer.from(f.body, 'base64')); }
+      continue;
+    }
+    writeFileSync(join(at, coreFileOf(c.hash)), Buffer.from(c.source, 'base64'));
+  }
   for (const k of pkg.clients || []) writeFileSync(join(at, `client-${k.hash}.html`), Buffer.from(k.body, 'base64'));
   writeFileSync(join(at, 'package.json'), JSON.stringify(pkg));
   if (typeof title === 'string' && title) writeFileSync(join(at, SEAT_TITLE_FILE), JSON.stringify({ title: title.slice(0, 80) }));
@@ -94,16 +123,23 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
   const manifest = decodeManifest(fromHex(pkg.manifest));
   const cores = new Map();
   for (const c of pkg.cores) {
-    const file = join(at, coreFileOf(c.hash));
-    if (sha(readFileSync(file)) !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`);
+    const tree = Array.isArray(c.files);
+    // kanban #3097, #3099: a tree core loads from TREE_ENTRY only (checkPackage refused any other entry; a package.json kept on disk is not trusted)
+    if (tree && c.entry !== TREE_ENTRY) throw new Error(`core ${c.hash.slice(0, 16)} runs from its ${TREE_ENTRY}, not ${String(c.entry).slice(0, 64)}`);
+    const file = tree ? join(at, coreDirOf(c.hash), TREE_ENTRY) : join(at, coreFileOf(c.hash));
+    if (tree) { if (coreTree(join(at, coreDirOf(c.hash))).hash !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`); }
+    else if (sha(readFileSync(file)) !== c.hash) throw new Error(`core ${c.hash.slice(0, 16)} changed on disk`);
     // NEVER IMPORTED INTO THIS THREAD (§0A.6): loaded into its sandbox from the bytes just checked
     // THE CONFIGS ARE THE SIGNED MANIFEST'S (kanban #1814): a package's cores[].configs are signed by nobody, so a relaying seat
     // could empty them (every round of the version refused) or add one the manifest does not list (hostedPlugins throws)
     const signed = manifest.cores.find((m) => toHex(m.hash) === c.hash);
-    const core = { name: c.name, hash: c.hash, url: pathToFileURL(file).href, configs: new Map((signed ? signed.configs : []).map((h) => [toHex(h), {}])) };
+    const core = { name: coreNameOf(c), hash: c.hash, url: pathToFileURL(file).href, ...(tree ? { root: pathToFileURL(join(at, coreDirOf(c.hash)) + '/').href } : {}),
+      configs: new Map((signed ? signed.configs : []).map((h) => [toHex(h), {}])) };
     // THE INSTALL LOAD IS HELD TO THE TRIAL'S BOUND (kanban #1694): a core that passed the trial loaded within TRIAL_MS, so the
     // seat waits no longer for it here (was LOAD_MS, 10 s of the node's thread per version, on install and every restart)
-    if (!sandboxFor(core, { loadMs: TRIAL_MS }).meta.decide) throw new Error(`core ${c.hash.slice(0, 16)} exports no DECIDE`);
+    // a decide adapter (DECIDE) or a game core (CORE, a tick game such as Next Block - kanban #3085); neither is refused
+    const meta = sandboxChecked(core, { loadMs: TRIAL_MS }).meta;
+    if (!meta.decide && !meta.core) throw new Error(`core ${c.hash.slice(0, 16)} exports neither DECIDE nor CORE`);
     cores.set(c.hash, core);
   }
   // ONLY THE EARLIER VERSIONS THE CHECK READ (kanban #2332, #2346): the newest MAX_PACKAGE_ANCESTORS, which checkPackage decoded
@@ -113,7 +149,7 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
   const w = packageWindow(pkg.ancestors);
   return { name: manifest.gameName, title: typeof title === 'string' && title ? title.slice(0, 80) : manifest.gameName, manifest, gameId: gameIdOf(manifest), cores, info: pkg.info || null,
     ancestors: w.window.map((h) => decodeManifest(fromHex(h))), ancestorCut: typeof w.cut === 'string' ? w.cut : null,
-    donationSet: pkg.donationSet.map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: r.shareBps, label: r.label })),
+    donationSet: pkg.donationSet.map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: r.shareBps, label: String(r.label || '') })),
     clientUrls: (pkg.clients || []).map((k) => pathToFileURL(join(at, `client-${k.hash}.html`)).href) };
 }
 
@@ -121,6 +157,7 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
  * THE INSTALLED GAMES AS REGISTRATIONS (main.js at start): each package checked again before it is loaded; a removed one
  * (its directory renamed .removed-…) is not. Answers { registrations, refused: [{ dir, why }] }.
  */
+const INSTALLED_RETRIES = 3, LINGER_WAIT_MS = 15000, TRIAL_THREAD = 'plugin trial';   // kanban #2711: plugin-trial.js TRIAL_NAME
 export async function loadInstalled(dir, { verify }) {
   const registrations = [], refused = [];
   if (!dir || !existsSync(dir)) return { registrations, refused };
@@ -129,7 +166,16 @@ export async function loadInstalled(dir, { verify }) {
     const at = join(dir, id);
     let pkg;
     try { pkg = JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')); } catch (e) { refused.push({ dir: at, why: e.message }); continue; }
-    const v = verifyPackage(pkg, { verify, want: id });
+    let v = verifyPackage(pkg, { verify, want: id });
+    // "NO VERDICT YET" IS NOT A REFUSAL (kanban #2711, #1489 r4-hosting-7): one package's trial that overran inside an uninterruptible
+    // builtin leaves its thread lingering, and every package checked after it got { retry } - refused for the life of the process, so one
+    // slow (or ground-to-sort-first) package dropped every installed game after it at each start. Now the start waits for the lingering
+    // trial thread to end (bounded) and checks that package again.
+    for (let tries = 0; !v.ok && v.retry && tries < INSTALLED_RETRIES; tries++) {
+      const until = Date.now() + LINGER_WAIT_MS;
+      while (lingeringCores(TRIAL_THREAD) > 0 && Date.now() < until) await new Promise((ok) => setTimeout(ok, 50));
+      v = verifyPackage(pkg, { verify, want: id });
+    }
     if (!v.ok) { refused.push({ dir: at, why: v.why }); continue; }
     // the title this seat wrote itself (kanban #1541, #1716, #1780): never package.json's, which an older build kept as a seat relayed it
     try { registrations.push(await registrationFromPackage(at, pkg, { title: seatTitleAt(at) })); } catch (e) { refused.push({ dir: at, why: e.message }); }

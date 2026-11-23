@@ -104,7 +104,9 @@ export function endpointsOf(committee, selfPubkey, endpointOf = null) {
     if (!e || !e.advert || !e.advert.endpoint) continue;
     if (self && toHex(e.pubkey) === self) continue;
     let at = e.advert.endpoint;
-    if (endpointOf) { try { at = endpointOf(e) || at; } catch { /* the advert endpoint */ } }
+    // KANBAN #3082 (feedback #361, a gap in #2856): the address book answers null for an endpoint it refuses (a loopback or private address
+    // a bond commits) - that is no dial, not a fall back to the same raw advert endpoint
+    if (endpointOf) { let r; try { r = endpointOf(e); } catch { r = at; /* a resolver that throws: the advert, as before */ } if (!r) continue; at = r; }
     found.add(String(at).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, ''));
   }
   return [...found];
@@ -113,10 +115,51 @@ export function endpointsOf(committee, selfPubkey, endpointOf = null) {
 /** THE ONE REFUSAL A NODE THAT READS NO CHAIN GIVES FOR A ROUND'S CENSUS - and POST /round's for a paying round (RULED 2026-09-25). */
 export const NO_CHAIN_VIEW_WHY = 'this node has no chain view for that round, so it cannot say who is bonded';
 
-const whereOf = new WeakMap();                 // chain view -> its txid index (guardianBondsFor)
+// WHERE A TRANSACTION IS IN A VIEW (guardianBondsFor, censusEvidenceFor). Indexed once per BLOCK, not once per view (kanban #3236, a heap snapshot
+// of a seat: 339k txid hex keys in per-view indexes, 68k distinct, ~150 MB - the views of a seat share their blocks): a block's index is kept
+// with the block, and a view keeps only the answers it was asked for. The newest block that holds a txid answers, as the per-view index did.
+const WHERE_OF_BLOCK = new WeakMap();          // block -> { txids, at: txid hex -> position } | null (a transaction that does not parse)
+function whereInBlock(block) {
+  let w = WHERE_OF_BLOCK.get(block);
+  if (w === undefined) {
+    try {
+      const txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid);
+      const at = new Map();
+      txids.forEach((t, position) => at.set(toHex(t), position));
+      w = { txids, at };
+    } catch { w = null; }
+    WHERE_OF_BLOCK.set(block, w);
+  }
+  return w;
+}
+const whereOf = new WeakMap();                 // chain view -> txid hex -> { block, txids, position } | null, the answers asked for
+export function whereInView(view, hex) {
+  const kept = view && typeof view === 'object' ? (whereOf.get(view) || whereOf.set(view, new Map()).get(view)) : null;
+  if (kept && kept.has(hex)) return kept.get(hex) || undefined;
+  let found = null;
+  const blocks = view && Array.isArray(view.blocks) ? view.blocks : [];
+  for (let i = blocks.length - 1; i >= 0 && !found; i--) {
+    const w = blocks[i] && typeof blocks[i] === 'object' ? whereInBlock(blocks[i]) : null;
+    const position = w ? w.at.get(hex) : undefined;
+    if (position !== undefined) found = { block: blocks[i], txids: w.txids, position };
+  }
+  if (kept) kept.set(hex, found);
+  return found || undefined;
+}
 
 /** A chain view's transactions by txid, indexed once per view object (censusFor). */
 const TXIDS_OF_VIEW = new WeakMap();
+// A block's transactions by txid, read once per block object (kanban #3010): kept with the block, so every view that holds it shares one map
+const TXIDS_OF_BLOCK = new WeakMap();
+function txidsOfBlock(block) {
+  let m = TXIDS_OF_BLOCK.get(block);
+  if (!m) {
+    m = new Map();
+    for (const raw of block.transactions || []) { try { m.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ } }
+    TXIDS_OF_BLOCK.set(block, m);
+  }
+  return m;
+}
 // A CENSUS THAT DID NOT MATCH ITS ROUND'S ROOT, kept with the view it was derived from (2026-10-25, measured on testnet4: the
 // day's rounds posted on a branch the chain left named roots the public chain does not give; every listing derived their
 // series' census again, each a few seconds of curve math, and all seven test host seats sat at 100 % CPU with full accept queues).
@@ -176,21 +219,34 @@ export function censusOfView(view, contract, { network = networkOf(contract.netw
   // THE VIEW'S TRANSACTIONS BY TXID, ONCE PER VIEW (2026-10-03, measured: a restarted seat held its loop 3-8 s per
   // assignment - every series' census parsed every transaction of the same ~2,080-block view again). Kept with the view
   // object itself, so a new view is indexed afresh and an old one is let go with it.
-  let byTxid = TXIDS_OF_VIEW.get(view);
-  if (!byTxid) {
-    byTxid = new Map();
-    for (const block of view.blocks) {
-      for (const raw of block.transactions || []) {
-        try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* not one */ }
-      }
+  // ONLY THE BLOCK AN ENTRY NAMES IS READ (kanban #3010, measured 2026-11-19 on testnet4 seat 7's heap snapshot: TXIDS_OF_VIEW held 729 MB of
+  // its 1,463 MB live heap - every transaction of the ~2,080-block view keyed by a 64-character hex txid - and with it the seat sat at its
+  // 2 GB limit, every full GC ~1 s, the tn4 timeouts of #3010): a census resolves only its scanned bond entries, and each entry carries the
+  // height it was created at, so its transaction is looked up in that one block. A block's txids are kept with the block (shared by every
+  // view that holds it); a view without heights, or an entry not found there, falls back to reading every block once, as before.
+  const blockAt = (h) => {
+    const first = Number(view.firstHeight);
+    const i = Number(h) - first;
+    return Number.isInteger(i) && i >= 0 && i < view.blocks.length ? view.blocks[i] : null;
+  };
+  let byTxid = null;
+  const everyTx = () => {
+    if (byTxid) return byTxid;
+    byTxid = TXIDS_OF_VIEW.get(view);
+    if (!byTxid) {
+      byTxid = new Map();
+      for (const block of view.blocks) for (const [hex, raw] of txidsOfBlock(block)) byTxid.set(hex, raw);
+      TXIDS_OF_VIEW.set(view, byTxid);
     }
-    TXIDS_OF_VIEW.set(view, byTxid);
-  }
+    return byTxid;
+  };
   return deriveCensus(readFrom, {
     contract,
     bond: bondSetFor(network),
     resolve: (e) => {
-      const raw = byTxid.get(toHex(e.txid));
+      const want = toHex(e.txid);
+      const block = e.height !== undefined ? blockAt(e.height) : null;
+      const raw = (block && txidsOfBlock(block).get(want)) || everyTx().get(want);
       return raw ? { transaction: raw } : null;
     },
     // THE NEWEST ADVERTISEMENT UPDATE (§5A.2), each checked against its bond's own node key
@@ -454,8 +510,14 @@ export class Roster {
     // An RPS grid's 450 rounds name one each, and a derivation per round cost every seat 0.5-1.3 s per posted round
     // (measured on testnet4, 2026-10-11), which is why a grid was posted one round every 4 s. A census kept this way is
     // still checked against each round's own root below, on every ask.
+    // AND BY ITS BOND FLOOR AND DEPTH (kanban #1970, state audit 2026-11-12): deriveCensus also reads `bond_min` (the
+    // floor, per output or on sums) and `census_confirmations` (the depth rule). Keyed without them, the first round a seat
+    // asked at a census height fixed the census of every other round there: a higher bracket's valid round was refused
+    // ("the chain gives ...") and a round naming the lower floor's root was served with bonds under its own floor - two
+    // seats on one chain, two verdicts, by arrival order. A series id hashes its whole template, both fields with it.
     const whose = contract.seriesId instanceof Uint8Array ? `series:${toHex(contract.seriesId)}`
-      : `census:${contract.networkId instanceof Uint8Array ? toHex(contract.networkId) : ''}:${contract.protocolVersion ?? ''}`;
+      : `census:${contract.networkId instanceof Uint8Array ? toHex(contract.networkId) : ''}:${contract.protocolVersion ?? ''}`
+        + `:${contract.bondMinSats ?? ''}:${contract.censusConfirmations ?? ''}`;
     const kept = `${whose}:${view.firstHeight}:${contract.censusHeight}:${asRoundsOwn ? 'round' : 'height'}`;
     // KEPT IN MEMORY UNDER THE BLOCK AT THE CENSUS HEIGHT (kanban #1373, audit 2 #1204 FED-B2): as the store's key (#786) - after a reorg below the census
     // height the old branch's census is another key, never served; with no such block in the view nothing is read from memory
@@ -585,17 +647,8 @@ export class Roster {
     const fid = toHex(contract.federationId);
     const view = this.chainFor({ contract, roundIdBytes });
 
-    // ONE INDEX PER VIEW (the rounds of a series share their view): built once, not on every ask.
-    let where = view && typeof view === 'object' ? whereOf.get(view) : null;
-    if (!where) {
-      where = new Map();
-      for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
-        let txids;
-        try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
-        txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
-      }
-      if (view && typeof view === 'object') whereOf.set(view, where);
-    }
+    // ONE INDEX PER BLOCK (the rounds of a series share their view, the views their blocks): built once, not on every ask.
+    const where = { get: (hex) => whereInView(view, hex) };
     const bonds = [];
     for (const e of census.entries) {
       if (!((e.advert && e.advert.guardianOf) || []).some((g) => toHex(g.federationId) === fid)) continue;
@@ -627,16 +680,7 @@ export class Roster {
     if (!census.ok) return census;
     const contract = this.#held(roundIdBytes);
     const view = this.chainFor({ contract, roundIdBytes });
-    let where = view && typeof view === 'object' ? whereOf.get(view) : null;
-    if (!where) {
-      where = new Map();
-      for (const block of (view && Array.isArray(view.blocks) ? view.blocks : [])) {
-        let txids;
-        try { txids = (block.transactions || []).map((raw) => parseTransaction(raw).txid); } catch { continue; }
-        txids.forEach((t, position) => where.set(toHex(t), { block, txids, position }));
-      }
-      if (view && typeof view === 'object') whereOf.set(view, where);
-    }
+    const where = { get: (hex) => whereInView(view, hex) };
     const proof = (txid) => { const at = txid ? where.get(toHex(txid)) : null; return at ? { transaction: toHex(at.block.transactions[at.position]),
       position: at.position, branch: merkleBranchOf(at.txids, at.position).map(toHex) } : null; };
     const entries = [];

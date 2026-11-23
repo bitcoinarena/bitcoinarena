@@ -44,6 +44,12 @@ import { marketStateOf, attestedTable } from './game-market.js';
 import { isScalar } from '../../arena-protocol/src/manifest.js';
 import { pluginForRound } from './plugins.js';
 import { askPeers } from './peer-ask.js';
+import { textUpTo, binaryUpTo } from './peer-read.js';
+// EVERY PEER ANSWER HERE IS READ UP TO A BOUND (kanban #2728, #1489 r5-gossip-2): a sealed share, a commitment or a share is ~100 bytes and a
+// refusal one line, but they were read whole (arrayBuffer / text), bounded only in time - one seat answered GET /share with 64 MiB and every
+// honest seat opening a stake buffered it, per open. Now PEER_SMALL_BYTES each, the stream cancelled past it (over it is a refusal).
+const PEER_SMALL_BYTES = 64 * 1024;
+const whyUpTo = async (r) => (r.body === undefined && typeof r.text === 'function' ? r.text() : textUpTo(r, PEER_SMALL_BYTES));
 
 /** signer node u16, the answering node's one-time key, and the share sealed to the asker. */
 // HOW LONG ONE SEAT IS WAITED FOR ITS SHARE (kanban #1061). The peers are asked in turn, so two hung seats cost twice this, inside the POST bound of whoever is waiting for this seat.
@@ -200,6 +206,9 @@ export class StakeSecrets {
         if (!stored) return { ok: false, why: 'this node holds no such entry' };
         const entry = decodeEntryContract(stored);
         if (book && book.wrongType) return { ok: false, why: `${book.wrongType}: its stake secret stays sealed` };
+        // THE ROUND'S KIND NOT DECIDED HERE (kanban #1666): a batch holding orders is pending - once certified the round is a book and this
+        // plain pick's stake comes back whole, so no share of it is handed out before that batch is decided
+        if (book && book.kindPending) return { ok: false, why: `batch ${book.kindPending[0]} of the book is not decided at this seat, so neither is the round's kind: its stake secret stays sealed` };
         if (entry.pick === f.outcome) return { ok: false, why: 'that entry picked the outcome: its lock is its own, and its stake secret stays sealed' };
         const anyWinner = this.round.entriesOf(roundIdBytes).some(({ entryId, entry: e }) => e.pick === f.outcome && (e.limitPrice === undefined || e.limitPrice === null)
           && (!this.round.stakeSeen || this.round.stakeSeen(entryId)));
@@ -343,7 +352,7 @@ export class StakeSecrets {
           + `&signer node=${toHex(this.round.pubkey)}${proven ? '&proof=1' : ''}`;
         const [asked] = await askPeers([peer], async (_, signal) => {
           const got = await this.fetch(url, { signal });
-          return got.ok ? { raw: new Uint8Array(await got.arrayBuffer()) } : { refusal: await got.text() };
+          return got.ok ? { raw: new Uint8Array(await binaryUpTo(got, PEER_SMALL_BYTES)) } : { refusal: await whyUpTo(got) };
         }, { boundMs: this.shareAskMs });
         if (asked.error) throw asked.error;
         if (!asked.value.raw) { refused++; why.push(`${peer}: ${asked.value.refusal}`); continue; }

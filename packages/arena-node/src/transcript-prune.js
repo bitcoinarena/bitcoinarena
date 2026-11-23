@@ -10,7 +10,6 @@
 // window (no rules block) keeps its transcript: there is no window to end. The round itself, its entries, receipts and results stay.
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { roundEndMs } from '../../arena-protocol/src/first-mark.js';
-import { toHex } from '../../arena-protocol/src/hash.js';
 
 export const DAY_MS = 86400000;
 /** How often a seat looks (an hour: the windows are a day long). */
@@ -99,7 +98,9 @@ export function pruneRelayed({ db, nowMs = Date.now(), keptUntil = (row) => rela
 // order, outcome, objection, forfeit, equivocation - whatever table a seat keeps per round, found from the schema, so a table added
 // later counts by itself. An unused round goes, with every committee and seating row, once its end + W + its claim window has
 // passed (a day where it names none). A used round is never touched here.
-export const COMMITTEE_TABLES = Object.freeze(['rounds', 'signer_nodes', 'round_beacons', 'seat_presents', 'seat_sigs', 'seat_certs', 'seat_signed']);
+export const COMMITTEE_TABLES = Object.freeze(['rounds', 'signer_nodes', 'round_beacons', 'seat_presents', 'seat_sigs', 'seat_certs', 'seat_signed',
+  // a seating's seated list and the members left for withholding (kanban #1509, #2140): seating rows, never a mark of use
+  'seat_seatings', 'seat_withheld']);
 const TRANSCRIPT_TABLES = ['ticks', 'batches', 'checkpoints'];
 /** At most this many rounds looked at in one pass: the backlog goes in steps, never one long stall of the seat. */
 export const UNUSED_BATCH = 5000;
@@ -119,6 +120,36 @@ export function usedMarkerTables(db) {
     .filter((t) => !skip.has(t) && /^[a-z_0-9]+$/.test(t) && db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'round_id'));
 }
 
+// A round id keyed as SQLite compares them: a text id never equals a blob one. A blob's key is its bytes one character each, not its hex
+// (kanban #3236, a heap snapshot of a seat: the used ids of a sweep, 83 MB) - one key per byte string either way, half the length, and one
+// flat string (a 'b' joined on would be a second string object beside it).
+const blobKey = (v) => { const k = Buffer.allocUnsafe(v.byteLength + 1); k[0] = 0x62; k.set(v, 1); return k.latin1Slice(); };
+export const idKey = (v) => (typeof v === 'string' ? `s${v}` : v instanceof Uint8Array ? blobKey(v) : `o${String(v)}`);
+const MARKS = 'arena_round_marks';
+/**
+ * THE USED IDS READ ONCE PER SWEEP, NOT ONCE PER PASS (kanban #2859, CDP profile of testnet4 seat 7 2026-11-15: rebuilding them on every
+ * 10 s pass of 1,000 rounds - SELECT DISTINCT round_id over every marker table, 200,528 rounds, ~200 passes a sweep - was ~37 % of the
+ * seat's CPU). Answers { ids, tables, builtMs } for pruneUnusedRounds({ used }). A MARK ADDED AFTER THIS READ STILL COUNTS: a TEMP
+ * trigger on every marker table (insert, and an update of round_id) writes the round id into the temp table arena_round_marks, and each
+ * pass folds those into `ids` before it looks at a round - exact whatever the table (rowid or not, a rowid reused), at the cost of one
+ * small insert per mark. TEMP: the triggers live on this connection only, and the seat writes its store through this one connection
+ * (main.js openStore; workers read only). A table added later is not watched: a pass that finds the marker tables changed reads anew.
+ * A mark deleted after the read keeps its round one sweep longer - the safe side.
+ */
+export function readUsedRounds(db, { nowMs = Date.now() } = {}) {
+  const tables = usedMarkerTables(db);
+  db.exec(`CREATE TEMP TABLE IF NOT EXISTS ${MARKS} (round_id)`);
+  for (const t of tables) {
+    db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS ${MARKS}_${t}_i AFTER INSERT ON main.${t} BEGIN INSERT INTO ${MARKS} (round_id) VALUES (NEW.round_id); END`);
+    db.exec(`CREATE TEMP TRIGGER IF NOT EXISTS ${MARKS}_${t}_u AFTER UPDATE OF round_id ON main.${t} BEGIN INSERT INTO ${MARKS} (round_id) VALUES (NEW.round_id); END`);
+  }
+  // the marks folded so far are in what is read now (one synchronous step: nothing writes between)
+  db.exec(`DELETE FROM temp.${MARKS}`);
+  const ids = new Set();
+  for (const t of tables) for (const u of db.prepare(`SELECT DISTINCT round_id FROM ${t}`).iterate()) ids.add(idKey(u.round_id));
+  return { ids, tables: tables.join(','), builtMs: Number(nowMs) };
+}
+
 /**
  * One pass over at most `batch` rounds after rowid `afterRowid`: the unused ones past their time are deleted with their committee
  * and seating rows. `goesAt(row)` answers a rounds row's time (default: its contract's). Answers { deleted, rows, looked, lastRowid,
@@ -126,7 +157,7 @@ export function usedMarkerTables(db) {
  */
 // `contractOf(round_id)`: the seat's decoded contract (Round.contractOf, kept while the round is open - kanban #742), or null where it
 // does not parse; unnamed, each row's contract is decoded here.
-export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batch = UNUSED_BATCH, goesAt = null, contractOf = null, onDeleted = () => {} }) {
+export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batch = UNUSED_BATCH, goesAt = null, contractOf = null, used = null, onDeleted = () => {} }) {
   // A CONTRACT THIS SEAT CANNOT READ (measured on test host seat 1: its oldest 3,000 rounds, stored 2026-09-28, all fail with "custody
   // byte 94 is not a custody of this network" - an older format) can be neither served nor settled by it: it goes UNREADABLE_KEEP_MS
   // after it was stored, still only when nothing marks it used
@@ -134,12 +165,14 @@ export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batc
     let c; try { c = contractOf ? contractOf(row.round_id) : decodeRoundContract(new Uint8Array(row.contract)); } catch { c = null; }
     if (!c) return Number(row.opened_ms) + UNREADABLE_KEEP_MS;
     let end; try { end = Number(roundEndMs(c)); } catch { end = Number(c.entryCloseMs); } return unusedRoundGoesAt(c, end); });
-  // THE USED IDS READ ONCE PER PASS (kanban #705, profiled on test host seat 4 2026-10-26 12:55Z: 90 % of its loop, the seat silent for
-  // minutes): a lookup per round and marker table was a full scan of each of the 17 tables without a round_id index - 17,000 scans a
-  // pass. Keyed as SQLite compares them: a text id never equals a blob one.
-  const idKey = (v) => (typeof v === 'string' ? `s${v}` : v instanceof Uint8Array ? `b${toHex(v)}` : `o${String(v)}`);
-  const used = new Set();
-  for (const t of usedMarkerTables(db)) for (const u of db.prepare(`SELECT DISTINCT round_id FROM ${t}`).iterate()) used.add(idKey(u.round_id));
+  // THE USED IDS READ AT MOST ONCE PER PASS (kanban #705, profiled on test host seat 4 2026-10-26 12:55Z: 90 % of its loop, the seat silent
+  // for minutes): a lookup per round and marker table was a full scan of each of the 17 tables without a round_id index - 17,000 scans
+  // a pass. And not even that where the caller keeps them (`used` from readUsedRounds, kanban #2859): the marks made since are folded in.
+  let kept = used;
+  if (!kept || kept.tables !== usedMarkerTables(db).join(',')) kept = readUsedRounds(db);
+  else for (const m of db.prepare(`SELECT round_id FROM temp.${MARKS}`).iterate()) kept.ids.add(idKey(m.round_id));
+  if (kept === used) db.exec(`DELETE FROM temp.${MARKS}`);
+  const usedIds = kept.ids;
   const present = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((r) => r.name));
   const dels = [...COMMITTEE_TABLES.filter((t) => t !== 'rounds' && present.has(t)), ...TRANSCRIPT_TABLES.filter((t) => present.has(t)), 'rounds']
     .map((t) => db.prepare(`DELETE FROM ${t} WHERE round_id = ?`));
@@ -150,7 +183,7 @@ export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batc
     for (const r of rowsOf) {
       lastRowid = r.rowid;
       // a used round is kept whatever its time: asked first, so its contract is not decoded for nothing (kanban #742)
-      if (used.has(idKey(r.round_id))) continue;
+      if (usedIds.has(idKey(r.round_id))) continue;
       let when; try { when = at(r); } catch { continue; }
       if (!(nowMs >= when)) continue;
       for (const d of dels) rows += Number(d.run(r.round_id).changes);
@@ -158,5 +191,5 @@ export function pruneUnusedRounds({ db, nowMs = Date.now(), afterRowid = 0, batc
     }
     db.exec('COMMIT');
   } catch (e) { try { db.exec('ROLLBACK'); } catch { /* none open */ } throw e; }
-  return { deleted, rows, looked: rowsOf.length, lastRowid, done: rowsOf.length < batch };
+  return { deleted, rows, looked: rowsOf.length, lastRowid, done: rowsOf.length < batch, used: kept };
 }

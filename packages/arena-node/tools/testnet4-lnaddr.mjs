@@ -25,7 +25,7 @@ const json = (res, code, body) => { res.writeHead(code, { 'content-type': 'appli
 const say = (o) => console.log(JSON.stringify({ at: new Date().toISOString(), ...o }));
 
 createServer(async (req, res) => {
-  const url = new URL(req.url, base);
+  let url; try { url = new URL(req.url, base); } catch { return json(res, 400, { status: 'ERROR', reason: 'that request target is no URL' }); }   // kanban #3048: `GET //[` ended the process
   let m = url.pathname.match(/^\/\.well-known\/lnurlp\/([a-z0-9._-]{1,64})$/i);
   if (m) {
     say({ step: 'lnurlp', name: m[1] });

@@ -64,3 +64,9 @@
 .aw .cover .amt{font:700 16px system-ui}.aw .cover .what{font-weight:600}.aw .cover .why{font-size:13px;color:var(--dim)}
 .aw .cover.c-bond{border-left-color:var(--gv)}.aw .cover.c-pegIn{border-left-color:#a371f7}.aw .cover.c-ring,.aw .cover.c-outside{border-left-color:var(--st)}
 .aw .cover.c-advertUpdate,.aw .cover.c-custodyUpdate{border-left-color:var(--ok)}.aw .cover.c-fees{border-left-color:var(--muted)}
+/* the first step (kanban #648): who the owner becomes, in a box under the choice; a new Nostr key shown to be saved */
+.aw .owner-box{border:1px solid var(--ok);border-radius:12px;padding:10px 14px;margin:12px 0;background:rgba(63,185,80,.06)}.aw .owner-box .sub{margin:6px 0 0}
+.aw .owner-box code,.aw .key{font-family:ui-monospace,monospace;overflow-wrap:anywhere}.aw .key{white-space:pre-wrap;background:var(--card);padding:8px;border-radius:8px;margin:8px 0}
+.aw .ws-warn{border:2px solid var(--gv);background:rgba(247,147,26,.10);border-radius:12px;padding:12px 14px;margin:10px 0}.aw .ws-warn p{margin:0}
+.aw label.check{display:flex;gap:8px;align-items:center;color:var(--text);font-size:14px;margin:10px 0 4px;cursor:pointer}.aw label.check input{width:auto;margin:0}
+.aw #start-nostr{margin-left:18px}

@@ -1,5 +1,22 @@
 [
  {
+  "name": "Alby",
+  "version": "3.15.1",
+  "kind": "Browser extension",
+  "date": "2026-11-20",
+  "testedBy": null,
+  "how": "automatic",
+  "url": "https://getalby.com/",
+  "platform": "Chrome, Firefox",
+  "checks": {
+   "login": "ok",
+   "seed": "ok",
+   "decrypt": "ok",
+   "sign": "ok"
+  },
+  "result": "works"
+ },
+ {
   "name": "nos2x",
   "version": "2.5.2",
   "kind": "Browser extension",
@@ -18,9 +35,9 @@
  },
  {
   "name": "Sidecar",
-  "version": "1.17.2",
+  "version": "1.18.2",
   "kind": "Browser extension",
-  "date": "2026-11-18",
+  "date": "2026-11-22",
   "testedBy": null,
   "how": "automatic",
   "url": "https://sidecar.top/",

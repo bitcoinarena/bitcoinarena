@@ -82,7 +82,7 @@ test('#757: rounds listed, none seated, 2 of 9 drawn live - a seating alert on t
   await assert.rejects(emergencyGrid(), /not posted automatically/);
 });
 
-test('a test host seat down: restarted after two passes, one seat at a time; held at load >= 12 (alerted) and in the seating minutes', async () => {
+test('a test host seat down: restarted after two passes, one seat at a time; held at load >= 12 and in the seating minutes (kanban #2773: no alert before 10 min)', async () => {
   const down = TEST_HOST[2];
   // load 3, at :05 of the quarter: pass 1 sees it, pass 2 restarts blwp-tn4-node@3
   let w = world({ rounds: HEALTHY, down: [down, MAC[1]] });
@@ -93,13 +93,15 @@ test('a test host seat down: restarted after two passes, one seat at a time; hel
   const d = r.fixes.find((x) => x.kind === 'restart-seat');
   assert.deepEqual([d.unit, d.allowed], ['blwp-tn4-node@3.service', true]);
   assert.ok(!r.problems.find((p) => p.key === `seat-down:${down}`).alert, 'the restart is the answer: no alert yet');
-  // the test host seat is not ours to restart: alerted
-  assert.ok(w.posts.some((t) => /PROBLEM: second-host seat 2 not answering\n• down \d+ min \(ECONNREFUSED\)\nTried: nothing \(second-host seat\)\nNeeds: restart on the test host, see #759$/.test(t)), w.posts.join('\n---\n'));
+  // the second-host seat is not ours to restart: logged, not alerted before 10 min (kanban #2773)
+  assert.equal(w.posts.filter((t) => /not answering/.test(t)).length, 0, w.posts.join('\n---\n'));
+  assert.deepEqual(r.problems.find((p) => p.key === `seat-down:${MAC[1]}`).tried, ['nothing (second-host seat)']);
   // the recheck: still down -> "restart did not help", alerted, not restarted again within the hour
   w.now += 120000;
   r = await pass(w.io, CFG, r.state);
   assert.equal(w.restarts.length, 1);
-  assert.ok(w.posts.some((t) => /#759 .*PROBLEM: seat 3 not answering/.test(t) && /Tried: restarted 10:06 UTC, still down; restart held \(another seat just restarted, once per hour\)/.test(t)), w.posts.join('\n---\n'));
+  assert.equal(w.posts.filter((t) => /not answering/.test(t)).length, 0, w.posts.join('\n---\n'));
+  assert.deepEqual(r.problems.find((p) => p.key === `seat-down:${down}`).tried, ['restarted 10:06 UTC, still down', 'restart held (another seat just restarted, once per hour)']);
 
   // load 12.0 (1-min): held and alerted, with the load
   w = world({ rounds: HEALTHY, down: [down], load: [12, 11, 10] });
@@ -108,9 +110,8 @@ test('a test host seat down: restarted after two passes, one seat at a time; hel
   const held = r.fixes.find((x) => x.kind === 'restart-seat');
   assert.equal(held.allowed, false);
   assert.match(held.blocked.join(), /1-min load 12 >= 12/);
-  assert.equal(w.posts.length, 1);
-  assert.equal(w.posts[0], ['[health-watcher] #759 @owner PROBLEM: seat 3 not answering', '• down 1 min (ECONNREFUSED), unit active, 0 restarts',
-    'Tried: restart held (load 12 >= 12)', 'Needs: manual restart when safe, see #759'].join('\n'));
+  assert.equal(w.posts.length, 0);
+  assert.deepEqual(r.problems.find((p) => p.key === `seat-down:${down}`).tried, ['restart held (load 12 >= 12)']);
 
   // in the seating minutes (:13): held, no alert before 20 min
   w = world({ rounds: HEALTHY, down: [down], at: Date.UTC(2026, 9, 28, 10, 12, 0) });

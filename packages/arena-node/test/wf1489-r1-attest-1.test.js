@@ -33,7 +33,8 @@ test('wf1489 r1-attest-2: an Up/Down attestation over a window shifted past the 
     const shift = 300000n;
     const window = { startMs: close - P + shift, endMs: close + shift };
     // the price: flat over the real window (a tie is Up), then falling in the 5 minutes after the close - the shifted window is Down
-    const samples = [{ atMs: close - P - 60000n, price: 8300000n }, { atMs: close - 60000n, price: 8300000n }, { atMs: close + 60000n, price: 8200000n }];
+    // read every 10 s (kanban #3049: an attestor signs only a window whose start and end it read): flat to the close, then falling
+    const samples = []; for (let t = close - P - 60000n; t <= close + shift; t += 10000n) samples.push({ atMs: t, price: t < close ? 8300000n : 8200000n });
     const real = attestWindow({ samples, roundId: w.rid, window: { startMs: close - P, endMs: close }, attestor: UPDOWN_ATTESTOR_KEYS.A });
     const words = ['A', 'B'].map((l) => attestWindow({ samples, roundId: w.rid, window, attestor: UPDOWN_ATTESTOR_KEYS[l] }));
     const att = combine(words, { attestors: ATTESTORS, threshold: 2 });

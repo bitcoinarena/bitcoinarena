@@ -9,18 +9,17 @@ import { startRelay } from '../src/nostr-relay.js';
 import { key, ev, publish } from './_r22-common.mjs';
 
 test('#1513 v1-refute-22-s2-2: a node rolling its own oldest out is kept on a relay strangers filled by bytes', async () => {
-  const r = await startRelay({ port: 0, limits: { authorEvents: 3, totalBytes: 12000 } });
+  // kanban #2847: the node's key is a kept node key (ARENA_RELAY_KEEP), as on the live relay - an author with standing, never evicted for a stranger
+  const node = key();
+  const r = await startRelay({ port: 0, limits: { authorEvents: 3, totalBytes: 12000 }, keep: [node.pub] });
   const socks = [];
   try {
     const t0 = Math.floor(Date.now() / 1000) - 1000;
-    const node = key();
     const res = (i, extra = '', content = 'settled') => ev(node, { kind: 30762, at: t0 + i, tags: [['d', `arena:result:r${i}${extra}`]], content });
     const mine = await publish(r.port, [res(1), res(2), res(3)], socks);
     assert.deepEqual(mine.map((m) => m[2]), [true, true, true]);
-    // strangers fill the bytes with fresh keys until refused
-    let full = false;
-    for (let k = 0; k < 40 && !full; k++) { const s = key(); const oks = await publish(r.port, [ev(s, { at: t0 + 10, content: 'y'.repeat(300) })], socks); full = oks[0][2] === false; }
-    assert.ok(full, 'the relay is full');
+    // strangers fill the bytes with fresh keys (since #2847 each new one takes the room of the oldest stranger, never the node's)
+    for (let k = 0; k < 40; k++) await publish(r.port, [ev(key(), { at: t0 + 10, content: 'y'.repeat(300) })], socks);
     // the node's next result names more players (a longer content): its own oldest (r1) goes, no new row, the node stays inside its own quota
     const next = await publish(r.port, [res(4, '', JSON.stringify({ settled: true, players: Array.from({ length: 12 }, (_, i) => String(i).repeat(64)) }))], socks);
     assert.deepEqual(next.map((m) => [m[2], m[3]]), [[true, '']], 'a node inside its own quota refused');

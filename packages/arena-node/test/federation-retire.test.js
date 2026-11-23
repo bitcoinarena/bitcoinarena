@@ -38,3 +38,15 @@ test('the federation a guardian guards is its invite-code\'s; none without one',
   writeFileSync(join(dir, 'invite-code'), '"fed11abc"\n');
   assert.equal(guardedFederationOf(dir, (inv) => ({ federationId: inv === 'fed11abc' ? 'AB'.repeat(32) : '' })), 'ab'.repeat(32));
 });
+
+test('kanban #2487 (SM-O1): a consents file that does not parse, with no good .bak, is thrown on - never read as "no consents"; absent is empty', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'retire-2487-'));
+  const file = join(dir, 'node.db.retire.json');
+  assert.deepEqual(createRetireBook(file).list(), []);
+  const book = createRetireBook(file);
+  book.add('AB12', { by: 'owner' });
+  writeFileSync(file, '{"ab12":{"at');
+  assert.equal(createRetireBook(file).has('ab12'), true, 'read from its .bak');
+  writeFileSync(`${file}.bak`, '{"ab12":{"at');
+  assert.throws(() => createRetireBook(file), (e) => e.code === 'DURABLE_JSON_UNREADABLE');
+});

@@ -234,14 +234,26 @@ export function createBridge({ electrum, fallbacks = [], home, esplora = ESPLORA
     let b = ''; req.setEncoding('utf8'); req.on('data', (d) => { b += d; if (b.length > 1e6) req.destroy(); });
     req.on('end', async () => {
       if (req.headers.authorization !== `Basic ${Buffer.from(cookie).toString('base64')}`) { res.writeHead(401); return res.end(); }
-      let id = null, out;
+      const one = async (q) => {
+        const id = q && q.id !== undefined ? q.id : null;
+        try { return { result: await call(q.method, q.params || []), error: null, id }; }
+        catch (e) { log(`[bridge] ${e.message}`); return { result: null, error: { code: e.code || -1, message: e.message }, id }; }
+      };
+      let out;
       try {
-        const q = JSON.parse(b); id = q.id;
-        out = { result: await call(q.method, q.params || []), error: null, id };
-      } catch (e) { out = { result: null, error: { code: e.code || -1, message: e.message }, id }; log(`[bridge] ${e.message}`); }
+        const q = JSON.parse(b);
+        // A BATCH IS ANSWERED CALL BY CALL (kanban #3083, feedback #363): chain-rpc.js call.batch (#1968) sends JSON-RPC arrays for the census
+        // block and header reads; read as one object, the whole batch was refused ("undefined is not served") and an Electrum-mode node never
+        // read a census. Each call is answered in order with its own id, one at a time (the Electrum server is asked no faster than before).
+        if (Array.isArray(q)) { out = []; for (const c of q) out.push(await one(c)); }
+        else out = await one(q);
+      } catch (e) { out = { result: null, error: { code: -32700, message: e.message }, id: null }; log(`[bridge] ${e.message}`); }
       res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(out));
     });
   });
+  // KANBAN #3084 (feedback #364): Node's 5 s keep-alive closed the seat's pooled connection between the census walk's reads, and the next
+  // call on it failed; the seat keeps its connections longer than that, so the bridge does too
+  server.keepAliveTimeout = 65000; server.headersTimeout = 66000;
   return {
     call, cookiePath,
     listen: (port) => new Promise((ok) => server.listen(port, '127.0.0.1', () => ok(server.address().port))),

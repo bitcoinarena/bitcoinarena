@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { createNodeFactsBook, measureFacts, measureBandwidth, measureOrigin, signFacts, PROBE_BYTES } from '../src/node-facts.js';
+import { createNodeFactsBook, measureFacts, measureBandwidth, measureOrigin, signFacts, PROBE_BYTES, FACTS_KEEP_GAP_MS } from '../src/node-facts.js';
 
 const secret = new Uint8Array(32).fill(3), pubkey = schnorr.getPublicKey(secret);
 const sign = (d) => schnorr.sign(d, secret), verify = (s, m, k) => schnorr.verify(s, m, k);
@@ -16,7 +16,8 @@ test('a record of its own node is kept, the newest stands, and it stays with its
   const { b, at } = book();
   assert.deepEqual(b.offer(said(1000)), { ok: true, kept: true });
   assert.deepEqual(b.offer(said(500)), { ok: true, kept: false });
-  assert.equal(b.offer(said(2000, { cores: 8 })).kept, true);
+  assert.equal(b.offer(said(2000, { cores: 8 })).kept, false, 'one too soon after the held one is not kept (kanban #2425)');
+  assert.equal(b.offer(said(1000 + FACTS_KEEP_GAP_MS, { cores: 8 })).kept, true);
   at(1000000 + 7200000);
   const [r] = b.list();
   assert.equal(r.record.facts.cores, 8);

@@ -32,8 +32,13 @@ test('a gift to a game\'s developers: one payment of the split, the donor\'s ima
   const paid = [], posted = [];
   const fetch = async (u, o) => { posted.push({ u, body: JSON.parse(o.body) }); return u.startsWith('https://s1') ? new Response('down', { status: 503 }) : new Response('{}', { status: 200 }); };
   const got = await giftDonation({ game: { gameDevPubkey: b32(0xde), gameName: 'nextblock' }, recipients: SET, sat: 500, wallet: wallet(paid),
-    federationId: 'fe'.repeat(32), donor, seats: ['https://s1.example', 'https://s2.example'], fetch, nowMs: () => 1792240000000 });
+    federationId: 'fe'.repeat(32), donor, seats: ['https://s1.example', 'https://s2.example', 'https://s3.example'], fetch, nowMs: () => 1792240000000 });
   assert.deepEqual([got.ok, got.sat, got.outputs, got.keptBy, got.txid], [true, 500, 2, 'https://s2.example', TXID]);
+  // kanban #2420: every seat gets the record, and one seat's 200 alone is not "kept" - two must keep it, else it is kept for a retry
+  assert.deepEqual(posted.map((x) => x.u.split('/donation-gift')[0]), ['https://s1.example', 'https://s2.example', 'https://s3.example']);
+  const one = await giftDonation({ game: { gameDevPubkey: b32(0xde), gameName: 'nextblock' }, recipients: SET, sat: 500, wallet: wallet(paid),
+    federationId: 'fe'.repeat(32), donor, seats: ['https://s1.example', 'https://s2.example'], fetch, nowMs: () => 1792240000000 });
+  assert.deepEqual([one.ok, one.step, typeof one.retry], [false, 'record', 'string']);
   assert.deepEqual(paid[0], [{ pk: toHex(pk33(0x11)), msat: '333350', image: toHex(donor.pubkey) }, { pk: toHex(pk33(0x12)), msat: '166650', image: toHex(donor.pubkey) }]);
   const g = { ...decodeDonationGift(fromHex(posted[1].body.gift)), signature: fromHex(posted[1].body.signature) };
   assert.deepEqual([g.target, g.gameName, g.totalMsat, toHex(g.donor)], [GIFT_TO_GAME, 'nextblock', 500000n, toHex(donor.pubkey)]);
@@ -62,4 +67,15 @@ test('a paid gift is a row of the wallet\'s history, with its transaction and to
   assert.deepEqual(rows, [{ kind: 'donation', msat: '100000', round: null, txid: TXID, to: 'app:btc-updown-15m' },
     { kind: 'donation', msat: '21000', round: null, txid: TXID, to: 'network' }], 'the refused amount paid nothing and wrote nothing');
   assert.equal(ledgerHistory(ledgerRows(storage, fed)).length, 2, 'drawn as two rows');
+});
+
+// KANBAN #3081 (feedback #360, as the item purchase): a gift the guardians refuse is not paid - nothing kept as paid, no history row
+test('#3081 a gift the guardians refuse is not paid: the record is dropped', async () => {
+  const kept = new Map(), storage = { getItem: (k) => kept.get(k) ?? null, setItem: (k, v) => kept.set(k, v), removeItem: (k) => kept.delete(k) };
+  const fed = 'fe'.repeat(32), paid = [];
+  const refusing = { ...wallet(paid), lockAccepted: async () => { throw new Error('the guardians did not accept the lock transaction: The transaction had an invalid input: 2-The note is already spent'); } };
+  const r = await giftDonation({ recipients: SET, sat: 21, wallet: refusing, federationId: fed, donor, seats: ['https://s.example'], fetch: async () => new Response('{}', { status: 200 }), storage });
+  assert.equal(r.ok, false); assert.match(r.why, /not paid: the federation refused the payment/);
+  assert.deepEqual([...kept.keys()].filter((k) => !/ledger/i.test(k)), [], 'no paid record kept');
+  assert.equal(ledgerRows(storage, fed).length, 0, 'no history row for a refused payment');
 });

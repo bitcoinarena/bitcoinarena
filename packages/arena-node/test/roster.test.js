@@ -144,6 +144,7 @@ function daemon(bonds, over = {}) {
 test('one file under src/ reaches the census, and it is roster.js', () => {
   const reaches = [];
   for (const f of readdirSync(new URL('../src/', import.meta.url).pathname)) {
+    if (!/\.(m?js)$/.test(f)) continue;   // src/vendor is a folder (kanban #2220, #2915)
     const src = readFileSync(new URL('../src/' + f, import.meta.url).pathname, 'utf8');
     // CALLS, not mentions: a comment naming `resolveCensus` is a comment, and
     // the rule here is about which file ASKS the census anything.

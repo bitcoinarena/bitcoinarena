@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 
 import { verifyDonationOutputs, donationContractFields } from '../src/stake-lock-signer-node.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { encodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { TESTNET4_DONATION_SET } from '../../arena-protocol/src/testnet4-donation-set.js';
 import { b32 } from './window-fixture.js';
 import { joinedWithLock, CLAIM } from './lock-fixture.js';
@@ -35,7 +36,11 @@ const paysBoth = () => federation({
   [at(OUT[0])]: idOf(donationContractFields({ recipientPk: DEVS[0].recipientPk, amountMsat: 1334n })),
   [at(OUT[1])]: idOf(donationContractFields({ recipientPk: DEVS[1].recipientPk, amountMsat: 666n })),
 });
-const round = (taken = new Map()) => ({ donationOutputAt: (o) => taken.get(at(o)) || null });
+// kanban #2662: a kept row blocks the entry only when the entry it names is held here and names that outpoint itself (`held`: entry id hex -> its outpoints)
+const heldEntry = (outpoints) => encodeEntryContract({ roundId: b32(0x01), playerPubkey: b32(5), sessionPubkey: b32(6), stakeCommitment: b32(7), stakeMsat: 0n, feeMsat: 0n,
+  donationMsat: 2000n, joinTick: 0, worldSecret: b32(0x5e), vssSharesRef: new Uint8Array(32), stakePoint: new Uint8Array(33), feePreimage: new Uint8Array(32),
+  claimKeyAttestationRef: new Uint8Array(32), stakeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, feeLockOutpoint: { txid: new Uint8Array(32), outIdx: 0n }, donationOutpoints: outpoints });
+const round = (taken = new Map(), held = new Map()) => ({ donationOutputAt: (o) => taken.get(at(o)) || null, entry: (id) => held.get(toHex(id)) || null });
 const entry = (more = {}) => ({ roundId: b32(0x01), donationMsat: 2000n, donationOutpoints: OUT, ...more });
 const ME = b32(0xee);
 const check = (more = {}) => verifyDonationOutputs({ round: round(), port: paysBoth(), entry: entry(), entryIdBytes: ME, recipients: DEVS, federationId: b32(0xfe), ...more });
@@ -62,7 +67,7 @@ test('a wrong or missing donation output is refused by name', async () => {
     ['one msat short', { port: federation({ [at(OUT[0])]: idOf(donationContractFields({ recipientPk: DEVS[0].recipientPk, amountMsat: 1333n })), [at(OUT[1])]: 'x' }) }, /is not 1334 msat/],
     ['one output missing from the entry', { entry: entry({ donationOutpoints: [OUT[0]] }) }, /names 1 donation output\(s\) and .* owes 2/],
     ['no outputs named', { entry: entry({ donationOutpoints: undefined }) }, /names 0 donation output/],
-    ['an output already paying for another entry', { round: round(new Map([[at(OUT[1]), { entryId: b32(0xdd) }]])) }, /already pays for another entry/],
+    ['an output already paying for another entry', { round: round(new Map([[at(OUT[1]), { entryId: b32(0xdd) }]]), new Map([[toHex(b32(0xdd)), heldEntry(OUT)]])) }, /already pays for another entry/],
     ['outputs in an LNURL round', { recipients: TESTNET4_DONATION_SET.recipients }, /pays LNURLs/],
     ['outputs where this node holds no set', { recipients: null }, /holds no donation set/],
   ];
@@ -132,4 +137,13 @@ test('an output whose image is the entry\'s own player key is taken and marked; 
   const o = await check({ port: other, entry: entry({ playerPubkey: PLAYER }) });
   assert.equal(o.ok, false, 'an output naming another sender was taken');
   assert.match(o.why, /is not 1334 msat to key 02a1/);
+});
+
+test('kanban #2662: a row another seat listed under an entry this seat does not hold - or one that does not name the output - blocks nothing', async () => {
+  // feedback #057: one seat listed the real entry's reserve output under a made-up entry; every seat that took it refused the real entry's lock
+  const madeUp = await check({ round: round(new Map([[at(OUT[1]), { entryId: b32(0xdd) }]])) });
+  assert.equal(madeUp.ok, true, madeUp.why);
+  assert.equal(madeUp.rows.length, 2, 'the real entry takes its outputs over');
+  const notItsOwn = await check({ round: round(new Map([[at(OUT[1]), { entryId: b32(0xdd) }]]), new Map([[toHex(b32(0xdd)), heldEntry([{ txid: b32(0x09), outIdx: 1n }])]])) });
+  assert.equal(notItsOwn.ok, true, notItsOwn.why);
 });

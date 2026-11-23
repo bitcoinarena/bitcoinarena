@@ -9,7 +9,7 @@
 //   3. the beacon off the same headers, and the seat's own sortition.
 // The nodes' /committee answers are still read, and only compared: a seat naming another set is named in the answer.
 // Kept per census and committee time: every round of a series shares them, so a series' second join asks nothing new.
-import { verifySeating } from '../../arena-protocol/src/seating.js';
+import { verifySeating, seatingBefore } from '../../arena-protocol/src/seating.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
 import { committeeFromChain } from '../../arena-protocol/src/client-committee.js';
 import { blockHashOf, TESTNET4_ANCHOR_HEIGHT } from '../../arena-protocol/src/chain.js';
@@ -17,6 +17,7 @@ import { networkOf } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_TESTNET4, ARBITRATION_KEYS_TESTNET4, ARBITRATION_KEYS_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { genesisFor, committeesStand } from '../../arena-protocol/src/genesis.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { agreedChain, httpProvider, headerSources } from './headers.js';
@@ -24,6 +25,32 @@ import { fetchRound } from './join.js';
 import { explorerAgrees } from './explorer-check.js';
 import { chainAnchorFor } from './directory.js';
 import { readWithOneRetry } from './reread.js';
+// A SEAT'S ANSWER IS READ UP TO A BOUND (kanban #2740, #1489 r6-census-1): GET /census, /committee and /seating were read whole (json, arrayBuffer,
+// text), bounded only by READ_MS - one seat streaming 64 MiB of whitespace made the tab hold all of it before the honest providers were asked
+// (a phone's tab froze; the join never finished). Each is read chunk by chunk up to its cap, the stream cancelled past it (that seat refused).
+const CENSUS_ANSWER_MAX = 4 * 1024 * 1024, COMMITTEE_ANSWER_MAX = 64 * 1024, SEATING_ANSWER_MAX = 256 * 1024;
+async function bytesUpTo(r, max) {
+  const said = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
+  const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
+  if (!reader) { const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`its answer is more than ${max} bytes`); return b; }
+  const parts = []; let n = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.byteLength;
+      if (n > max) throw new Error(`its answer is more than ${max} bytes`);
+      parts.push(value);
+    }
+  } catch (e) { try { await reader.cancel(); } catch { /* gone */ } throw e; }
+  const all = new Uint8Array(n); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return all;
+}
+// a test's stand-in answer with no stream and no arrayBuffer is read by its own json()/text()
+const jsonUpTo = async (r, max) => (r.body === undefined && typeof r.arrayBuffer !== 'function' && typeof r.json === 'function' ? r.json() : JSON.parse(new TextDecoder().decode(await bytesUpTo(r, max))));
+const textUpTo = async (r, max) => (r.body === undefined && typeof r.arrayBuffer !== 'function' && typeof r.text === 'function' ? r.text() : new TextDecoder().decode(await bytesUpTo(r, max)));
 
 /**
  * THE ARBITRATION SET AND BOND TERMS A BOND IS REBUILT WITH, per network: genesis' own (testnetShape: 5 of the 7 keys,
@@ -177,8 +204,12 @@ export async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip =
     try {
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
       if (!r.ok) { refused.push(`${u}: ${r.status}`); return; }
-      const j = await r.json();
+      const j = await jsonUpTo(r, CENSUS_ANSWER_MAX);   // kanban #2740: bounded
       if (!j || !Array.isArray(j.entries)) { refused.push(`${u}: no entries`); return; }
+      // A PROVIDER LISTING ONE BOND TWICE IS REFUSED ON ITS OWN, before the union (kanban #2160, #2228, #2301): in the union its repeat
+      // made the census uncommittable and its honest co-provider was skipped with it - on three seats the join was refused
+      const twice = repeatedBondIn(j.entries);
+      if (twice) { refused.push(`${u}: lists one bond twice`); return; }
       if (got.length >= providers || roots.has(root)) return;
       // the nodes this seat left out for their protocol version: shown, never counted
       if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
@@ -199,18 +230,37 @@ export async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip =
   if (!got.length) return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
   if (got.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: got[0].entries, refused,
     why: `only ${got.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
-  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), refused };
+  return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), lists: got.map((g) => g.entries), refused };
 }
 /**
  * Census entries from several providers, joined by bond; the first copy of each bond is kept. A seat's GET /census entry is the bond's evidence
  * ({ transaction, position, branch, update }), so a bond is its raw transaction there; an entry naming txid and vout is keyed by them (#1333:
  * keyed by txid:vout alone, the 18 live entries all became "undefined:undefined" - one entry, a root that never matched).
  */
-const bondKeyOf = (e) => (e && e.txid !== undefined && e.vout !== undefined
-  ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
-  // A BOND'S HEX IS ONE KEY WHATEVER ITS CASE (kanban #1708): fromHex reads 'AB' and 'ab' alike, so one provider repeating a bond in upper
-  // case kept two copies in the union, censusRootOf threw 'duplicate outpoint' and the join was refused for good
-  : `t:${typeof e?.transaction === 'string' ? e.transaction.toLowerCase() : JSON.stringify(e)}`);
+// A BOND IS KEYED BY WHAT IT READS AS, NOT HOW IT IS SPELLED (kanban #1708, then #2160, #2228, #2301): lower-casing was not enough - fromHex
+// reads ' d', '+d' and 'd ' as 0x0d too, so a repeat spelled that way kept two copies, censusRootOf threw 'duplicate outpoint' and both
+// providers were skipped, the honest one with the liar. The key is the transaction's txid (witness bytes do not change it), with the
+// re-affirmation's for a carried bond - the client derives one entry from exactly that pair.
+const txidKeyOf = (t) => {
+  if (t === undefined || t === null) return '';
+  try { return toHex(parseTransaction(t instanceof Uint8Array ? t : fromHex(String(t))).txid); }
+  catch { return `raw:${typeof t === 'string' ? t.toLowerCase() : JSON.stringify(t)}`; }
+};
+// THE TRANSACTION FIRST (kanban #2500, #1489 a44-refute-48-s2): an entry carrying its transaction was keyed by the txid / vout fields the
+// provider wrote beside it whenever it wrote them, so one seat repeating a bond with made-up txid / vout fields slipped past the own-list
+// repeat check, the union threw 'duplicate outpoint' and the honest co-provider was skipped with it. An entry with a transaction is keyed
+// by that transaction (what the client derives the bond from); provider-written txid / vout key only an entry that carries none.
+const bondKeyOf = (e) => (e && e.transaction !== undefined
+  ? `t:${txidKeyOf(e.transaction)}:${e.reaffirm && typeof e.reaffirm === 'object' ? txidKeyOf(e.reaffirm.transaction) : ''}`
+  : e && e.txid !== undefined && e.vout !== undefined
+    ? `o:${Array.isArray(e.txid) || e.txid instanceof Uint8Array ? toHex(Uint8Array.from(e.txid)) : String(e.txid)}:${e.vout}`
+    : `j:${JSON.stringify(e)}`);
+/** The first bond one provider's own list holds twice, or null (kanban #2160, #2228, #2301). */
+const repeatedBondIn = (list) => {
+  const seen = new Set();
+  for (const e of list) { const k = bondKeyOf(e); if (seen.has(k)) return k; seen.add(k); }
+  return null;
+};
 export function unionOfEntries(lists) {
   const byBond = new Map();
   for (const list of lists) for (const e of list || []) {
@@ -273,17 +323,37 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   // round and named nobody)
   const censusRefused = []; const skip = new Set();
   let got;
+  const tryEntries = (entries, census) => {
+    try {
+      return committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: entries, roles,
+        bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
+        verify: curve.verify, census });
+    } catch (e) { return { ok: false, why: `that census cannot be committed: ${e && e.message ? e.message : String(e)}` }; }
+  };
+  const refusedWhy = /^(the census the seats handed over hashes to |that census cannot be committed: )/;
   for (;;) {
     if (!evidence.ok) return { ...evidence, why: evidence.why + (censusRefused.length ? `; ${censusRefused.map((x) => `${x.node}: ${x.why}`).join('; ')}` : ''), censusRefused };
-    got = committeeFromChain({ contract, roundId, headers: chain.chain.headers, firstHeight: chain.firstHeight, evidence: evidence.entries, roles,
-      bond: { arbitrationKeys: g.arbitrationKeys, arbitrationK: g.arbitrationK, bondMaturity: g.bondMaturity, tweakPoint: curve.bondTweakPoint, combine: curve.bondCombine },
-      verify: curve.verify, census: skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null });
+    // A THROW WHILE CHECKING A PROVIDER'S EVIDENCE IS THAT PROVIDER'S FAULT (kanban #2160, #2228, #2301): it was thrown out of the join,
+    // nobody named and no other seat asked
+    got = tryEntries(evidence.entries, skip.size ? null : keptChecked.get(toHex(contract.censusRoot)) || null);
     // A CENSUS THAT CANNOT BE COMMITTED IS A PROVIDER'S FAULT TOO (kanban #1708): a union with one outpoint twice (any encoding of one bond)
     // threw in censusRootOf, which is not a root mismatch, so the loop stopped and never asked the other seats - its providers are skipped
-    if (got.ok || evidence.from === 'kept' || !/^(the census the seats handed over hashes to |that census cannot be committed: )/.test(String(got.why))) break;
+    if (got.ok || evidence.from === 'kept' || !refusedWhy.test(String(got.why))) break;
     censusRefused.push({ node: evidence.from, why: `its census ${String(got.why).replace(/^the census the seats handed over |^that census /, '')}` });
     // each provider of a union that did not hash to the root is skipped (#1333: skipping the joined "a + b" skipped nobody, and the same pair came back forever)
-    for (const n of evidence.fromNodes || [evidence.from]) skip.add(n);
+    // - BUT NOT AN HONEST ONE WITH THE LIAR (kanban #2532, #1489 a44-refute-48-s2): the union keeps the first copy of each bond, so one seat
+    // listed first with a broken copy of a true bond (a wrong position or branch, the same txid) dropped the honest copy, and both providers
+    // were skipped - on three seats the last one alone was look-only and the join refused. Each provider's own list is checked alone then:
+    // when some stand and some do not, only those that do not are skipped (the next union pairs the others again); when none or all
+    // stand alone, every provider of the union is skipped, as before.
+    const providers = evidence.fromNodes || [evidence.from];
+    let faulty = providers;
+    if (providers.length > 1 && Array.isArray(evidence.lists) && evidence.lists.length === providers.length) {
+      const alone = evidence.lists.map((entries) => tryEntries(entries, null));
+      const bad = providers.filter((_, i) => !alone[i].ok);
+      if (bad.length && bad.length < providers.length) faulty = bad;
+    }
+    for (const n of faulty) skip.add(n);
     evidence = await evidenceFor(roundIdHex, contract, nodes, { fetcher, skip });
   }
   if (!got.ok) return { ...got, censusRefused };
@@ -298,6 +368,8 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   const anchor = tableAnchorOf(contract);
   const seatId = anchor ? anchor.anchorId : roundId;
   const seatHex = toHex(seatId);
+  // the seatings a standing certificate superseded, per role, as sorted keys (kanban #2537): a seat still naming one is behind, not lying
+  const supersededOf = {};
   // ONE READ OF A ROLE'S SEATING. `every`: wait for every seat, not for a majority and the grace.
   const askSeating = async (role, every = false) => {
     let spoke = false; const refused = [];
@@ -317,7 +389,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
       if (kept) { said[i] = kept; return; }
       try {
         const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}${anchor ? `&at=${toHex(roundId)}` : ''}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) });
-        said[i] = { status: r.status, ok: r.ok, body: await r.text() };
+        said[i] = { status: r.status, ok: r.ok, body: await textUpTo(r, SEATING_ANSWER_MAX) };   // kanban #2740: bounded
         keepSeatingAnswer(keyOf, drawnKey, said[i]);
       } catch { said[i] = null; }
     });
@@ -347,6 +419,38 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
         }
         if (/names another round/.test(String(v.why))) other.push(`${u}: ${v.why}`); else refused.push(`${u}: ${v.why}`);
       } catch { /* that seat says nothing */ }
+    }
+    // NOT THE FIRST CERTIFICATE THAT CHECKS, THE LATEST (kanban #2537, wf1489 r13 census-1): one member that drove the honest seats on and then
+    // signed the seating they left completes it with their old signatures (#1812); the seats refuse it as superseded, and the page took it
+    // whenever that member came first in `nodes` - every honest seat then "named another committee" and was called a liar. A seating that comes
+    // before another standing one (#738 order, the seats' own seatingBefore) is dropped from `handed`; two left at one index that are not ordered
+    // and neither replaces the other (#2564) are equivocation: the round is refused, naming the signers they share.
+    if (!anchor && handed.size) {
+      const drawnKeys = (got.drawn[role] || []).map((k) => toHex(k));
+      const all = [...handed.entries()].map(([hk, e]) => ({ hk, e, hex: e.seated.map((k) => toHex(k)) }));
+      const superseded = all.filter((x) => all.some((y) => y.e.index === x.e.index && seatingBefore(drawnKeys, x.hex, y.hex)));
+      for (const x of superseded) {
+        (supersededOf[role] || (supersededOf[role] = new Set())).add([...x.hex].sort().join(','));
+        handed.delete(x.hk);
+      }
+      if (superseded.length) {
+        console.warn(`[arena] #2537 ${role} seating of ${seatHex.slice(0, 8)}: ${superseded.map((x) => x.e.from).join(', ')} handed a superseded seating`);
+        if (found && superseded.some((x) => x.hex.join(',') === found.seated.map((k) => toHex(k)).join(','))) {
+          let best = null;
+          for (const e of handed.values()) if (!best || e.index > best.index || (e.index === best.index && (e.n > best.n || (e.n === best.n && seatingReplaces(e.seated, best.seated, got.drawn[role]))))) best = e;
+          found = best ? { seated: best.seated, from: best.from, index: best.index } : null;
+        }
+      }
+      if (found) {
+        const fh = found.seated.map((k) => toHex(k));
+        for (const e of handed.values()) {
+          const eh = e.seated.map((k) => toHex(k));
+          if (e.index !== found.index || eh.join(',') === fh.join(',')) continue;
+          if (seatingReplaces(e.seated, found.seated, got.drawn[role]) || seatingReplaces(found.seated, e.seated, got.drawn[role])) continue;
+          const shared = eh.filter((k) => fh.includes(k));
+          refused.push(`${e.from}: a ${role} seating that is not ordered with ${found.from}'s - equivocation by ${shared.map((k) => k.slice(0, 8)).join(', ') || 'no shared signer'}`);
+        }
+      }
     }
     // A CERTIFICATE THAT DID NOT CHECK IS KEPT BESIDE THE ONE THAT DID (measured 2026-10-16 on live testnet4: guardian-1 handing a
     // seating with another node seated was refused here, and guardian-2's standing certificate dropped that refusal - the lying seat
@@ -390,6 +494,10 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     // still no part of the committee this client derived itself
     const judge = (role, keys) => {
       const mine = (got.committees[role] || []).map(toHex).sort().join(',');
+      // A SEATING THE STANDING ONE SUPERSEDED (kanban #2537): this client holds a certificate after it, so that answer is a seating the seats left -
+      // said in the console, not counted, and nobody is called a liar for it (the seat that served it would otherwise close the round anyway)
+      if (keys.join(',') !== mine && supersededOf[role] && supersededOf[role].has(keys.join(',')))
+        return { agrees: null, why: `names the ${role} seating a later certificate superseded (kanban #2537)` };
       const agrees = keys.join(',') === mine;
       return { agrees, why: agrees ? null : `names another ${role} committee (${keys.map((k) => k.slice(0, 8)).join(', ') || 'none'}) than the one this client derived (${mine.split(',').map((k) => k.slice(0, 8)).join(', ')})` };
     };
@@ -405,7 +513,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
         try {
           const r = await readWithOneRetry(fetcher, `${baseOf(u)}/committee?role=${role}&round=${roundIdHex}`);
           if (!r.ok) { said[role] = { agrees: null, why: `answered ${r.status}` }; continue; }
-          const b = new Uint8Array(await r.arrayBuffer());
+          const b = await bytesUpTo(r, COMMITTEE_ANSWER_MAX);   // kanban #2740: bounded
           const keys = []; for (let i = 0; i + 32 <= b.length; i += 32) keys.push(toHex(b.subarray(i, i + 32)));
           said[role] = { keys: keys.sort(), ...judge(role, keys) };
         } catch (e) { said[role] = { agrees: null, why: e.message }; }
@@ -443,7 +551,8 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
  * cannot derive it - and, by the spec's "The client computes the committee itself" (RULED 2026-09-28), when ANY seat's committee
  * answer or seating certificate differs from the client's own computation: "the round is refused, the lobby says which node answered
  * what, and no share is sealed, no stake locked, no entry signed" (measured 2026-10-16 on live testnet4: one seat
- * forging its /committee was named and the join still dealt to the client's seven).
+ * forging its /committee was named and the join still dealt to the client's seven). Kanban #2643: against a certificate the client checked itself, an
+ * unsigned differing answer is named, not refusing, unless at least as many seats differ as agree.
  */
 export async function clientSettlementSignerNodes(roundIdHex, contract, nodes, opts = {}) {
   return settlementSignerNodesFrom(await clientCommittee(roundIdHex, contract, nodes, opts));
@@ -457,7 +566,22 @@ export function settlementSignerNodesFrom(got) {
     if (st && st.missing) throw new Error(`that round has no signer nodes yet: no certificate naming its ${role} signer nodes stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
   }
   const named = [], who = [];
-  for (const s of got.seats || []) if (s.agrees === false) { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  // AN UNSIGNED ANSWER AGAINST A CHECKED CERTIFICATE IS NAMED, IT DOES NOT CLOSE THE ROUND (kanban #2643, wf1489 r1 census-2): a seat's
+  // /committee list and a seating certificate that does not verify carry no signature - they prove nothing and risk no bond - so where
+  // this client holds a certificate it checked itself (every seated node's signature, score order, threshold), ONE seat answering junk
+  // refused every round for every client. Against such a certificate a differing seat is named (on `refused` and in the console) and the
+  // round stands, unless at least as many seats differ as agree; a role with no checked certificate is refused as before.
+  const certified = (role) => !!(got.seating && got.seating[role] && Array.isArray(got.seating[role].seated));
+  const contra = [];
+  for (const s of got.seats || []) {
+    if (s.agrees !== false) continue;
+    const differ = s.roles ? Object.entries(s.roles).filter(([, x]) => x && x.agrees === false).map(([r]) => r) : ['game', 'settlement'];
+    if (differ.length && differ.every(certified)) contra.push(s); else { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  }
+  const agreeing = (got.seats || []).filter((s) => s.agrees === true).length;
+  const outvoted = contra.length < agreeing;
+  if (!outvoted) for (const s of contra) { named.push(`${s.node} ${s.why}`); who.push(s.node); }
+  const noted = outvoted ? contra.map((s) => `${s.node} ${s.why} (unsigned, against a checked certificate)`) : [];
   // NOT A LIE, AN UNANSWERED READ (kanban #1036): the client has no certificate to hold the seats against, so nobody is named, the round is not closed, and the next try reads again
   if (who.length && ['game', 'settlement'].some((role) => got.seating && got.seating[role] && got.seating[role].unread)) {
     console.warn(`[arena] #1036 seating unread: ${named.join('; ')}`);
@@ -465,8 +589,9 @@ export function settlementSignerNodesFrom(got) {
   }
   for (const role of ['game', 'settlement']) {
     const st = got.seating && got.seating[role];
-    for (const why of (st && Array.isArray(st.refused) ? st.refused : [])) named.push(`a ${role} seating certificate that does not match this client's draw - ${why}`);
+    for (const why of (st && Array.isArray(st.refused) ? st.refused : [])) (certified(role) ? noted : named).push(`a ${role} seating certificate that does not match this client's draw - ${why}`);
   }
+  if (noted.length) console.warn(`[arena] #2643 named, the checked certificate stands: ${noted.join('; ')}`);
   if (named.length) {
     // ONE LINE ON THE SCREEN (kanban #1036, the owner's phone: nine seats with two lists of seven ids each filled it and could not be read): who, in a few words; the rest on
     // the error's `detail` and in the console, as "the lobby says which node answered what" asks
@@ -478,7 +603,7 @@ export function settlementSignerNodesFrom(got) {
     throw e;
   }
   return { signerNodes: got.committees.settlement, agreed: (got.seats || []).filter((s) => s.agrees).length,
-    refused: (got.censusRefused || []).map((x) => `${x.node}: ${x.why}`), derived: got };
+    refused: [...(got.censusRefused || []).map((x) => `${x.node}: ${x.why}`), ...noted], derived: got };
 }
 
 /**

@@ -76,7 +76,8 @@ test('a series naming a donation set not in force is not written or held; its st
     assert.ok(stored > 0, 'the old-set rounds were not in the store to begin with');
     assert.deepEqual(held, [toHex(seriesId(good))], 'the old-set series is held');
     assert.equal(listed.filter((x) => badIds.has(x)).length, 0, 'an old-set round is listed');
-    assert.equal(listed.length, 960, 'the series naming the set in force is not listed whole');
+    // the listing is the bounded window since #2790 (per series the next 72 and every round within 20 min), not all 960 (#2915)
+    assert.ok(listed.length > 0 && listed.includes(toHex(roundId(seriesRound(good, 0)))), 'the series naming the set in force is not listed');
     assert.equal(repost.status, 409); assert.match(repostWhy, /donation set in force is serial 2/);
     assert.equal(e.status, 409); assert.match(eWhy, /entry refused: .*donation set in force is serial 2/);
   } finally { await s.close(); }

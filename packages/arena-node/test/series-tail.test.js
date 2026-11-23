@@ -42,13 +42,18 @@ test('a day cut at 360 and its 82 s tail: the announcement runs on 90 s with no 
     gameId: NEXTBLOCK_GAME_ID, simCoreHash: TRUCK_CORE_HASH, configHash: TRUCK_V3_CONFIG_HASH, blockTicks: 4920 };
   delete tail.seriesCutFrom;
   assert.equal(seriesLeadIsValid(tail).ok, true, seriesLeadIsValid(tail).why);
-  const NOW = Number(first) - 20 * 60000;                       // 20 minutes before the cut
+  const NOW = Number(first) - 10 * 60000;                       // 10 minutes before the cut: the page's 15 min view spans it (#2790 lists every round within 15 min, #2915)
   const s = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, funded: () => true, roundClock: () => NOW, series: [day, tail],
     donationSets: [TEST_DONATION_SET_TESTNET4] });
   try {
     const url = `http://127.0.0.1:${s.port}`;
-    const rows = (await (await fetch(`${url}/rounds?ahead=${45 * 60000}`)).json()).rounds
-      .sort((a, b) => (a.startTime < b.startTime ? -1 : 1));
+    // the listing is built in the background per window since #2790: read once the first window holds rounds past the cut (#2915)
+    let rows = [];
+    for (let t = Date.now(); Date.now() - t < 60000; await new Promise((r) => setTimeout(r, 250))) {
+      rows = (await (await fetch(`${url}/rounds?ahead=${15 * 60000}`)).json()).rounds;
+      if (rows.some((r) => Date.parse(r.startTime) >= Number(first))) break;
+    }
+    rows.sort((a, b) => (a.startTime < b.startTime ? -1 : 1));
     const starts = rows.map((r) => Date.parse(r.startTime));
     const gaps = starts.slice(1).map((t, i) => (t - starts[i]) / 1000);
     const before = rows.filter((r) => Date.parse(r.startTime) < Number(first));

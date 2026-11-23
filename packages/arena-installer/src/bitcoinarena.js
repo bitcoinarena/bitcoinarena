@@ -19,11 +19,13 @@
 // machine has its own, bitcoinarena-<instance>. ITS NAME UNTIL 2026.1.9.8 WAS arenanode (kanban #688, 2026-10-26: "Rename the directories
 // and binaries to bitcoinarena, not arenanode everywhere"): arenanode stays, as a small script that runs bitcoinarena, so the old name,
 // the old app helpers and an auto update service that names it keep working.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { overview, control, doctor, logsOf, nodeOf, SERVICES } from './node-services.js';
+import { quickTunnelUrl } from './reach.js';
 import { parseConf, setInConf, unsetInConf, CONF_KEYS } from '../../arena-node/src/arena-conf.js';
 import { QUIET, levelWord, levelOf, LEVELS } from '../../arena-node/src/log-level.js';
 
@@ -40,6 +42,7 @@ export const HELP = (name) => `${name}: your Bitcoin Arena node on this machine
   ${name} config unset <key>
   ${name} update                    update this node now to the newest signed release (auto update does it by itself)
   ${name} open                      the owner page in the browser
+  ${name} owner-link                the owner page's link for another computer (a headless node: through its tunnel's current address)
   ${name} dashboard                 the node's dashboard in the browser
   ${name} state                     one line: running, or stopped and why (the desktop app's)
   ${name} nodes [--json]            every Bitcoin Arena node on this machine: running or not, version, port, home
@@ -89,6 +92,32 @@ const openUrl = (url, platform = process.platform) => new Promise((ok) => execFi
   platform === 'win32' ? ['url.dll,FileProtocolHandler', url] : [url], () => ok()));
 
 /** The site's owner page for the node at `home`: its key from state.json or the seat's /identity; the local page when neither answers. */
+/** One line in the setup log (~/.cache/bitcoin-arena-node-setup.log, the launcher's), never failing the command (kanban #2867). */
+export function noteSetupLog(line, deps = {}) {
+  try { const f = deps.setupLog || join(deps.env && deps.env.HOME ? deps.env.HOME : homedir(), '.cache', 'bitcoin-arena-node-setup.log');
+    mkdirSync(dirname(f), { recursive: true }); appendFileSync(f, `${new Date().toISOString()} ${line}\n`); } catch { /* the command's own output has it */ }
+}
+/**
+ * THE OWNER LINK THROUGH THE NODE'S CURRENT ADDRESS (kanban #2867): the site's owner page naming the node's key and, as local=, the address
+ * another computer reaches it at - a quick tunnel's current name (its log), else the public_url of arena.conf. -> { ok, link, quick, url } | { ok: false, why }
+ */
+export async function ownerLinkOf(home, deps = {}) {
+  const n = nodeOf(home);
+  const conf = (n.conf && n.conf.values) || {};
+  const mode = n.state && n.state.reach ? n.state.reach.mode : null;
+  let url = null;
+  if (mode === 'quick') url = await (deps.quickUrl || quickTunnelUrl)({ home, waitMs: deps.waitMs ?? 8000 }).catch(() => null);
+  url = url || conf.public_url || (n.state && n.state.reach && n.state.reach.url) || null;
+  if (!url) return { ok: false, why: 'this node names no public address (public_url): on this computer use: bitcoinarena open' };
+  url = String(url).replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace(/\/+$/, '');
+  let key = n.state && n.state.service && n.state.service.identity;
+  if (!/^[0-9a-f]{64}$/.test(String(key || ''))) {
+    try { const r = await (deps.fetch || fetch)(`http://127.0.0.1:${n.port}/identity`, { signal: AbortSignal.timeout(5000) }); const b = Buffer.from(await r.arrayBuffer()); key = r.status === 200 && b.length >= 32 ? b.subarray(0, 32).toString('hex') : null; }
+    catch { key = null; }
+  }
+  if (!/^[0-9a-f]{64}$/.test(String(key || ''))) return { ok: false, why: 'the node does not answer its key yet (GET /identity): is it running? bitcoinarena status' };
+  return { ok: true, link: `${OWNER_SITE}#node=${key}&local=${encodeURIComponent(url)}`, quick: mode === 'quick' || /\.trycloudflare\.com/.test(url), url };
+}
 async function ownerUrlOf(home, deps) {
   const n = nodeOf(home);
   const local = `http://127.0.0.1:${n.port}`;
@@ -255,6 +284,17 @@ export async function main(args, { home, name = 'bitcoinarena', io = { out: (l) 
     // THE OWNER PAGE ON THE ARENA SITE (kanban #687, the owner's playtest 2026-10-26 on 1.9.7: "the owner page still points to
     // http://127.0.0.1:8770/dashboard/owner which doesn't have my secret"): the installer hands the owner key to the site's page, kept there
     // per node key; the local page keeps a login per address and had none. The site finds the node by its key, else at local=
+    // THE OWNER LINK FOR ANOTHER COMPUTER (kanban #2867, feedback #088: on a headless node the owner page is reached only through a quick
+    // tunnel, and a saved link stops working without a word when the tunnel takes a new name): the site's owner page with local= the tunnel's
+    // CURRENT address (read from the tunnel's own log), else the node's public_url; written to the setup log too, so the last one is found there
+    case 'owner-link': {
+      const r = await ownerLinkOf(home, deps);
+      if (!r.ok) { io.err(r.why); return 1; }
+      io.out(r.link);
+      if (r.quick) io.out('  through a quick tunnel: its address changes when the tunnel restarts - run this again then (the setup log keeps the last one)');
+      noteSetupLog(`owner link: ${r.link}${r.quick ? ' (quick tunnel)' : ''}`, deps);
+      return 0;
+    }
     case 'open': {
       const url = await ownerUrlOf(home, deps);
       // THE KEY HANDED OVER ONCE (the owner's playtest 2026-10-26 on 2026.1.9.8, a node from 1.9.7: the site's page asked for the 24 words):

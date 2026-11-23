@@ -8,7 +8,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { createEcashExchange } from '../src/ecash-exchange.js';
 
 const A = 'aa'.repeat(32), B = 'bb'.repeat(32);
-const NOTES = 'fedimintA'.padEnd(40, 'x');
+// kanban #2384, #2436: notes that decode (a string the federation's base32 cannot read is refused 400 before anything is written)
+const NOTES = 'fedimintq'.padEnd(40, 'a');
 
 function seat({ holdsB = 500_000n, payFails = 0 } = {}) {
   const calls = [];
@@ -16,7 +17,7 @@ function seat({ holdsB = 500_000n, payFails = 0 } = {}) {
   let fails = payFails, n = 0;
   const ports = {
     [A]: { ecashBalance: async () => 0n, ecashSend: async () => { throw new Error('no'); },
-      ecashReceive: async (e) => { calls.push(['receive', e]); if (received.has(e)) return { state: 'AlreadyReceived', msat: 0n }; received.add(e); return { state: 'Success', msat: 100_000n }; } },
+      ecashReceive: async (e) => { calls.push(['receive', e]); if (received.has(e)) return { state: 'AlreadyReceived', msat: 0n }; received.add(e); return { state: 'Success', msat: 100_000n, carriedMsat: 100_000n }; } },
     [B]: { ecashReceive: async () => ({ state: 'Rejected', msat: 0n }), ecashBalance: async () => holdsB,
       ecashSend: async (m) => { calls.push(['send', m]); if (fails > 0) { fails--; throw new Error('the federation did not answer'); } holdsB -= m; return { ecash: `fedimintB-${++n}-${m}`, msat: m }; },
       // the keyed send read back (kanban #1160): a send that failed before it spent left nothing in the operation log
