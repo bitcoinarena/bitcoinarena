@@ -26,8 +26,8 @@ import { selectCommittee, drawCommittee, drawPanels, slotsForRole, drawAttestors
 import { drawHeartbeat, hasHeartbeats, heartbeatCloseMs } from '../../arena-protocol/src/heartbeat.js';
 import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
-import { blockHashOf } from '../../arena-protocol/src/chain.js';
-import { positionIn, branchIn } from '../../arena-protocol/src/partial-view.js';
+import { blockHashOf, merkleBranchOf, hash256 } from '../../arena-protocol/src/chain.js';
+import { positionIn, branchIn, isPartialBlock } from '../../arena-protocol/src/partial-view.js';
 import { networkOf, namesNoDraw, SEATED_GUARDIAN_VERSION } from '../../arena-protocol/src/constants.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { guardianPayoutKeyOf } from '../../arena-protocol/src/guardian-payout.js';
@@ -267,7 +267,29 @@ function whereIn(view) {
   // 2.0: answered off the per-block index (whereInView, kanban #3236), in this file's { block, txids, i } shape
   return { get: (hex) => { const f = whereInView(view, hex); return f ? { block: f.block, txids: f.txids, i: f.position } : undefined; } };
 }
-const proofAt = (at) => ({ transaction: toHex(at.block.transactions[at.i]), position: positionIn(at.block, at.i), branch: branchIn(at.block, at.i, at.txids).map(toHex) });
+// A BLOCK'S MERKLE TREE IS BUILT ONCE (kanban #2801, audit r21 census-1): merkleBranchOf rehashed the whole block for every entry of every
+// GET /census and guardian-bonds answer - 40 entries in a 6,000-tx block held the event loop ~240 ms per request, from any stranger.
+// The levels of a block's tree are kept per txids array (whereInBlock keeps one per block), and each branch is read from them.
+const TREE_OF = new WeakMap();
+function cachedBranchOf(txids, position) {
+  if (!Array.isArray(txids) || !Number.isInteger(position) || position < 0 || position >= txids.length) return merkleBranchOf(txids, position);
+  let levels = TREE_OF.get(txids);
+  if (!levels) {
+    levels = [txids];
+    for (let level = txids; level.length > 1;) {
+      const next = [];
+      for (let i = 0; i < level.length; i += 2) { const pair = new Uint8Array(64); pair.set(level[i], 0); pair.set(level[i + 1] || level[i], 32); next.push(hash256(pair)); }
+      levels.push(next); level = next;
+    }
+    TREE_OF.set(txids, levels);
+  }
+  const branch = [];
+  let index = position;
+  for (let d = 0; d < levels.length - 1; d++) { const level = levels[d]; branch.push((level[index ^ 1] || level[index]).slice()); index >>= 1; }
+  return branch;
+}
+const proofAt = (at) => ({ transaction: toHex(at.block.transactions[at.i]), position: positionIn(at.block, at.i),
+  branch: (isPartialBlock(at.block) || !at.txids ? branchIn(at.block, at.i, at.txids) : cachedBranchOf(at.txids, at.i)).map(toHex) });
 
 export function censusEvidenceOf(census, view) {
   const where = whereIn(view);
