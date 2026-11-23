@@ -594,6 +594,9 @@ export class OrderBook {
     const rows = this.db.prepare('SELECT k, batch_id FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL ORDER BY k').all(rid);
     let r = this.#parsedBook.get(hex);
     if (!r || r.intervalMs !== this.intervalMs) r = { batches: new Map(), intervalMs: this.intervalMs, state: null };
+    // A ROUND WITH NO CERTIFIED BATCH TAKES NO SLOT (kanban #3294, audit attest-a5-1-1, high): 64 public GET /book of the series' empty
+    // coming windows pushed the busy round out, and its next ledger() replayed the whole book from batch 0 (634 ms on the loop).
+    if (!rows.length) { this.#parsedBook.delete(hex); return { ok: true, batches: [], ids: [], kept: { batches: new Map(), intervalMs: this.intervalMs, state: null } }; }
     this.#parsedBook.delete(hex); this.#parsedBook.set(hex, r);   // most recently read last
     while (this.#parsedBook.size > REPLAY_ROUNDS_MAX) this.#parsedBook.delete(this.#parsedBook.keys().next().value);
     const recQ = this.db.prepare('SELECT record FROM market_batches WHERE round_id = ? AND k = ?');
