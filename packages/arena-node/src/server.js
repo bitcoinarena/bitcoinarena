@@ -7212,6 +7212,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // stayed stake-unseen at the others for good - each seat rebuilt another pari-mutuel table and no threshold signed one. A plain pick (no limit
   // price) of a round this seat hosts as attested goes through the entry relay's lock pass as a relayed round's does; each seat checks the lock
   // with the federation at its own door. Answers the round id to hand on for, or null.
+  // A ROUND'S ENTRY CLOSE, FOR EVERY LOCK HAND-ON (kanban #3305, audit entry-a5-2-1, high): only a head-to-head lock was handed on before the close;
+  // a pool pick's waited LOCK_AFTER_MS and reached the other seats after it, where the lock door and the close pull (#2529) both refuse it - the
+  // seats that saw the lock counted the pick, the others did not, and no threshold signed one settlement. Now each lock goes before its round's close.
+  const lockRoundCloseMs = (rid) => {
+    const row = round.get(rid);
+    if (!row) return null;
+    try { return decodeRoundContract(new Uint8Array(row.contract)).entryCloseMs; } catch { return null; }
+  };
   const plainPickRound = (storedEntry) => {
     let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
     if (relayedRound(e.roundId)) return e.roundId;
@@ -7227,8 +7235,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const handLocksOn = (stored, eid) => {
     const rid = plainPickRound(stored);
     if (!rid) return;
-    const rc = relayedRound(rid);
-    entryRelay.lockTaken(rid, toHex(eid), rc && headToHeadRound(rid) ? rc.entryCloseMs : null);
+    entryRelay.lockTaken(rid, toHex(eid), lockRoundCloseMs(rid));   // every round's lock before its close (kanban #1598; a pool pick's too, kanban #3305)
   };
   // A POOL'S PLAIN PICK IS HANDED ON WHOLE, ENTRY FIRST (kanban #2546, a44 refute of #1787/#1790): its locks went on (#1790) but the entry did
   // not - relayedRound leaves every attested round out, so entryTaken never ran - and a seat restarting while the page placed the pick answered the
