@@ -181,8 +181,13 @@ export function decodeInputBatch(bytes) {
   }
   if (b.tapes.length > 1) throw new Error('a batch carries at most one tape');
   // one encoding per batch: empty optional tails are written as none
-  if (r.at === bytes.length && bytes.length !== encodeInputBatch(b).length) throw new Error('an empty optional vector is not canonical');
   if (r.at !== bytes.length) throw new Error('trailing bytes after the batch');
+  // ONE BATCH, ONE BYTE STRING (kanban #2927, feedback #233): the check was by length only, so vectors out of the encoder's order decoded -
+  // batchId hashes the sorted re-encode while a seat keeps the received bytes, and two samples at one tick stored in two orders replayed to
+  // two state hashes under one batch id. The bytes must be exactly the encoder's.
+  const again = encodeInputBatch(b);
+  if (again.length !== bytes.length) throw new Error('an empty optional vector is not canonical');
+  for (let i = 0; i < again.length; i++) if (again[i] !== bytes[i]) throw new Error('a batch\'s vectors are not in canonical order');
   return b;
 }
 
