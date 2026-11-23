@@ -84,14 +84,14 @@ export function holdsRun(round, roundIdBytes, entryIdBytes) {
   return typeof round.markIds === 'function' && round.markIds(roundIdBytes, entryIdBytes).some((id) => round.receiptCount(id) > 0);
 }
 
-function noQuorumWindow({ round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs, playerPubkey, signatures, needed, why, extra = {} }) {
+function noQuorumWindow({ lookOnly = false, round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs, playerPubkey, signatures, needed, why, extra = {} }) {
   const verify = (s, m, k) => verifyKept(s, m, k);
   const provenBy = (untilMs) => typeof round.provenTwoFirstMarks === 'function'
     && (typeof round.provenEquivocation === 'function' ? round.provenEquivocation : round.provenTwoFirstMarks).call(round, roundIdBytes, entryIdBytes, evidenceWindow(round, roundIdBytes, contract, untilMs)) === true;
   if (provenBy(win.finalAfterMs)) {
     const d = noQuorumOutcome({ signatures, needed, equivocationProven: true, state: null });
     const text = `${why} - ${d.why} (§13C)`;
-    if (typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now())
+    if (!lookOnly && typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now())
       && round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why: text }) === 1)
       console.log(`[close] ${hex(entryIdBytes).slice(0, 16)} ${d.outcome}: ${text}`);
     return { ...extra, state: d.outcome, noQuorum: true, why: text };
@@ -235,8 +235,10 @@ function keptFinal(round, roundIdBytes, entryIdBytes, kept, computed) {
  * ({ runId, finalAfterMs }). `nextAtMs`: the next instant at which the clock alone changes the answer, if any. Through
  * finalityStep (kanban #1173): FINAL kept once reached, and an objection being checked holds it SUSPENDED.
  */
-export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.now(), ignorePending = false } = {}) {
-  return finalityStep(round, roundIdBytes, entryIdBytes, computeFinality(round, roundIdBytes, entryIdBytes, { now, ignorePending }), { now, ignorePending });
+// `lookOnly` (kanban #3244, 2.0's side of #2272): a read that decides nothing - no §13C outcome is written by it (the objection intake's
+// look for a no-quorum re-run, made before the objection is stored)
+export function resultFinality(round, roundIdBytes, entryIdBytes, { now = round.now(), ignorePending = false, lookOnly = false } = {}) {
+  return finalityStep(round, roundIdBytes, entryIdBytes, computeFinality(round, roundIdBytes, entryIdBytes, { now, ignorePending, lookOnly }), { now, ignorePending });
 }
 
 /**
@@ -268,7 +270,7 @@ export function agreedRerunOf(round, roundIdBytes, entryIdBytes) {
   return { ok: false };
 }
 
-function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(), ignorePending = false } = {}) {
+function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(), ignorePending = false, lookOnly = false } = {}) {
   const row = round.get(roundIdBytes);
   if (!row) return { state: null, why: 'no such round' };
   const contract = decodeRoundContract(new Uint8Array(row.contract));
@@ -306,7 +308,7 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(),
       const had = round.noQuorum(entryIdBytes);
       if (had) return { state: had.outcome, why: had.why, noQuorum: true };
       const found = round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
-      if (found) return noQuorumWindow({ round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs: BigInt(now), playerPubkey: found.entry.playerPubkey, signatures: 0, needed: inTime.needed,
+      if (found) return noQuorumWindow({ lookOnly, round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs: BigInt(now), playerPubkey: found.entry.playerPubkey, signatures: 0, needed: inTime.needed,
         why: `no signed result held by ${utc(win.finalAfterMs)} (the round's end + 600 s + 5 s), and a run of the entry is held here: it has receipted marks` });
     }
     const noneInTime = goesToRerun && inTime.ok && !inTime.final && !(inTime.agreed || 0) && held.length >= 1 && !(seen.ok && seen.final);
@@ -315,7 +317,7 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(),
       if (had) return { state: had.outcome, why: had.why, noQuorum: true };
       if (goesToRerun) {
         const { playerPubkey } = decodePlayerResult(splitSignedResult(held[0].bytes).body);
-        return noQuorumWindow({ round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs: BigInt(now), playerPubkey, signatures: inTime.agreed || 0, needed: inTime.needed,
+        return noQuorumWindow({ lookOnly, round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs: BigInt(now), playerPubkey, signatures: inTime.agreed || 0, needed: inTime.needed,
           why: `no result at the threshold by ${utc(win.finalAfterMs)} (the round's end + 600 s + 5 s): ${inTime.agreed || 0} of ${inTime.needed} matching results held in time` });
       }
       const proven = typeof round.provenTwoFirstMarks === 'function'
@@ -332,7 +334,7 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(),
         const why = `no result at the threshold by ${utc(win.finalAfterMs)} (the round's end + 600 s + 5 s): ${inTime.agreed || 0} of ${inTime.needed} `
           + `matching results held in time${late} - ${d.why} (§13C)`;
         // written only when asked at this seat's own clock: a look ahead (a caller's `now` past it) decides nothing
-        if (typeof round.putNoQuorum === 'function' && BigInt(now) <= BigInt(round.now())
+        if (!lookOnly && typeof round.putNoQuorum === 'function' && BigInt(now) <= BigInt(round.now())
           && round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why }) === 1)
           console.log(`[close] ${hex(entryIdBytes).slice(0, 16)} ${d.outcome}: ${why}`);
         return { state: d.outcome, why, noQuorum: true, inTime: inTime.agreed || 0, needed: inTime.needed };
@@ -464,7 +466,7 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(),
           + `signed FINAL - ${d.why} (§13C)`;
         if (pendingInTime) return holdPending(d.outcome, why);
         // written only when asked at this seat's own clock: a look ahead (a caller's `now` past it) decides nothing
-        if (typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now()))
+        if (!lookOnly && typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now()))
           round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why });
         return { ...common, state: d.outcome, noQuorum: true, finalSigs: said, why };
       }
@@ -490,7 +492,7 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(),
     // FROM PROTOCOL 22 AN IN-TIME QUORUM SHORT OF ITS POSTINGS GOES TO THE RE-RUN WINDOW, AND THE ROUND WAITS ON IT (RULED 2026-11-02, kanban #1047 point 2):
     // otherwise a slow seat voids an entry by posting late. A decision already written stood above.
     if (!inTimePosted.ok && noQuorumGoesToRerun(contract))
-      return noQuorumWindow({ round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs, playerPubkey: agreeing[0].playerPubkey, signatures: agreeing.length, needed: fin.needed || seen.needed,
+      return noQuorumWindow({ lookOnly, round, roundIdBytes, entryIdBytes, contract, committee, win, nowMs, playerPubkey: agreeing[0].playerPubkey, signatures: agreeing.length, needed: fin.needed || seen.needed,
         why: `the transcript was not published by the settlement threshold by ${utc(postBy)}: ${inTimePosted.posted || 0} of ${inTimePosted.needed || '?'} postings held in time`,
         // A SEAT THAT WAS OUT MAY BE THE ONLY ONE SHORT (measured on seven seats, two stopped to + 708 s: back, they held no posting in time while five seats had signed FINAL): it
         // still asks for FINAL on the run, and those signatures are dated from the first final_after
@@ -501,7 +503,7 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(),
         + `${published.ok ? `; the posting that completed the threshold reached this seat at ${utc(published.atMs)}, after the result window's deadline` : ''}`
         + ' - a seat that cannot retrieve the transcript within the result window treats the entry as VOID (§13A, §13C)';
       if (pendingInTime) return holdPending(VOID, why);
-      if (typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now())
+      if (!lookOnly && typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now())
         && round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: VOID, why }) === 1)
         console.log(`[close] ${hex(entryIdBytes).slice(0, 16)} VOID: ${why}`);
       return { ...common, state: VOID, noQuorum: true, unpublished: true, published: false, posted: inTimePosted.posted || 0, finalSigs: said, why };
@@ -551,7 +553,7 @@ function computeFinality(round, roundIdBytes, entryIdBytes, { now = round.now(),
       // WRITTEN ONCE, like every other §13C door (kanban #2326): unwritten, the seat read the entry as undecided for good
       // (decidedHere, resumingCloses) and a proof pulled after the deadline turned its VOID into a FORFEIT. Written only
       // when asked at this seat's own clock: a look ahead (a caller's `now` past it) decides nothing.
-      if (typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now()))
+      if (!lookOnly && typeof round.putNoQuorum === 'function' && nowMs <= BigInt(round.now()))
         round.putNoQuorum({ entryId: entryIdBytes, roundId: roundIdBytes, outcome: d.outcome, why });
       return { ...common, state: d.outcome, noQuorum: true, rerun: said, rerunWindowClosedAtMs: Number(win.rerunCloseMs), why };
     }

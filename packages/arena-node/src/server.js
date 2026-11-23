@@ -735,7 +735,9 @@ export function objectionIntake(round, rid, eid, blockHash = null, bundle = null
     // A block it names is kept and decides nothing.
     if (blockHash !== null && (!(blockHash instanceof Uint8Array) || blockHash.length !== 32)) return { status: 400, text: 'a block an objection names is a 32-byte hash' };
     // A NO-QUORUM ENTRY'S AGREED RE-RUN HAS ITS ONE OBJECTION WINDOW (§13A, RULED 2026-11-02, kanban #1047), and no first objection was ever filed: this one goes on the re-run
-    const nq = resultFinality(round, rid, eid, { ignorePending: true });
+    // A LOOK, NOT A DECISION (kanban #3244, 2.0's side of #2272): this read ran before the objection was stored, with its own pending row ignored,
+    // and wrote §13C's VOID for an entry an in-time objection (checked past final_after) then suspended - the seat held a no-quorum VOID beside it
+    const nq = resultFinality(round, rid, eid, { ignorePending: true, lookOnly: true });
     if (nq.noQuorumRerun && nq.rerun && nq.rerun.runId) {
       if (round.rerunObjectedAt(rid, eid) !== null) return { status: 200, text: 'already objected' };
       if (nq.state !== PROVISIONALLY_FINAL || BigInt(arrivedMs ?? round.now()) >= BigInt(nq.finalAfterMs)) return { status: 409, text: 'the re-run\'s objection window has closed' };
