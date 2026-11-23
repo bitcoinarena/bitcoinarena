@@ -13,6 +13,7 @@ import { posix } from 'node:path';
 import { workerData } from 'node:worker_threads';
 import { getHeapStatistics } from 'node:v8';
 import { DEPTH_LOCKDOWN, DEPTH_MODULE } from './core-depth.js';
+import { CORE_INTRINSICS } from './core-intrinsics.js';   // kanban #3358
 
 const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap, answerMax } = workerData;
 const files = new Map(fileList);
@@ -88,6 +89,26 @@ const GLOBALS = ['Object', 'Function', 'Array', 'Number', 'parseFloat', 'parseIn
   'encodeURIComponent', 'escape', 'unescape', 'eval', 'isFinite', 'isNaN', 'console', 'SharedArrayBuffer', 'WebAssembly'];
 const LOCKDOWN = `'use strict';
 (() => {
+  // THE RELEASE NODE'S LANGUAGE, WHATEVER NODE THE SEAT RUNS (kanban #3358, audit hosting a6-2-1): the lockdown took out globals but never
+  // fixed the methods the kept ones carry, so a decide adapter that read typeof Iterator.concat (V8 14) or Uint8Array.prototype.toHex
+  // (V8 13.8+) answered one verdict on a seat of the release's Node 24.22.3 and the opposite on a seat run on a newer Node - the committee
+  // signed opposite head-to-head verdicts. Every own property of a kept global, its prototype and %TypedArray% that the release's Node does
+  // not have (core-intrinsics.js) is taken out here, before anything else; one that cannot be taken out stops the load.
+  { const allowed = ${JSON.stringify(CORE_INTRINSICS)};
+    const nameOf = (k) => (typeof k === 'symbol' ? '@@' + String(k.description) : k);
+    const TA = Object.getPrototypeOf(Uint8Array);
+    const objOf = (k) => (k === '%TypedArray%' ? TA : k === '%TypedArray%.prototype' ? TA.prototype
+      : k.endsWith('.prototype') ? (globalThis[k.slice(0, -10)] || {}).prototype : globalThis[k]);
+    for (const k of Object.keys(allowed)) {
+      const o = objOf(k);
+      if (o === null || (typeof o !== 'object' && typeof o !== 'function')) continue;
+      const keep = new Set(allowed[k]);
+      for (const p of Reflect.ownKeys(o)) {
+        if (keep.has(nameOf(p))) continue;
+        if (!Reflect.deleteProperty(o, p)) throw new TypeError("the seat's node gives " + k + ' the property ' + String(nameOf(p)) + " that the release's node does not have, and it cannot be taken out");
+      }
+    }
+  }
   const budget = ${BUDGET};
   const WR = WeakRef, P = Proxy, R = Reflect, RangeErr = RangeError, M = Map;
   // kanban #1695: every intrinsic the count reads is taken here, before any core code runs, and never looked up again - a core
