@@ -9006,7 +9006,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // A CANCEL A BATCH ALREADY CARRIES IS DONE (kanban #3276): the seats answer 409 "that cancel is already carried by batch N" to a
             // second tap - the order is cancelled, not refused
             const cancelTaken = (r) => (r.status >= 200 && r.status < 300) || (r.status === 409 && /already carried by batch/.test(String(r.why || '')));
-            const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/cancel?entry=' + entryIdHex, { method: 'POST', body: sig })
+            // A DEADLINE PER SEAT (kanban #3352, audit client a6-1-3): one seat that took the POST and never answered held the press for good - the
+            // honest seat's 200 was never read and the order never marked cancelled; each seat now has 15 s, its answer's body read inside them
+            const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/cancel?entry=' + entryIdHex, { method: 'POST', body: sig, signal: AbortSignal.timeout(15000) })
               .then(async (r) => ({ node: n, status: r.status, why: r.ok ? '' : (await r.text()).slice(0, 160) })).catch((e) => ({ node: n, status: 0, why: e.message }))));
             const ok = seats.some(cancelTaken);
             if (ok) { x.order.cancelled = true; rememberPick(x); }
@@ -9030,7 +9032,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             const key = await crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(pk8), { name: 'Ed25519' }, false, ['sign']);
             const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, key, id));
             const body = JSON.stringify({ entry: entryIdHex, outcome, price: String(price), sharesMsat: String(sharesMsat), nonce: String(nonce), signature: ARENACLIENT.toHex(sig) });
-            const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/sell?round=' + x.roundIdHex, { method: 'POST', body })
+            const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/sell?round=' + x.roundIdHex, { method: 'POST', body, signal: AbortSignal.timeout(15000) })   // kanban #3352
               .then(async (r) => ({ node: n, status: r.status, why: r.ok ? '' : (await r.text()).slice(0, 160) })).catch((e) => ({ node: n, status: 0, why: e.message }))));
             const ok = seats.some((r) => r.status >= 200 && r.status < 300);
             const sellIdHex = ARENACLIENT.toHex(id);
