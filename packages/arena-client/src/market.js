@@ -565,6 +565,18 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
       continue;
     }
     if (o.state === 'DISPUTED') {
+      // A SEAT'S BARE "DISPUTED" IS NOT THE RESULT EITHER (kanban #3346, audit attest-a6-1-1; gap in #2719): the answer carries no proof this page
+      // checks, and one seat's DISPUTED with the honest table copied in replaced a verified winner's line with "nothing is paid". As for VOID: only
+      // what this page verified itself (check.disputed), or past the market's deadline on its own clock; before that it is unverified
+      if (!p.market.gameSource && !(o.check && o.check.verified === true && o.check.disputed === true)) {
+        const t = p.market.terms;
+        const deadline = t && t.resolveAfterCloseMs != null && t.deadlineAfterResolveMs != null
+          ? Number(p.entryCloseMs) + Number(t.resolveAfterCloseMs) + Number(t.deadlineAfterResolveMs) : null;
+        if (deadline === null || nowMs < deadline) {
+          lines.push({ ...at('unverified'), text: `${head}: a signer node says DISPUTED - UNVERIFIED (${deadline === null ? 'this market has no deadline' : `its deadline is in ${left(deadline - nowMs)}`})` });
+          continue;
+        }
+      }
       // a contradiction is decided too: nothing is paid, every stake comes back at expiry - final (kanban #2903)
       lines.push({ ...at('disputed', { final: true }), text: `${head}: the attestors contradicted themselves, nothing is paid; your stake comes back at expiry` });
       continue;
