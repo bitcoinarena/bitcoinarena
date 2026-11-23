@@ -165,6 +165,11 @@ export class LockSetBook {
     const committee = this.#committee(rid), members = new Set(committee), threshold = this.#threshold(committee);
     const close = Number(c.entryCloseMs), room = this.#room(toHex(rid));
     const got = { views: 0, signatures: 0, certificate: false };
+    // A FORGED POST COSTS ONE VERIFY (kanban #2822, #1489 r23-h2h-1): every view, signature and both certificates of a body were verified, failed
+    // ones too - ~28 BIP-340 verifies (~18 ms) per unauthenticated POST of random signatures, re-sendable at once. A peer hands on only what it
+    // checked, so after the first signature in a body that does not verify nothing more of that body is verified (what it carried comes by the pull)
+    let burnt = false;
+    const verify = (sig, msg, key) => { if (burnt) return false; const ok = lsVerify(sig, msg, key); if (!ok) burnt = true; return ok; };
     // THE SET IS FINAL (kanban #2588): nothing taken past the gossip while no certificate is held - only a second one over another set (#2585)
     if (this.#now() > close + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS && !this.certified(rid)) return { ok: true, ...got, final: true };
     const read = (x, idOf) => {
@@ -175,7 +180,7 @@ export class LockSetBook {
       let set;
       try { set = lockSetOf({ roundId: rid, entries: x.entries }); } catch { return null; }
       const setId = lockSetId(set);
-      if (!lsVerify(fromHex(x.sig), idOf({ setId, atMs }), fromHex(x.key))) return null;
+      if (!verify(fromHex(x.sig), idOf({ setId, atMs }), fromHex(x.key))) return null;
       return { key: String(x.key), atMs, entries: set.entries.map(toHex), sig: String(x.sig), setId: toHex(setId) };
     };
     // TWO VIEWS OF ONE KEY (kanban #3347, audit h2h-a6-1-1; gap in #3257): a seat that signed {A,B,C} to some seats and {A,B} to others tipped an
@@ -199,7 +204,7 @@ export class LockSetBook {
     }
     // RULING #2587: a peer's second certificate (state().conflict) is taken as any certificate is - a seat that pulls sees the contest
     const certs = [body && body.certificate, body && body.conflict].filter((x) => typeof x === 'string');
-    for (const certificate of certs) if (this.#takeCertificate(rid, c, committee, threshold, certificate)) got.certificate = true;
+    for (const certificate of certs) if (this.#takeCertificate(rid, c, committee, threshold, certificate, verify)) got.certificate = true;
     const before = this.certified(rid), wasConflicted = this.conflicted(rid);
     this.#assemble(rid, c, committee, threshold);
     // A CERTIFICATE OR CONFLICT MADE HERE TRAVELS (feedback #035): step() returns at once once certified, so one assembled in take() was
@@ -213,13 +218,13 @@ export class LockSetBook {
 
   #pushConflict = false;
   /** One certificate a peer (or a player) handed: kept when none is held, kept as the conflict when it stands over another set. True when kept. */
-  #takeCertificate(rid, c, committee, threshold, certificate) {
+  #takeCertificate(rid, c, committee, threshold, certificate, verify = lsVerify) {
     const body = { certificate };
     if (/^[0-9a-f]+$/.test(body.certificate) && body.certificate.length <= 2 * 32768) {
       const held = this.certified(rid);
       let bytes = null; try { bytes = fromHex(body.certificate); } catch { bytes = null; }
       const st = bytes && !(held && toHex(held.bytes) === body.certificate)
-        ? lockSetCertificateStands(bytes, { roundId: rid, committee, threshold, entryCloseMs: c.entryCloseMs, verify: lsVerify }) : { ok: false };
+        ? lockSetCertificateStands(bytes, { roundId: rid, committee, threshold, entryCloseMs: c.entryCloseMs, verify }) : { ok: false };
       if (st.ok && !held) { this.#keep(rid, { ...st, bytes }); return true; }
       // A SECOND CERTIFICATE OVER ANOTHER SET (kanban #2585): kept as the round's conflict - see conflicted(); handed on at once (#2587)
       if (st.ok && st.setId !== held.setId) { if (!this.conflicted(rid)) this.#pushConflict = true; this.#conflict(rid, bytes); }
