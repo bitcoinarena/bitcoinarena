@@ -1513,6 +1513,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const r = await fetch(`${b}/round?id=${rid}`, { signal: AbortSignal.timeout(2500) });
           if (!r.ok) { await dropSeatBody(r); continue; }
           const c = decodeRoundContract(await seatBody(r, SEAT_RECORD_BYTES));   // kanban #1900
+          // kanban #2820 (#1489 r23-gossip-1): only the round asked for - a peer answered another round's bytes and its game was kept for this id
+          if (toHex(roundIdOf(c)) !== rid) continue;
           if (c.gameId instanceof Uint8Array) { roundApps.set(rid, toHex(c.gameId)); roundTimes.set(rid, timesOf(c)); break; }
         } catch { /* the next seat */ }
       }
@@ -1532,7 +1534,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         try {
           const x = await fetch(`${b}/entry?id=${eid}`, { signal: AbortSignal.timeout(2500) });
           if (!x.ok) { await dropSeatBody(x); continue; }
-          entryPlayers.set(eid, toHex(decodeEntryContract(await seatBody(x, SEAT_RECORD_BYTES)).playerPubkey)); break;
+          // kanban #2820: only the entry asked for - a peer answered any entry's bytes and its player key was shown as this entry's donor
+          const e = decodeEntryContract(await seatBody(x, SEAT_RECORD_BYTES));
+          if (toHex(idOfEntry(e)) !== eid) continue;
+          entryPlayers.set(eid, toHex(e.playerPubkey)); break;
         } catch { /* the next seat */ }
       }
     }
