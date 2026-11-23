@@ -34,11 +34,11 @@ jobs:
           npm ci --no-audit --no-fund
       - name: Check the runner before contacting products
         working-directory: packages/arena-node
-        run: node --test --test-timeout=60000 test/compat-check.test.js test/compat-run.test.js test/compat-publish.test.js
+        run: node --test --test-timeout=60000 test/compat-check.test.js test/compat-run.test.js test/compat-publish.test.js test/compat-amber.test.js
       - name: Chromium with extension support
         working-directory: packages/arena-node
         run: npx playwright install --with-deps chromium
-      - name: Check configured products and published versions
+      - name: Check newly released product versions
         env:
           GITHUB_TOKEN: ${{ github.token }}
           COMPAT_SECRETS: ${{ secrets.COMPAT_SECRETS }}
@@ -47,6 +47,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           args=()
+          if [ "$EVENT_NAME" = schedule ]; then args+=(--releases-only); fi
           if [ "$REQUEST_PAY" = true ] || { [ "$EVENT_NAME" = schedule ] && [ "$(date -u +%u)" = 7 ]; }; then args+=(--pay); fi
           node packages/arena-node/tools/compat-run.mjs --out=compat-report "${args[@]}"
           cat compat-report/report.md >> "$GITHUB_STEP_SUMMARY"

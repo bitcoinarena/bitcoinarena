@@ -10,7 +10,7 @@ import { WebSocketServer } from 'ws';
 import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure';
 import * as nip44 from 'nostr-tools/nip44';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { checkSigner, checkNwc } from '../tools/compat-check.mjs';
+import { checkSigner, checkNwc, resultRow } from '../tools/compat-check.mjs';
 import { run, plan, worthWriting, manifestFromCrx, reportMarkdown, secretsFrom, latestVersion } from '../tools/compat-run.mjs';
 
 // --- a relay: EVENT, REQ (ids, kinds, authors, #e, #p), CLOSE ---
@@ -233,4 +233,38 @@ test('a failed return payment or missing receiving wallet is reported, and secre
   assert.deepEqual(refund.results.map((r) => [r.name, r.result, r.checks.pay_back]), [['W', 'problems', 'failed [redacted]']], 'the failing row is written (#2971), without the secret');
   assert.ok(!JSON.stringify(refund.results).includes('private-pairing'));
   assert.equal(refund.report.failed[0].failing.pay_back, 'failed [redacted]');
+});
+
+test('Amber requires an explicitly selected local adapter and records installed version', async () => {
+  const product = { name: 'Amber', kind: 'Remote signer', platform: 'Android', check: 'android' };
+  assert.equal(plan(product, null, '99', { secrets: {} }).act, 'skip');
+  const out = await run({ products: [product], results: [], versionOf: async () => '99',
+    checkers: { amber: async () => ({ version: '6.6.9', checks: { connect: 'ok' } }) } });
+  assert.equal(out.report.works[0].version, '6.6.9');
+  assert.equal(out.results[0].how, 'automatic');
+});
+
+test('a signer answering for a different disposable key fails the identity check', async () => {
+  const checks = await checkSigner(fakeBunker(), { ms: 8000, expectedPubkey: getPublicKey(generateSecretKey()) });
+  assert.equal(checks.get_public_key, 'odd answer');
+});
+
+test('release-triggered runs skip unchanged and unversioned products, but manual runs can retest', async () => {
+  const base = { name: 'Test', kind: 'Remote signer', check: 'signer', secret: 'COMPAT_TEST', versionFrom: { github: 'test/test' } };
+  const old = resultRow({ name: 'Test', version: '1', kind: 'Remote signer', checks: { connect: 'ok' } });
+  let calls = 0;
+  const options = { products: [base], results: [old], secrets: { COMPAT_TEST: 'paired', COMPAT_TEST_VERSION: '2' },
+    versionOf: async () => '2', releasesOnly: true, checkers: { signer: async () => { calls++; return { connect: 'ok' }; } } };
+  const fresh = await run(options);
+  assert.equal(calls, 1);
+  assert.equal(fresh.results[0].version, '2');
+  const unchanged = await run({ ...options, results: fresh.results });
+  assert.equal(calls, 1);
+  assert.match(unchanged.report.skipped[0].why, /already checked/);
+  const hosted = await run({ ...options, products: [{ ...base, versionFrom: undefined, version: 'hosted' }] });
+  assert.match(hosted.report.skipped[0].why, /manual checks only/);
+  const stale = await run({ ...options, secrets: { COMPAT_TEST: 'paired', COMPAT_TEST_VERSION: '1' } });
+  assert.match(stale.report.skipped[0].why, /upgrade/);
+  await run({ ...options, results: fresh.results, releasesOnly: false });
+  assert.equal(calls, 2);
 });
