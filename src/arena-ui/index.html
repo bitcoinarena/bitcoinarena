@@ -3054,6 +3054,37 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const editable = (t) => !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
       for (const n of ['keydown', 'keypress', 'keyup']) window.addEventListener(n, (e) => { if (editable(e.target)) e.stopImmediatePropagation(); }, true);
     })();
+    // THIS PAGE IN ANOTHER SITE'S PAGE (kanban #3531, feedback #392: the embed kit ran this page in the host site's window and the seed sat in
+    // that site's storage): arena-embed.js frames this page (?embed=1), so the wallet, its storage, its words, restore and backup stay on this
+    // origin. The bridge to the host: one MessageChannel port, taken only from this window's own parent; over it this page says only
+    // 'ready' and the balance in sat - never a key, a seed or a word - and acts on nothing the host sends. The way back to the Arena's
+    // games is a link out of the host's page, so it is not shown.
+    (function () {
+      let q; try { q = new URLSearchParams(location.search); } catch { return; }
+      if (q.get('embed') !== '1' || window.parent === window) return;
+      window.ARENA_EMBEDDED = true;
+      const st = document.createElement('style');
+      st.textContent = '#arena-wb-back,#arena-games-back{display:none!important}';
+      document.head.appendChild(st);
+      const game = String(q.get('game') || '').slice(0, 64);
+      let port = null, timer = null, said = '';
+      const balance = () => {
+        const b = window.ARENA_WALLET_BALANCE;
+        if (!port || !b) return;
+        const m = { type: 'balance', sats: Math.max(0, Math.floor(Number(b.sats) || 0)), pending: Math.max(0, Math.floor(Number(b.pending) || 0)) };
+        const k = m.sats + '/' + m.pending;
+        if (k !== said) { said = k; port.postMessage(m); }
+      };
+      window.addEventListener('message', (e) => {
+        if (e.source !== window.parent || !e.data || e.data.type !== 'arena-embed-hello' || !e.ports || !e.ports[0]) return;
+        if (port) { try { port.close(); } catch { /* gone */ } }
+        port = e.ports[0];
+        said = '';
+        port.postMessage({ type: 'ready', game });
+        balance();
+        if (!timer) timer = setInterval(balance, 2000);
+      });
+    })();
     // THE PHRASE IS KEPT IN THE BROWSER (2026-10-01: "We want it to be safe even if the user closes the browser and
     // loads it again. It needs to be persisted" - this replaces the tab-only rule of 2026-09-30). Every phrase a tab
     // holds is also kept in the browser's storage (arena.seeds); a tab marks the one it holds with a heartbeat every 4 s. A tab

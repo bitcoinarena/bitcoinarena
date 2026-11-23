@@ -1,75 +1,121 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE EMBED KIT (kanban #678, 2026-10-26: "It shouldn't be just an iframe that is basically stealing a game. The demo site should take rps
-// and take it as its own, embedding the code. Not an iframe."): src/arena-ui/arena-embed.js puts the engine's CSS into a box of the host page
-// (boxCss: :root, @media by width, vh/vw, relative url()), answers the engine's matchMedia about width by the box (boxMedia); the engine
-// mounts a game's client through the kit when it runs under it; the demo site and the snippets use the kit, not a frame.
+// THE EMBED KIT (kanban #678; kanban #3531, feedback #392 high): src/arena-ui/arena-embed.js puts the Arena into the host page's box as a
+// frame on the Arena's own origin - the wallet, its storage, its words, restore and backup stay there, never in the host page's scripts or
+// storage. The bridge: one MessageChannel port posted to the Arena origin only, taken by the page only from its own parent; the page says
+// only 'ready' and the balance in sat. The two-origin measurement in a real browser is e2e/embed-seed-3531.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { pageFunction } from './page-script.js';
+import vm from 'node:vm';
 
-const KIT = new URL('../../../src/arena-ui/arena-embed.js', import.meta.url);
 const UI = (p) => readFileSync(new URL('../../../src/arena-ui/' + p, import.meta.url), 'utf8');
-const TEXT = readFileSync(KIT, 'utf8');
-const slice = (from, to) => { const at = TEXT.indexOf(from); assert.ok(at >= 0, from); return TEXT.slice(at, TEXT.indexOf(to, at) + to.length); };
-const HELPERS = [
-  slice('  const abs = (u, base) =>', '\n'),
-  slice('  const relative = (u) =>', '\n'),
-  slice('  const SIZE_FEATURE = ', '\n  // a media query the engine asks in code'),
-  slice('  function boxMedia(box, q) {', '\n    return mql;\n  }\n'),
-];
-const lift = () => pageFunction(KIT, ['BASE', 'window', 'ResizeObserver'], HELPERS, ' return { sizeOnly, boxCss, boxMedia };');
-const OBSERVED = [];
-class FakeObserver { constructor(fn) { this.fn = fn; } observe(el) { OBSERVED.push([this.fn, el]); } }
-const H = lift()('https://testnet.bitcoinarena.io/', { matchMedia: (q) => ({ media: q, page: true }) }, FakeObserver);
+const KIT = UI('arena-embed.js');
+const plain = (x) => JSON.parse(JSON.stringify(x));   // a value made in the sandbox's realm, compared as data
 
-test('the engine\'s CSS in the box: :root is its <html>, width rules and viewport units are the box\'s, a relative url() the site\'s', () => {
-  const css = H.boxCss(':root { --bg: #000 } html.other-game :root{x:1}\n'
-    + '@media (max-width: 560px) { a { height: 100dvh; width: 46vw } }\n'
-    + '@media (orientation: landscape) and (max-height: 500px) { b { top: 23.5vh } }\n'
-    + '@media (max-width:999px){c{min-height:1dvh}}\n'
-    + '@media screen and (min-width: 900px), (max-height: 620px) { d { x: 1 } }\n'
-    + '@media (pointer: coarse) { e { x: 1 } }\n'
-    + '@media (max-width: 560px) and (hover: none) { f { x: 1 } }\n'
-    + 'g { background: url(nextblock-icon.svg), url("data:image/png;base64,AA"), url(\'https://x.example/a.png\') } h { margin: 2px 5vmin }',
-  'https://testnet.bitcoinarena.io/');
-  assert.match(css, /^html \{ --bg: #000 \} html\.other-game html\{x:1\}/);
-  assert.match(css, /@container arena-box \(max-width: 560px\) \{ a \{ height: 100cqh; width: 46cqw \} \}/);
-  assert.match(css, /@container arena-box \(orientation: landscape\) and \(max-height: 500px\) \{ b \{ top: 23\.5cqh \} \}/);
-  assert.match(css, /@container arena-box \(max-width:999px\) \{c\{min-height:1cqh\}\}/);
-  assert.match(css, /@container arena-box \(\(min-width: 900px\)\) or \(\(max-height: 620px\)\) \{ d/);
-  // what a box cannot answer stays the screen's
-  assert.match(css, /@media \(pointer: coarse\) \{ e/);
-  assert.match(css, /@media \(max-width: 560px\) and \(hover: none\) \{ f/);
-  assert.match(css, /url\(https:\/\/testnet\.bitcoin-?arena\.io\/nextblock-icon\.svg\), url\("data:image\/png;base64,AA"\), url\('https:\/\/x\.example\/a\.png'\)/);
-  assert.match(css, /margin: 2px 5cqmin/);
+// a host page in a sandbox of its own: the kit runs as it would after <script src="https://testnet.bitcoinarena.io/arena-embed.js" ...>
+function hostPage({ dataset = { game: 'rock-paper-scissors', target: '#arena-game' } } = {}) {
+  const made = [];
+  const el = (tag) => {
+    const e = { tagName: tag.toUpperCase(), style: {}, children: [], attrs: {}, listeners: {},
+      append(...n) { e.children.push(...n); }, after(n) { made.push(['after', n]); },
+      setAttribute(k, v) { e.attrs[k] = v; }, addEventListener(t, f) { (e.listeners[t] = e.listeners[t] || []).push(f); },
+      getBoundingClientRect: () => ({ height: 720 }) };
+    made.push(e);
+    return e;
+  };
+  const target = el('div');
+  const posted = [];
+  const ports = [];
+  class MessageChannel { constructor() { this.port1 = { sent: [], postMessage(m) { this.sent.push(m); }, close() { this.closed = true; } }; this.port2 = { the: 'port2' }; ports.push(this); } }
+  const storage = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), get length() { return m.size; } }; };
+  const window = { localStorage: storage(), sessionStorage: storage() };
+  const document = {
+    currentScript: { src: 'https://testnet.bitcoinarena.io/arena-embed.js', dataset, crossOrigin: null, attributes: [] },
+    querySelector: (s) => (s === '#arena-game' ? target : null),
+    createElement: (t) => el(t),
+    head: { appendChild() { throw new Error('the kit puts no script into the host page'); } },
+  };
+  const ctx = { window, document, location: { href: 'https://host.example/page', origin: 'https://host.example' }, console: { log() {}, warn() {}, error() {} },
+    URL, MessageChannel, Number, Math, Promise, Set, encodeURIComponent };
+  ctx.eval = () => { throw new Error('the kit evaluates no engine code in the host page'); };
+  ctx.fetch = () => { throw new Error('the kit fetches no engine file into the host page'); };
+  vm.runInNewContext(KIT, ctx);
+  const frame = made.find((e) => e.tagName === 'IFRAME');
+  if (frame) frame.contentWindow = { postMessage: (m, origin, transfer) => posted.push({ m, origin, transfer }) };
+  return { window, frame, posted, ports, made };
+}
+
+test('#3531 the kit frames the Arena page on its own origin with the snippet\'s game and program; no engine script runs in the host page', () => {
+  const ref = '02' + 'ab'.repeat(32);
+  const h = hostPage({ dataset: { game: 'rock-paper-scissors', ref, target: '#arena-game' } });
+  assert.ok(h.frame, 'a frame');
+  assert.equal(h.frame.src, 'https://testnet.bitcoinarena.io/?game=rock-paper-scissors&ref=' + ref + '&embed=1');
+  assert.ok(h.made.every((e) => e.tagName !== 'SCRIPT'), 'no script element made');
+  const api = h.window.ARENA_EMBED;
+  assert.equal(api.base, 'https://testnet.bitcoinarena.io/');
+  assert.equal(api.ref, ref);
+  // the old kit's handles into the engine (its window, document, scope) are gone: nothing of the engine is the host's
+  for (const k of ['scope', 'window', 'document', 'clientElement', 'clientScope']) assert.equal(api[k], undefined, k);
+  // nothing in the host's storage
+  assert.equal(h.window.localStorage.length + h.window.sessionStorage.length, 0);
+  assert.doesNotMatch(KIT.replace(/^\s*\/\/.*$/gm, ''), /\beval\b|new Function|localStorage|sessionStorage|document\.head/);
 });
 
-test('matchMedia about width or height reads the box; anything else is the window\'s', () => {
-  const box = { clientWidth: 356, clientHeight: 700 };
-  assert.equal(H.boxMedia(box, '(max-width: 560px)').matches, true);
-  assert.equal(H.boxMedia(box, '(min-width: 900px)').matches, false);
-  assert.equal(H.boxMedia(box, '(orientation: portrait) and (max-width: 600px)').matches, true);
-  assert.equal(H.boxMedia(box, '(min-width: 900px), (max-height: 760px)').matches, true);
-  assert.deepEqual(H.boxMedia(box, '(pointer: coarse)'), { media: '(pointer: coarse)', page: true });
-  // a change of the box's width is said to the listeners, once
-  const mql = H.boxMedia(box, '(max-width: 560px)');
+test('#3531 the bridge: a port posted to the Arena origin only, at every load; only "ready" and a balance in sat are heard', async () => {
+  const h = hostPage();
+  const api = h.window.ARENA_EMBED;
+  h.frame.listeners.load[0]();
+  assert.equal(h.posted.length, 1);
+  assert.equal(h.posted[0].origin, 'https://testnet.bitcoinarena.io');
+  assert.deepEqual(plain(h.posted[0].m), { type: 'arena-embed-hello', v: 1 });
+  assert.equal(h.posted[0].transfer[0], h.ports[0].port2);
+  const port = h.ports[0].port1;
   const heard = [];
-  mql.addEventListener('change', (e) => heard.push(e.matches));
-  const [fn] = OBSERVED[OBSERVED.length - 1];
-  box.clientWidth = 900; fn(); fn();
-  box.clientWidth = 400; fn();
-  assert.deepEqual(heard, [false, true]);
+  api.on('balance', (b) => heard.push(b));
+  port.onmessage({ data: { type: 'ready', game: 'rock-paper-scissors' } });
+  assert.deepEqual(plain(await api.ready), { game: 'rock-paper-scissors' });
+  port.onmessage({ data: { type: 'balance', sats: 1234.9, pending: 5, seed: 'ff'.repeat(32) } });
+  assert.deepEqual(plain(heard), [{ sats: 1234, pending: 5 }], 'numbers only; anything else on the message is dropped');
+  port.onmessage({ data: { type: 'balance', sats: 'x' } });
+  port.onmessage({ data: { type: 'seed', hex: 'ff'.repeat(32) } });
+  assert.equal(heard.length, 1);
+  // a reload of the frame (a restore) gets a new channel; the old port is closed
+  h.frame.listeners.load[0]();
+  assert.equal(h.posted.length, 2);
+  assert.equal(port.closed, true);
 });
 
-test('the engine mounts a game\'s client through the kit under it, a frame otherwise; the client file is asked of the page\'s own site', () => {
+test('#3531 the Arena page takes the bridge only from its own parent, under ?embed=1, and says only ready and the balance', () => {
   const page = UI('index.html');
-  assert.match(page, /const frame = window\.ARENA_EMBED \? window\.ARENA_EMBED\.clientElement\(\) : document\.createElement\('iframe'\);/);
-  assert.match(page, /url: new URL\('games\/' \+ encodeURIComponent\(game\.name\) \+ '\/index\.html', location\.href\)\.href, digest/);
+  const at = page.indexOf('// THIS PAGE IN ANOTHER SITE\'S PAGE (kanban #3531');
+  assert.ok(at > 0);
+  const code = page.slice(page.indexOf('(function () {', at), page.indexOf('})();', at) + 5);
+  const run = ({ search = '?game=rock-paper-scissors&embed=1', framed = true } = {}) => {
+    const listeners = [];
+    const parent = {};
+    const window = { addEventListener: (t, f) => listeners.push([t, f]), ARENA_WALLET_BALANCE: { sats: 21000, pending: 0, parts: [{ federation: 'f' }] } };
+    window.parent = framed ? parent : window;
+    const head = []; const document = { createElement: () => ({}), head: { appendChild: (n) => head.push(n) } };
+    vm.runInNewContext(code, { window, document, location: { search }, URLSearchParams, setInterval: () => 1, Math, Number, String });
+    return { window, parent, listeners, head };
+  };
+  assert.equal(run({ framed: false }).listeners.length, 0, 'not framed: nothing');
+  assert.equal(run({ search: '?game=rock-paper-scissors' }).listeners.length, 0, 'no ?embed=1: nothing');
+  const r = run();
+  assert.equal(r.head.length, 1, 'the way back to the games is hidden');
+  const [[type, on]] = r.listeners;
+  assert.equal(type, 'message');
+  const sent = [];
+  const port = { postMessage: (m) => sent.push(m), close() {} };
+  on({ source: {}, data: { type: 'arena-embed-hello' }, ports: [port], origin: 'https://evil.example' });
+  assert.equal(sent.length, 0, 'a hello from a window that is not the parent is not taken');
+  on({ source: r.parent, data: { type: 'arena-embed-hello' }, ports: [port], origin: 'https://host.example' });
+  assert.deepEqual(plain(sent), [{ type: 'ready', game: 'rock-paper-scissors' }, { type: 'balance', sats: 21000, pending: 0 }]);
+  for (const m of sent) assert.doesNotMatch(JSON.stringify(m), /[0-9a-f]{32}/);
 });
 
-test('the demo site embeds the kit with its program\'s key, no frame; the how-to hands out the kit\'s snippet', () => {
+test('#3531 the demo site embeds the kit with its program\'s key; the how-to and the owner area hand out the kit\'s snippet and say the wallet stays with the Arena', () => {
   const demo = UI('referral-demo/index.html');
   assert.doesNotMatch(demo, /<iframe/);
   assert.match(demo, /<div class="game" id="arena-game"><\/div>/);
@@ -78,5 +124,13 @@ test('the demo site embeds the kit with its program\'s key, no frame; the how-to
   const howto = UI('referral/index.html');
   assert.doesNotMatch(howto, /&lt;iframe/);
   assert.match(howto, /&lt;script src="https:\/\/testnet\.bitcoin-?arena\.io\/arena-embed\.js" data-game="rock-paper-scissors"/);
-  assert.match(howto, /The player's wallet is kept in your site's browser storage/);
+  assert.doesNotMatch(howto, /kept in your site's browser storage|unsafe-eval/);
+  assert.match(howto, /never touch your page or your site's storage/);
+  const owner = readFileSync(new URL('../../arena-web/src/owner/ReferrerPanel.jsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(owner, /kept in your site's browser storage/);
+});
+
+test('the engine mounts a game\'s client in a frame of its own (no kit hook in the framed page); the client file is asked of the page\'s own site', () => {
+  const page = UI('index.html');
+  assert.match(page, /url: new URL\('games\/' \+ encodeURIComponent\(game\.name\) \+ '\/index\.html', location\.href\)\.href, digest/);
 });
