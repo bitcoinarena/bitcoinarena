@@ -595,8 +595,14 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       const asked = (Array.isArray(records) ? records : []).slice(0, 256)
         .map((r, i) => ({ r, i, at: r && Number.isFinite(Number(r.publishedAt)) ? Number(r.publishedAt) : Infinity }))
         .sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.r);
+      // ONE RECORD ONCE PER LISTING (kanban #3373, audit census a6-3-1, gap in #3040): a seat listing one late record 256 times, each copy with
+      // junk sightings by every census key, cost 256 x K signature checks per pull (vouch's one-check-per-key holds within one call only)
+      const seenHere = new Set();
       for (const r of asked) {
         if (!r || typeof r.proposal !== 'string' || typeof r.blockHash !== 'string') continue;
+        const once = typeof r.id === 'string' ? `id:${r.id.toLowerCase()}` : `p:${r.proposal.toLowerCase()}`;
+        if (seenHere.has(once)) continue;
+        seenHere.add(once);
         const mine = typeof r.id === 'string' ? held.get(r.id.toLowerCase()) : null;
         // kept here: only its signed sightings are news (kanban #2432) - who listed it proves nothing
         if (mine && stateOf(mine) !== S.ORPHANED) { if (isLate(mine)) { try { await api.vouch(mine.id, r); } catch { /* the next pull */ } } continue; }
