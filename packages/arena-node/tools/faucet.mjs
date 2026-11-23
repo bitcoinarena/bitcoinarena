@@ -149,11 +149,19 @@ const S2_SOCIAL_GAP_MS = 15000;
 // the minute's slots; a caller over its share is told so and takes none
 const S2_LIVE_ALL = [], S2_LIVE_MINUTE = Math.max(1, Number(env.FAUCET_BOUNTY_S2_LIVE_MINUTE) || 4);
 const S2_LIVE_PER_CALLER = Math.max(1, Number(env.FAUCET_BOUNTY_S2_LIVE_PER_CALLER) || 2);
+// A NETWORK THAT HAS NOT ASKED THIS MINUTE STILL GETS A CHECK (kanban #3365, audit faucet a6-2-1): the per-caller share was half the minute, so a
+// stranger with two /64s of one /48 (or two IPv4 addresses) took all of it and every reporter's check was refused again. One network (its IPv6
+// /48 or IPv4 /24, ipNetsOf) takes at most S2_LIVE_MINUTE a minute; past the minute's S2_LIVE_MINUTE a network with no check in it yet still
+// gets one, up to S2_LIVE_HARD all together (the live lookups' own bound)
+const S2_LIVE_HARD = S2_LIVE_MINUTE * 4;
+const s2NetOf = (caller) => ipNetsOf(caller)[0] || caller;
 function s2LiveSlot(caller = '', now = Date.now()) {
   while (S2_LIVE_ALL.length && now - S2_LIVE_ALL[0].at >= 60000) S2_LIVE_ALL.shift();
   if (S2_LIVE_ALL.filter((x) => x.caller === caller).length >= S2_LIVE_PER_CALLER) return 'caller';
-  if (S2_LIVE_ALL.length >= S2_LIVE_MINUTE) return false;
-  S2_LIVE_ALL.push({ at: now, caller }); return true;
+  const net = s2NetOf(caller), ofNet = S2_LIVE_ALL.filter((x) => x.net === net).length;
+  if (ofNet >= S2_LIVE_MINUTE) return 'caller';
+  if (S2_LIVE_ALL.length >= S2_LIVE_MINUTE && (ofNet > 0 || S2_LIVE_ALL.length >= S2_LIVE_HARD)) return false;
+  S2_LIVE_ALL.push({ at: now, caller, net }); return true;
 }
 const s2CallerOf = (req) => ipKey(ipOf(req)) || String(ipOf(req) || '');
 const S2_LIVE_REFUSED = (got) => (got === 'caller' ? 'too many checks from this address right now - try again in a minute' : 'too many checks right now - try again in a minute');
