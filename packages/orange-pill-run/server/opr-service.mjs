@@ -126,7 +126,9 @@ export function createOpr(o = {}) {
     CREATE TABLE IF NOT EXISTS approvals (n INTEGER PRIMARY KEY AUTOINCREMENT, round TEXT NOT NULL, kind TEXT NOT NULL, action TEXT NOT NULL, by TEXT NOT NULL,
       at_ms INTEGER NOT NULL, why TEXT, rows TEXT);
     CREATE TABLE IF NOT EXISTS bounty_claims (round TEXT PRIMARY KEY, player TEXT NOT NULL, ln_address TEXT NOT NULL, at_ms INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS auth_seen (id TEXT PRIMARY KEY, at_ms INTEGER NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS auth_seen (id TEXT PRIMARY KEY, at_ms INTEGER NOT NULL);
+    -- kanban #3356 (audit opr a6-1-2): the name check reads lower(name) - without this index every POST /name scanned every player row
+    CREATE INDEX IF NOT EXISTS players_name_lc ON players (lower(name));`);
   // PAID WHEN (kanban #3265): a run may start before its entry is paid ("pending entry"); paid_ms is when lnd settled its invoice, and only a paid
   // run is in the pot, on the board and on a list. Rows from before (paid, then started) are paid at their start
   try { db.exec('ALTER TABLE attempts ADD COLUMN paid_ms INTEGER'); db.exec("UPDATE attempts SET paid_ms = started_ms WHERE paid_ms IS NULL AND started_ms IS NOT NULL AND state IN ('started', 'scored', 'rejected', 'timeout')"); } catch { /* there already */ }
