@@ -32,9 +32,11 @@ test('the award is a NIP-58 kind 8 naming the definition and the player', () => 
 });
 
 test('feedback keeps a public key apart from the words, and only a well-formed one', () => {
-  const said = feedbackDecide({ text: 'the truck is slow', player: a, build: '525', game: 'nextblock' }, []);
+  const said = feedbackDecide({ text: 'the truck is slow', player: a, build: '525', game: 'nextblock', signed: true }, []);
   assert.equal(said.player, a);
+  // kanban #2799: an unsigned report names no key
+  assert.equal(feedbackDecide({ text: 'the truck is slow', player: a }, []).player, null);
   assert.ok(!said.text.includes(a), 'never in the report');
-  assert.equal(feedbackDecide({ text: 'the truck is slow', player: 'nope' }, []).player, null);
+  assert.equal(feedbackDecide({ text: 'the truck is slow', player: 'nope', signed: true }, []).player, null);
   assert.equal(feedbackDecide({ text: 'the truck is slow' }, []).player, null);
 });
