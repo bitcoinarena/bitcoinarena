@@ -5961,6 +5961,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // stayed stake-unseen at the others for good - each seat rebuilt another pari-mutuel table and no threshold signed one. A plain pick (no limit
   // price) of a round this seat hosts as attested goes through the entry relay's lock pass as a relayed round's does; each seat checks the lock
   // with the federation at its own door. Answers the round id to hand on for, or null.
+  // A ROUND'S ENTRY CLOSE, FOR EVERY LOCK HAND-ON (kanban #3305, audit entry-a5-2-1, high): only a head-to-head lock was handed on before the close;
+  // a pool pick's waited LOCK_AFTER_MS and reached the other seats after it, where the lock door and the close pull (#2529) both refuse it - the
+  // seats that saw the lock counted the pick, the others did not, and no threshold signed one settlement. Now each lock goes before its round's close.
+  const lockRoundCloseMs = (rid) => {
+    const row = round.get(rid);
+    if (!row) return null;
+    try { return decodeRoundContract(new Uint8Array(row.contract)).entryCloseMs; } catch { return null; }
+  };
   const plainPickRound = (storedEntry) => {
     let e; try { e = decodeEntryContract(new Uint8Array(storedEntry)); } catch { return null; }
     if (relayedRound(e.roundId)) return e.roundId;
@@ -12469,8 +12477,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         lockTimed(got.ok ? 'verified' : got.why.slice(0, 60));
         if (!got.ok) return text(res, 409, got.why);
         if (got.doorTimeDropped) return text(res, 409, DOOR_TIME_DROPPED('stake'));   // kanban #1847
-        { const rid = plainPickRound(stored), rc = rid ? relayedRound(rid) : null;   // every round's (kanban #1216), a pool's plain pick's too (kanban #1790)
-          if (rid) entryRelay.lockTaken(rid, toHex(eid), rc && headToHeadRound(rid) ? rc.entryCloseMs : null); }   // a head-to-head lock before its close (kanban #1598)
+        { const rid = plainPickRound(stored);   // every round's (kanban #1216), a pool's plain pick's too (kanban #1790)
+          if (rid) entryRelay.lockTaken(rid, toHex(eid), lockRoundCloseMs(rid)); }   // a lock before its close (kanban #1598; every round's, kanban #3305: a pool pick's lock door shuts at the close too)
         // AN ORDER (comment 1127): tradable here once both its locks are verified - and only before its market's entry close
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
@@ -12499,8 +12507,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         steps.at(got.ok ? 'verified' : 'refused');
         if (!got.ok) return text(res, 409, got.why);
         if (got.doorTimeDropped) return text(res, 409, DOOR_TIME_DROPPED('fee'));   // kanban #1847
-        { const rid = plainPickRound(stored), rc = rid ? relayedRound(rid) : null;   // a fee lock that came after its stake lock's pass (kanban #1790)
-          if (rid) entryRelay.lockTaken(rid, toHex(eid), rc && headToHeadRound(rid) ? rc.entryCloseMs : null); }
+        { const rid = plainPickRound(stored);   // a fee lock that came after its stake lock's pass (kanban #1790)
+          if (rid) entryRelay.lockTaken(rid, toHex(eid), lockRoundCloseMs(rid)); }
         const lateOrder = orderLockAfterClose(stored);
         if (decodeEntryContract(stored).limitPrice !== undefined && !lateOrder) orderBook.noteTradable(decodeEntryContract(stored).roundId);
         return text(res, 201, `fee lock verified: contract ${got.contractId} holds ${got.feeMsat} msat` + (lateOrder ? ` - ${lateOrder}` : ''));
