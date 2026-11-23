@@ -13,7 +13,7 @@ export const FAUCET_MAX_SATS = 1500000;        // one request: a custody node's 
 export const FAUCET_DAY_CAP_SATS = 30000000;    // all requests of one UTC day
 export const FAUCET_PER_IP_PER_DAY = 30;   // kanban #1397 (the owner 2026-11-09: "Set the limits much higher"): was 3
 export const DAY_MS = 86400000;
-export const FAUCET_ADDRESS_SHARE = 4, FAUCET_NET48_SHARE = 2;   // kanban #2539: one address (ipKey) takes at most a quarter of the day's sats, one IPv6 /48 half
+export const FAUCET_ADDRESS_SHARE = 4, FAUCET_NET48_SHARE = 2;   // kanban #2539: one address (ipKey) takes at most a quarter of the day's sats, one IPv6 /48 (or IPv4 /24, #2815) half
 
 /** A testnet4 address the faucet pays: bech32 / bech32m with the tb1 prefix, nothing else. */
 export const faucetAddressOk = (a) => /^tb1[02-9ac-hj-np-z]{8,87}$/.test(String(a || ''));
@@ -43,8 +43,9 @@ export function faucetDecide(ask, book, { nowMs = Date.now(), maxSats = FAUCET_M
   if (spent + sats > dayCapSats) return { ok: false, why: 'the faucet has given out today\'s coins: try again tomorrow, or use the guided way' };
   const sum = (rows) => rows.reduce((a, p) => a + p.sats, 0);
   if (key && sum(mine) + sats > Math.floor(dayCapSats / FAUCET_ADDRESS_SHARE)) return { ok: false, why: 'this internet address took its share of today\'s coins: try again tomorrow, or use the guided way' };
-  const net = net48(key);
-  if (net && sum(today.filter((p) => net48(ipKey(p.ip)) === net)) + sats > Math.floor(dayCapSats / FAUCET_NET48_SHARE)) return { ok: false, why: 'this network took its share of today\'s coins: try again tomorrow, or use the guided way' };
+  // kanban #2815 (#1489 r22-faucet-1): an IPv4 /24 too - net48 of an IPv4 key is null, so four addresses of one /24 took the whole day
+  const net = net48(key) || net24(key);
+  if (net && sum(today.filter((p) => { const k = ipKey(p.ip); return (net48(k) || net24(k)) === net; })) + sats > Math.floor(dayCapSats / FAUCET_NET48_SHARE)) return { ok: false, why: 'this network took its share of today\'s coins: try again tomorrow, or use the guided way' };
   if (sats > balanceSats) return { ok: false, why: 'the faucet is out of coins right now: use the guided way' };
   return { ok: true, sats };
 }
