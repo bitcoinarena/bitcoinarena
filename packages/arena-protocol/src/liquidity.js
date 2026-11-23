@@ -98,11 +98,21 @@ export function assignLiquidity({ needs, claims, network = 'testnet4', skipped =
  * receives part of the 1%"): it earns again once topped up. THE MINIMUM COUNTS FREE COINS + THE CHANNELS IT GAVE (2026-10-18,
  * "ok accepted"): a provider at exactly 5 x L that gives a channel keeps its share - giving liquidity never removes the earning.
  */
-export const liquidityHeld = (claim, freeSats = BigInt(claim.freeSats)) => freeSats + claim.channels.reduce((a, x) => a + BigInt(x.capacitySats), 0n);
+// CLAIMED CHANNELS ARE NOT PROVEN (kanban #2921, feedback #226): only the free balance is chain-proven, a channel is the claim's own
+// word - two made-up 1-BTC channels weighed x401. Until a channel is proven, one counts at most L (the channel the assignment asks
+// for), once per peer, and all of them together never more than the free coins: the owner's case (5 x L, one channel given) keeps
+// its share, a claim with no coins weighs nothing, and made-up channels at most double real coins.
+const channelsCounted = (claim, network, freeSats, keep = () => true) => {
+  const L = LIQUIDITY_TERMS[network].channelSats, per = new Map();
+  for (const x of claim.channels) if (keep(x)) { const v = BigInt(x.capacitySats) < L ? BigInt(x.capacitySats) : L; if (!per.has(x.peer) || per.get(x.peer) < v) per.set(x.peer, v); }
+  const sum = [...per.values()].reduce((a, v) => a + v, 0n), cap = freeSats > 0n ? freeSats : 0n;
+  return sum < cap ? sum : cap;
+};
+export const liquidityHeld = (claim, freeSats = BigInt(claim.freeSats), network = 'testnet4') => freeSats + channelsCounted(claim, network, freeSats);
 export function liquidityWeight(claim, federationLnKeys, network = 'testnet4', freeSats = BigInt(claim.freeSats)) {
-  if (liquidityHeld(claim, freeSats) < LIQUIDITY_TERMS[network].depositSats) return 0n;
+  if (liquidityHeld(claim, freeSats, network) < LIQUIDITY_TERMS[network].depositSats) return 0n;
   const keys = new Set(federationLnKeys);
-  const inFed = claim.channels.filter((x) => keys.has(x.peer)).reduce((a, x) => a + BigInt(x.capacitySats), 0n);
+  const inFed = channelsCounted(claim, network, freeSats, (x) => keys.has(x.peer));
   return ((inFed + freeSats) / 10000n) * 10000n;
 }
 

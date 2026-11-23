@@ -66,3 +66,17 @@ test('a provider listed twice is one candidate: a node never gets both channels 
   assert.deepEqual(assignLiquidity({ needs: [N], claims: [a, a, b, b] }), once);
   assert.deepEqual(assignLiquidity({ needs: [N], claims: [a, a] })[0].open, [a.node], 'one provider: one channel');
 });
+
+test('#2921 claimed channels cannot inflate the weight: one per peer, at most L, never more than the free coins (feedback #226)', () => {
+  const N = nodeN(9), O = nodeN(8);
+  const honest = prov(5, { freeSats: 500000, channels: [] });
+  assert.equal(liquidityWeight(honest, [N.lightningPubkey, O.lightningPubkey]), 500000n);
+  const fake = prov(6, { freeSats: 500000, channels: [{ peer: N.lightningPubkey, capacitySats: 100000000 }, { peer: O.lightningPubkey, capacitySats: 100000000 }] });
+  assert.equal(liquidityWeight(fake, [N.lightningPubkey, O.lightningPubkey]), 700000n, 'two made-up 1-BTC channels count L each, not 200,000,000');
+  const twice = prov(7, { freeSats: 500000, channels: [{ peer: N.lightningPubkey, capacitySats: 100000 }, { peer: N.lightningPubkey, capacitySats: 100000 }] });
+  assert.equal(liquidityWeight(twice, [N.lightningPubkey]), 600000n, 'two channels to one peer count once');
+  const noCoins = prov(8, { freeSats: 0, channels: [{ peer: N.lightningPubkey, capacitySats: 500000 }] });
+  assert.equal(liquidityWeight(noCoins, [N.lightningPubkey]), 0n, 'no coins and a made-up channel: below the minimum');
+  const few = prov(9, { freeSats: 50000, channels: [1, 2, 3, 4, 5, 6].map((i) => ({ peer: nodeN(20 + i).lightningPubkey, capacitySats: 100000 })) });
+  assert.equal(liquidityWeight(few, [N.lightningPubkey]), 0n, 'channels count at most the free coins: 50,000 + 50,000 below the minimum');
+});
