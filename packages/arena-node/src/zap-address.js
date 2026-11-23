@@ -77,7 +77,8 @@ export const ZAP_ASKERS_KEPT = 4096;
 //   like every open zap); nothing open is dropped before expiry. When the book and the let-go list are both full, a new zap is refused.
 // - The asker is an IPv4 address or an IPv6 /64 (one /64 holds 2^64 addresses, each its own asker before), and on top of the
 //   per-asker bound all callers that are not this host together mint at most ZAP_MINTS_ALL fresh invoices per window, so rotating
-//   askers cannot exceed it: strangers alone keep at most ZAP_MINTS_ALL * (expiry / window + 1) zaps open, under the let-go room.
+//   askers cannot exceed it: strangers alone keep at most ZAP_MINTS_ALL * (expiry / window + 1) zaps open, under the let-go room
+//   (since kanban #3379 the bound is ZAP_MINTS_ALL + ZAP_MINTS_SPARE, see ROOM FOR NEWCOMERS below).
 // - The asker table never drops a live window: when it is full of them, a new asker is refused.
 // - A plain tip invoice is handed again only to the asker that got it (asker|name|amount): two tippers of the same amount are never
 //   handed one bolt11 that only the first could pay.
@@ -88,6 +89,23 @@ export const ZAP_MINTS_ALL = 300;
 // Callers not on this host have at most ZAP_MINTING_MAX invoices being made at once, on both doors together; past it the ask is refused
 // (asked again a moment later it is served). The host's own tools are not limited.
 export const ZAP_MINTING_MAX = 16;
+// ROOM FOR NEWCOMERS (kanban #3379, audit nostr a6-3-4): ZAP_MINTS_ALL was first come, first served, so ten addresses (or ten /64s of one
+// /48) asking 30 unpaid plain tips each took the whole window and every honest zap was refused until it ended. Past ZAP_MINTS_ALL a window
+// now keeps ZAP_MINTS_SPARE more mints for networks that have minted little in it: an asker whose network (IPv4 /24, IPv6 /48, see netKey)
+// has fewer than ZAP_MINTS_SPARE_PER_NET mints this window still gets its invoice. Filling the spare takes
+// ZAP_MINTS_SPARE / ZAP_MINTS_SPARE_PER_NET separate networks. Strangers together still mint at most ZAP_MINTS_ALL + ZAP_MINTS_SPARE per
+// window: (300 + 240) * (3600 / 600 + 1) = 3780 open zaps, under the ZAP_LET_GO_MAX room.
+export const ZAP_MINTS_SPARE = 240;
+export const ZAP_MINTS_SPARE_PER_NET = 3;
+
+/** The network the spare mints are shared by: an IPv4 address by its /24, an IPv6 address by its /48 (kanban #3379). */
+export function netKey(a) {
+  const k = askerKey(a);
+  const v6 = k.match(/^([0-9a-f]+):([0-9a-f]+):([0-9a-f]+):[0-9a-f]+::\/64$/);
+  if (v6) return `${v6[1]}:${v6[2]}:${v6[3]}::/48`;
+  const v4 = k.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3})\.\d{1,3}$/);
+  return v4 ? `${v4[1]}.0/24` : k;
+}
 
 /** The asker a mint is counted against: an IPv4 address as it is, an IPv6 address by its /64 (kanban #1964). */
 export function askerKey(a) {
@@ -173,15 +191,22 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     let a = askers.get(who);
     if (a && now - a.since >= ZAP_ASKER_WINDOW_S) { askers.delete(who); a = null; }
     if (a && a.n >= ZAP_MINTS_PER_ASKER) return `at most ${ZAP_MINTS_PER_ASKER} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes from one address`;
-    mintsAll = mintsAll.filter((t) => now - t < ZAP_ASKER_WINDOW_S);
-    if (mintsAll.length >= ZAP_MINTS_ALL) return `this Lightning address mints at most ${ZAP_MINTS_ALL} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes; try again later`;
+    mintsAll = mintsAll.filter((m) => now - m.t < ZAP_ASKER_WINDOW_S);
+    const net = netKey(asker);
+    if (mintsAll.length >= ZAP_MINTS_ALL) {   // the first-come part is used up: only a network that has minted little this window (kanban #3379)
+      let mine = 0;
+      for (const m of mintsAll) if (m.net === net) mine++;
+      if (mintsAll.length >= ZAP_MINTS_ALL + ZAP_MINTS_SPARE || mine >= ZAP_MINTS_SPARE_PER_NET) {
+        return `this Lightning address mints at most ${ZAP_MINTS_ALL} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes; try again later`;
+      }
+    }
     if (!a) {
       if (askers.size >= ZAP_ASKERS_KEPT) for (const [k, v] of askers) if (now - v.since >= ZAP_ASKER_WINDOW_S) askers.delete(k);
       if (askers.size >= ZAP_ASKERS_KEPT) return 'too many addresses are asking here; try again later';   // a live window is never dropped
       a = { since: now, n: 0 }; askers.set(who, a);
     }
     a.n++;
-    mintsAll.push(now);
+    mintsAll.push({ t: now, net });
     return '';
   };
   // PARSED ONCE PER OPEN ZAP (kanban #2989, audit nostr r1-3): every callback parsed every open zap's kept description (a 9734 of several KB
