@@ -979,7 +979,20 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
    * contract is gone. A seat with no port into it keeps the guardian's signed word and the preimage.
    */
   async function federationSays(rec) {
-    if (rec.state === PAYOUT.PLANNED || rec.state === PAYOUT.CLAIMED) return { ok: true };
+    if (rec.state === PAYOUT.PLANNED) return { ok: true };
+    // A CLAIMED MOVE IS READ IN THE DESTINATION (kanban #2925, feedback #227): its claimTxid, claimMsat and preimage are the record
+    // author's own bytes - one destination guardian could sign a made-up claim and every seat wrote a reserve row of it and closed the
+    // move. It is believed only when the destination holds the claim's output, never above the invoice; a seat with no port into the
+    // destination keeps the record pending (the move stays PAID here) and writes no row from it.
+    if (rec.state === PAYOUT.CLAIMED) {
+      let msat; try { msat = BigInt(rec.claimMsat); } catch { return refuse('a claimed move names its claim amount'); }
+      if (msat <= 0n || msat > BigInt(rec.plan.invoiceMsat || 0)) return refuse('a claim is never more than the move\'s invoice');
+      const to = await portOf(rec.plan.to);
+      if (!to) return refuse('this seat has no port into the destination federation: the claim is kept pending', 503);
+      let s; try { s = await to.status({ txid: fromHex(rec.claimTxid), outIdx: 0n }); } catch (e) { return refuse(`this seat cannot read the destination: ${e.message}`, 503); }
+      if (!s || !s.stored) return refuse('the destination holds no such claim output: not CLAIMED', 409);
+      return { ok: true };
+    }
     if (!/^[0-9a-f]{64}$/.test(String(rec.txid || ''))) return refuse(`a ${rec.state} record names its transaction`);
     if (!Array.isArray(rec.plan.refunds) || !rec.plan.refunds.length) return refuse('a plan spends at least one reserve output');
     const port = await portOf(rec.plan.federation);
