@@ -1971,6 +1971,10 @@
   "text": "Node software: a seat that signed the losing equivocated batch can stay marked signed",
   "kind": "bug"
  },
+ "3233": {
+  "text": "BTC Up/Down game: the toolbar balance stays stale after a stake",
+  "kind": "bug"
+ },
  "3242": {
   "text": "Other: a failed load can leak a host capability and escape the sandbox",
   "kind": "bug"
@@ -2333,6 +2337,10 @@
  },
  "3380": {
   "text": "Next Block game: no seat lists a next-block round on testnet",
+  "kind": "bug"
+ },
+ "3386": {
+  "text": "Node software: the compile bound still misses added wrappers, so a seat can still be aborted",
   "kind": "bug"
  }
 }
