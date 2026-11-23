@@ -11128,9 +11128,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               + (after ? 'joining the next round ' + String(after.id).slice(0, 16) : 'no next round listed'));
             if (after) window.ARENA_LOBBY_ACT.join(after.id, { link });
           };
+          // THE HEADER'S BALANCE AFTER THE STAKE (kanban #3233, feedback #336: "after buying a 100 sat Up order the toolbar still showed 2,900 sat
+          // although the wallet had already deducted the stake"): a sum that ran while the lock spent its notes answers the balance before it,
+          // and every call in the meantime got that same sum - so the join's end waits for any sum on its way and then sums once more
+          const balanceAfterStake = () => {
+            if (!window.ARENA_SUM_BALANCES) return Promise.resolve();
+            return Promise.resolve().then(() => window.ARENA_SUM_BALANCES()).catch(() => {}).then(() => window.ARENA_SUM_BALANCES()).catch(() => {});
+          };
           joinTheRoundIfOneWasNamed()
             .then(() => {
               join.committed = true;
+              balanceAfterStake();   // a refused or cancelled join may have locked its stake all the same
               // CANCELLED: refused by time, or by the session (ARENA_REFUSED_JOIN cancels it)
               if (join.cancelled) {
                 if (window.ARENA_JOIN === join) { window.ARENA_ENTRY = undefined; window.ARENA_CHAIN = undefined; window.ARENA_ADVERT = undefined; window.ARENA_ROUND = undefined; }
@@ -11189,6 +11197,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
                      console.error('[arena] join refused: ' + join.why); moveOnIfMissed(); }
             })
             .catch((e) => {
+              balanceAfterStake();
               if (join.cancelled) return;
               refuse(e && e.message ? e.message : e);
               moveOnIfMissed();
