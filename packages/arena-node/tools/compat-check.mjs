@@ -26,7 +26,11 @@ import { SimplePool } from 'nostr-tools/pool';
 import { BunkerSigner, parseBunkerInput } from 'nostr-tools/nip46';
 
 const unhex = (h) => Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16)));
-const timed = (p, ms, what) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(`${what}: no answer in ${ms / 1000} s`)), ms))]);
+const timed = (p, ms, what) => {
+  let timer;
+  return Promise.race([p, new Promise((_, no) => { timer = setTimeout(() => no(new Error(`${what}: no answer in ${ms / 1000} s`)), ms); })])
+    .finally(() => clearTimeout(timer));
+};
 
 /** One row from the checks: ok only when every one passed, and never with nothing checked (kanban #2939). */
 export function resultRow({ name, version, kind, checks, testedBy = null, date = new Date().toISOString().slice(0, 10), url = null, platform = null, how = 'automatic' }) {
@@ -81,7 +85,7 @@ export async function checkNwc(link, { pay = null, kept = {}, requireReturnInvoi
   return checks;
 }
 
-export async function checkSigner(link, { ms = 60000 } = {}) {
+export async function checkSigner(link, { ms = 60000, expectedPubkey = null } = {}) {
   const bp = await parseBunkerInput(link);
   if (!bp) throw new Error('that is not a bunker:// link');
   const pool = new SimplePool(), checks = {};
@@ -89,8 +93,11 @@ export async function checkSigner(link, { ms = 60000 } = {}) {
   const step = async (name, run) => { try { checks[name] = (await timed(run(), ms, name)) ? 'ok' : 'odd answer'; } catch (e) { checks[name] = String(e?.message ?? e).slice(0, 120); } };
   let me = null;
   await step('connect', async () => { await signer.connect(); return true; });
-  await step('get_public_key', async () => { me = await signer.getPublicKey(); return /^[0-9a-f]{64}$/.test(me); });
-  const signs = (kind, tags, content) => async () => verifyEvent(await signer.signEvent({ kind, created_at: Math.floor(Date.now() / 1000), tags, content }));
+  await step('get_public_key', async () => { me = await signer.getPublicKey(); return /^[0-9a-f]{64}$/.test(me) && (!expectedPubkey || me === expectedPubkey); });
+  const signs = (kind, tags, content) => async () => {
+    const event = await signer.signEvent({ kind, created_at: Math.floor(Date.now() / 1000), tags, content });
+    return event.pubkey === me && verifyEvent(event);
+  };
   await step('sign_event 27235', signs(27235, [['u', 'https://bitcoinarena.io/'], ['method', 'GET']], ''));
   await step('sign_event 30078', signs(30078, [['d', 'bitcoin-arena/compat-check']], 'check'));
   await step('nip44 to self', async () => (await signer.nip44Decrypt(me, await signer.nip44Encrypt(me, 'check'))) === 'check');
