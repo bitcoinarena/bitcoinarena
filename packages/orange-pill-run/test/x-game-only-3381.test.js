@@ -34,7 +34,7 @@ test('#3381 a key with only a bounty-book X link (typed or code, verified) shows
     assert.equal(t.pubkey, typed.pk); assert.equal(t.x, null, 'no "✓ X @fexx_off" on the game screen'); assert.equal(t.placed, false);
     assert.equal((await me(coded)).x, null);
     assert.equal((await me(fresh)).x, null);
-    const m = await me(game); assert.deepEqual(m.x, { username: 'alice' }); assert.equal(m.placed, true);
+    const m = await me(game); assert.deepEqual(m.x, { username: 'alice', follows: true }); assert.equal(m.placed, true);
   } finally { srv.close(); }
 
   // the payout list places only the game link

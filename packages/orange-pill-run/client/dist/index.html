@@ -85,6 +85,7 @@ button:disabled { opacity: .5; cursor: default; }
 .lnrow input:focus { outline: none; border-color: var(--btc); }
 .lnrow button { padding: 6px 14px; font-size: .9rem; border-color: var(--btc); color: var(--btc); }
 .lnwhy { margin: -6px 0 8px !important; font-size: .8rem !important; color: var(--soft); } .lnwhy.ok { color: var(--green) !important; } .lnwhy.bad { color: var(--red) !important; }
+a.follow { color: var(--btc); font-weight: 700; text-decoration: underline; white-space: nowrap; }   /* kanban #3534: the follow link to @bitcoinarena_io */
 .prize small.promo { display: block; color: var(--text); margin-top: 2px; }   /* kanban #3328: until when the promotion runs */
 #result .lnrow { margin: 10px 0 6px; } #result .lnwhy { margin: 0 0 6px !important; }
 .rules ol { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; color: var(--soft); font-size: .92rem; line-height: 1.4; }
@@ -1672,8 +1673,12 @@ function xLine(me, sats = PRIZE_SATS) {
   const ok = hasX && hasLn;
   if (ok) parts.push({ text: "- you can win", ok: true, sep: " " });
   const text = parts.map((x, i) => (i ? (x.sep || " · ") : "") + x.text).join("");
-  return { ok, text, parts, link: !me.x, ln: !hasLn };
+  // kanban #3534: an X account that does not follow @bitcoinarena_io (or was not asked yet) keeps the field, for Check again, with the follow link
+  return { ok, text, parts, link: !me.x || needsFollow(me), follow: needsFollow(me), ln: !hasLn };
 }
+/** FOLLOWING @bitcoinarena_io IS REQUIRED (kanban #3534, owner 2026-11-23): the account, the link, and whether /me says this player still has to. */
+const X_HOUSE = "bitcoinarena_io", FOLLOW_URL = "https://x.com/bitcoinarena_io";
+function needsFollow(me) { return !!(me && me.x && !me.placed && (me.x.follows === false || /follow/i.test(String(me.placedWhy || "")))); }
 
 /**
  * THE RUNS THIS PLAYER OPENED IN THE ROUND (#3251): GET /me's count, and never fewer than the runs it lists plus the ones this tab opened since
@@ -1784,7 +1789,7 @@ function prizeLine(round, nowMs = Date.now()) {
   if (!round) return null;
   const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
   // short (owner 2026-11-22, iPhone): two lines at most on a 375 px phone
-  const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "needs X + Lightning address";
+  const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "needs X (follow @" + X_HOUSE + ") + Lightning address";   // #3534
   const promo = promoLine(round, nowMs);
   if (!round.test || nowMs >= FIRST_DAILY_MS) return promo ? { text, small, promo } : { text, small };
   return promo ? { text: "From " + FIRST_DAILY_WORDS + ": " + text, small, promo } : { text: "From " + FIRST_DAILY_WORDS + ": " + text, small };
@@ -1878,12 +1883,13 @@ function xHandleOf(text) {
   return /^[A-Za-z0-9_]{1,15}$/.test(n) ? n : null;
 }
 /** What the X field says under it while typed: { text, kind, canSave }. stored: GET /me's x.username. */
-function xFieldModel(text, stored) {
+// recheck (kanban #3534): the stored account does not follow yet - an empty field or the same name checks it again
+function xFieldModel(text, stored, recheck = false) {
   const raw = String(text == null ? "" : text).trim();
-  if (!raw) return { text: "", kind: "", canSave: false };
+  if (!raw) return { text: "", kind: "", canSave: !!(recheck && stored) };
   const n = xHandleOf(raw);
   if (!n) return { text: "Not an X username", kind: "bad", canSave: false };
-  if (stored && n.toLowerCase() === String(stored).toLowerCase()) return { text: "✓ saved", kind: "ok", canSave: false };
+  if (stored && n.toLowerCase() === String(stored).toLowerCase()) return recheck ? { text: "", kind: "", canSave: true } : { text: "✓ saved", kind: "ok", canSave: false };
   return { text: "", kind: "", canSave: true };
 }
 /**
@@ -1893,6 +1899,8 @@ function xFieldModel(text, stored) {
 function xSaveAnswer(j, typed) {
   const at = "@" + (xHandleOf(typed) || String(typed || "").trim());
   if (!j || typeof j !== "object") return { ok: false, kind: "bad", text: "The check did not answer - try again" };
+  // kanban #3534: saved, but not following @bitcoinarena_io yet - the service's words, with the follow link
+  if (j.ok === true && j.x && j.x.follows === false) return { ok: true, kind: "bad", follow: true, text: String(j.follow || ("@" + j.x.username + " does not follow @" + X_HOUSE + " yet - follow, then press Check again")) };
   if (j.ok === true) return { ok: true, kind: "ok", text: "✓ saved @" + ((j.x && j.x.username) || xHandleOf(typed)) };
   const why = String(j.why || "");
   if (/no such X account|not an X username/i.test(why)) return { ok: false, kind: "bad", text: "No X account " + at + " - check the spelling. Not saved." };
@@ -1903,7 +1911,7 @@ function xSaveAnswer(j, typed) {
 /** The leaderboard rows: [[rank, name, score, time, placed]] */
 const boardRows = (board, me = null) => (board || []).map((r) => ({ rank: String(r.rank), name: String(r.name || ""), score: fmtSats(r.score), time: fmtTime(r.timeS), placed: !!r.placed, replay: r.replay || null, me: isMine(r, me) }));
 
-return { fmtSats, fmtLeft, fmtTime, isMine, myBest, xLine, usedOf, INTRO_TOP, introBoard, isFree, FREE_LABEL, introModel, FEE_GUESS_SATS, payableOf, PRIZE_SATS, prizeLine, promoLine, entryLine, resultModel, lnSyntaxWhy, lnFieldModel, xHandleOf, xFieldModel, xSaveAnswer, boardRows };
+return { fmtSats, fmtLeft, fmtTime, isMine, myBest, xLine, X_HOUSE, needsFollow, usedOf, INTRO_TOP, introBoard, isFree, FREE_LABEL, introModel, FEE_GUESS_SATS, payableOf, PRIZE_SATS, prizeLine, promoLine, entryLine, resultModel, lnSyntaxWhy, lnFieldModel, xHandleOf, xFieldModel, xSaveAnswer, boardRows };
 })();
 __m["client/src/rules.js"] = (() => {
 // Orange Pill Run - the public rules (kanban #3251). One source: the game's Rules sheet and the rules page (client/dist/rules.html) both read it.
@@ -1912,13 +1920,13 @@ const RULES_TITLE = "Orange Pill Run: the rules";
 const RULES = [
   ["Round", "One round each UTC day, from 00:00 to 24:00 UTC. No new attempt starts in the last 5 minutes of a round."],
   ["Level", "The level is the previous UTC day's Bitcoin chart: 48 candles of 30 minutes, BTC-USD from Coinbase. Everyone plays the same level."],
-  ["Free to play", "Free to play. 5 attempts a day, your best counts. The best player with a linked X account and a valid Lightning address wins 2,500 real sats."],
+  ["Free to play", "Free to play. 5 attempts a day, your best counts. The best player with a linked X account that follows @bitcoinarena_io and a valid Lightning address wins 2,500 real sats."],
   ["Attempts", "At most 5 attempts per player and round. A run is sent within 10 minutes of its start."],
   ["Score", "The server replays your inputs and scores the run itself. Your best score of the round counts."],
   ["Speed", "Faster finishes score much more: 20 points for every second under the level's par time. Sats, stomps, the flag (100) and the day high (50) count too; a run without a hit scores ×1.5. A run that misses the flag gets no time bonus."],
   ["Tie-break", "On equal scores the shorter run time ranks higher, then the earlier submission."],
   ["Play bounty", "2,500 sats, in real sats, each round. The play bounty goes to the best player with a valid Lightning address saved by one hour after the round. No X account and no valid Lightning address: no play bounty."],
-  ["X account", "To be placed and win, save your X handle in the game's X field before your first run of the round (the account must exist on X; one player per X account, first come first served). A player without one is not placed; the next player moves up."],
+  ["X account", "To be placed and win, save your X handle in the game's X field before your first run of the round (the account must exist on X; one player per X account, first come first served) and follow @bitcoinarena_io on X. We check the follow again before the payout: an account that does not follow then is not placed. A player without one is not placed; the next player moves up."],
   ["Humans only", "Humans only. Bots, scripts, automated or assisted play are excluded."],
   ["Fair play", "Any exploit or cheat disqualifies: changing the game or its data, more than one account, playing for someone else, abusing a bug instead of reporting it. Found a bug? Report it in the bug bounty."],
   ["Review", "We review the top runs. Every payout is checked and approved by us before it is sent. Our decision is final."],
@@ -2142,7 +2150,7 @@ const { resultOf, validateLog } = __m["src/sim/replay.js"];
 const { fit, drawWorld, view, usd } = __m["client/src/render.js"];
 const { makeApi } = __m["client/src/api.js"];
 const { createEntry, entryOf } = __m["client/src/entry.js"];
-const { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf } = __m["client/src/screens.js"];
+const { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, X_HOUSE, FOLLOW_URL } = __m["client/src/screens.js"];
 const { RULES, RULES_TITLE } = __m["client/src/rules.js"];
 const { makeAudio, snapWorld, worldEvents } = __m["client/src/audio.js"];
 const { makeClock, snapMovers, drawBetween } = __m["client/src/frameloop.js"];
@@ -2326,15 +2334,23 @@ function paintWallet() {
 }
 let introTop = 10, introFitH = 0;
 // the X / Lightning status (#3251): each part green or red as it stands
+// kanban #3534: the follow link to @bitcoinarena_io (a new tab)
+function followLink(label = "Follow @" + X_HOUSE) { const a = document.createElement("a"); a.href = FOLLOW_URL; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = label; a.className = "follow"; return a; }
 function paintStatus(el, st) {
   el.textContent = ""; if (!st) return;
   st.parts.forEach((x, i) => { if (i) el.append(x.sep || " · "); const sp = document.createElement("span"); sp.className = x.ok ? "st-ok" : "st-bad"; sp.textContent = x.text; el.append(sp); });
+}
+// the prize line's "needs X (follow @bitcoinarena_io) + ..." with the handle as the follow link (#3534)
+function paintSmall(el, text) {
+  el.textContent = ""; const at = "@" + X_HOUSE, i = text.indexOf(at);
+  if (i < 0) { el.textContent = text; return; }
+  el.append(text.slice(0, i), followLink(at), text.slice(i + at.length));
 }
 function paintIntro() {
   const m = introModel({ round: S.round, me: S.me, board: S.board, wallet: wallet(), nowMs: Date.now(), loading: !S.loaded, opened: openedIn(), top: introTop });
   $("iLine").textContent = m.line;
   $("iBounty").hidden = true;
-  $("iPrize").hidden = !m.prize; $("iPrizeText").textContent = m.prize ? m.prize.text : ""; $("iPrizeSmall").textContent = m.prize ? " " + m.prize.small : "";
+  $("iPrize").hidden = !m.prize; $("iPrizeText").textContent = m.prize ? m.prize.text : ""; paintSmall($("iPrizeSmall"), m.prize ? " " + m.prize.small : "");
   $("iPromo").hidden = !(m.prize && m.prize.promo); $("iPromo").textContent = (m.prize && m.prize.promo) || "";
   const dl = $("iFacts"); dl.textContent = ""; dl.hidden = !m.facts;
   for (const [k, v, cls] of m.facts || []) { const d = document.createElement("div"); if (cls) d.className = cls; const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; d.append(dt, dd); dl.append(d); }
@@ -2512,20 +2528,23 @@ function paintXf(p, show = true) {
   const form = $(p + "Xf"), inp = $(p + "XfIn"), btn = $(p + "XfBtn"), why = $(p + "XfWhy"), st = XF[p];
   const on = show && !!api && !!S.me;
   form.hidden = !on; if (!on) { why.hidden = true; return; }
-  const stored = (S.me.x && S.me.x.username) || "";
-  const m = st.msg || xFieldModel(inp.value, stored);
+  const stored = (S.me.x && S.me.x.username) || "", recheck = needsFollow(S.me);   // #3534: Check again while it does not follow
+  // #3534: the service's reason while nothing else is said (does not follow / not checked yet), with the follow link
+  const m = st.msg || (recheck && !inp.value.trim() ? { text: S.me.placedWhy || ("@" + stored + " does not follow @" + X_HOUSE + " yet - follow, then press Check again"), kind: "bad", follow: true } : xFieldModel(inp.value, stored, recheck));
   why.textContent = m.text; why.className = "lnwhy " + (m.kind || ""); why.hidden = !m.text;
-  if (!btn.dataset.busy) btn.disabled = !xFieldModel(inp.value, stored).canSave;
+  if (m.follow && m.text) why.append(" ", followLink());
+  inp.placeholder = recheck && stored ? "@" + stored : "@yourXhandle";
+  if (!btn.dataset.busy) btn.disabled = !xFieldModel(inp.value, stored, recheck).canSave;
 }
 async function saveX(p) {
   const inp = $(p + "XfIn"), btn = $(p + "XfBtn"), st = XF[p];
   if (btn.disabled || btn.dataset.busy) return;
-  const typed = inp.value.trim();
+  const typed = inp.value.trim() || (needsFollow(S.me) && S.me.x.username) || "";   // #3534: an empty field checks the saved account again
   btn.dataset.busy = "1"; btn.disabled = true; st.msg = { text: "Checking @" + (xHandleOf(typed) || typed) + " on X …", kind: "" }; paintXf(p);
   const j = await api.post("/x", { x: typed }).catch(() => null);
   const a = xSaveAnswer(j, typed);
   delete btn.dataset.busy;
-  st.msg = { text: a.text, kind: a.kind }; st.dirty = !a.ok;
+  st.msg = { text: a.text, kind: a.kind, follow: !!a.follow }; st.dirty = !a.ok;
   if (a.ok) { const m = await api.getSigned("/me" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : "")).catch(() => null); if (m && m.ok) S.me = m; inp.value = ""; st.dirty = false; }
   paintXf(p); paintIntro(); if (!$("result").hidden && resultArgs) paintResult(resultArgs);
   HOOKS.x = { ok: a.ok, text: a.text };

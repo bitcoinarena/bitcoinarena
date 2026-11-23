@@ -19,7 +19,7 @@ test("#3251 the intro: one line, bounty, best, pot and split, attempts, own best
   const m = introModel({ round: round(), me: me(), board, wallet: W(), nowMs: T0 });
   assert.equal(m.line, "Run yesterday's Bitcoin chart. Tap to jump. Don't fall.");
   assert.equal(m.bounty, null);   // the prize line says it (owner 2026-11-22)
-  assert.deepEqual(m.prize, { text: "🏆 Daily best score wins 2,500 real sats", small: "needs X + Lightning address" });
+  assert.deepEqual(m.prize, { text: "🏆 Daily best score wins 2,500 real sats", small: "needs X (follow @bitcoinarena_io) + Lightning address" });
   assert.equal(m.best, "1,234 in 41.3 s by alice");
   assert.equal(m.pot, "1,200 testnet sats · split 50 / 30 / 20");
   assert.equal(m.attempts, "Your attempts: 2 of 5");
@@ -316,7 +316,7 @@ test("#3273 a free round: Play · free, no wallet, balance, faucet or pot; the p
   const m = introModel({ round: free, me: me(), board, wallet: { pubkey: "ab".repeat(32), balance: null, welcomeComing: false, canTopUp: true }, nowMs: T0 });
   assert.deepEqual(m.button, { label: "Play · free", disabled: false, why: "" });
   assert.equal(m.free, true); assert.equal(m.pot, null); assert.equal(m.topUp, undefined);
-  assert.deepEqual(m.prize, { text: "🏆 Free to play · daily best score wins 2,500 real sats", small: "needs X + Lightning address" });
+  assert.deepEqual(m.prize, { text: "🏆 Free to play · daily best score wins 2,500 real sats", small: "needs X (follow @bitcoinarena_io) + Lightning address" });
   assert.equal(m.x.text, ""); assert.equal(m.x.link, true); assert.equal(m.x.ln, true);   // #3328: the two empty fields, no red line
   const low = introModel({ round: free, me: me(), board, wallet: W({ balance: { sats: 0, best: 0 } }), nowMs: T0 });
   assert.equal(low.button.disabled, false); assert.equal(low.topUp, undefined);
@@ -328,6 +328,6 @@ test("#3273 a free round: Play · free, no wallet, balance, faucet or pot; the p
   assert.equal(r.rank, "Not on the board yet");
   const a = attemptOf({ ok: true, attempt: "x", token: "t", level: {}, state: "started", free: true, paid: true, sats: 0 });
   assert.equal(a.free, true); assert.equal(a.sats, 0); assert.equal(a.invoice, null); assert.equal(entryOf({ ok: true, state: "started", paid: true }), "paid");
-  assert.equal(RULES.find((x) => x[0] === "Free to play")[1], "Free to play. 5 attempts a day, your best counts. The best player with a linked X account and a valid Lightning address wins 2,500 real sats.");
+  assert.equal(RULES.find((x) => x[0] === "Free to play")[1], "Free to play. 5 attempts a day, your best counts. The best player with a linked X account that follows @bitcoinarena_io and a valid Lightning address wins 2,500 real sats.");
   assert.ok(!RULES.some((x) => /testnet sats|pot/i.test(x[1])), "no entry or pot in the rules");
 });

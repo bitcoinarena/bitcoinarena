@@ -48,8 +48,9 @@ export function signIn(kp, { path, method = 'GET', body = '', createdAt, base = 
 }
 
 /** THE GAME'S OWN X LINK (kanban #3331, #3381): a row in the service's x_links, as POST /x saves it after the X lookup - the only link the game counts. */
-export function gameLink(opr, pk, { userId, username = null, nowMs }) {
-  try { opr.db.prepare('INSERT INTO x_links (pubkey, user_id, username, linked_ms, checked_ms) VALUES (?, ?, ?, ?, ?)').run(String(pk), String(userId), String(username || userId), nowMs, nowMs); }
+export function gameLink(opr, pk, { userId, username = null, nowMs, follows = true }) {
+  // kanban #3534: a saved link follows @bitcoinarena_io unless follows: false
+  try { opr.db.prepare('INSERT INTO x_links (pubkey, user_id, username, linked_ms, checked_ms, follows, follows_ms) VALUES (?, ?, ?, ?, ?, ?, ?)').run(String(pk), String(userId), String(username || userId), nowMs, nowMs, follows ? 1 : 0, nowMs); }
   catch (e) { return { ok: false, why: e.message }; }
   return { ok: true };
 }
@@ -74,17 +75,19 @@ export function world({ start = '2026-11-23T00:00:00Z', cfg = {}, chain = fakeCh
   const wallets = new Map(), lnAsked = [];
   const lnFake = async (a) => { lnAsked.push(a); return wallets.get(a) || { ok: true, address: a }; };
   // X on a fake (kanban #3331): xAccounts maps a lower-case handle to its userId; a handle not in it does not exist; 'down' answers no read
-  const xs = xAccounts || new Map(), xAsked = [];
+  // kanban #3534: every account follows @bitcoinarena_io unless its lower-case handle is in w.xNot
+  const xs = xAccounts || new Map(), xAsked = [], xNot = new Set();
   const xLookup = async (name) => { xAsked.push(name); if (xs.get('*') === 'down') return { userId: null, member: null, why: 'x 503' };
-    const id = xs.get(String(name).toLowerCase()); return id ? { userId: id, username: name, member: false, why: 'does not follow' } : { userId: null, username: name, member: false, why: 'no such X account' }; };
+    const id = xs.get(String(name).toLowerCase()); return id ? (xNot.has(String(name).toLowerCase()) ? { userId: id, username: name, member: false, why: 'does not follow' } : { userId: id, username: name, member: true, why: 'follows' }) : { userId: null, username: name, member: false, why: 'no such X account' }; };
   const opr = createOpr({ xLookup, botXHandles: () => new Set([...xs.keys()].filter((k) => k.startsWith('bot'))), lnCheck: lnCheck || lnFake, now: clock.now, sim: stubSim, fetchCandles: async (d) => candles48(d), checkLevel: async () => ({ ok: true, seed: 7, tries: 1, hash: 'h' }),
     invoices: lnd, chain, s2, alert: (x) => alerts.push(x), log: (m) => lines.push(m), cfg: { adminSha: createHash('sha256').update('letmein').digest('hex'), showTest: true, entrySats: 100, ...cfg } });   // the paid tests keep 100; free: cfg.entrySats 0 (#3273)
   const link = (pk, verified = true, username = null) => {
     xn++; if (!verified) return;
     const r = gameLink(opr, pk, { userId: `x${xn}`, username: username || `user${xn}`, nowMs: t });
+    if (r.ok && !xs.has(String(username || `user${xn}`).toLowerCase())) xs.set(String(username || `user${xn}`).toLowerCase(), `x${xn}`);   // #3534: the account is on X (a re-check finds it)
     if (!r.ok) throw new Error(r.why);
   };
-  return { opr, clock, lnd, chain, s2, alerts, lines, link, wallets, lnAsked, xs, xAsked };
+  return { opr, clock, lnd, chain, s2, alerts, lines, link, wallets, lnAsked, xs, xAsked, xNot };
 }
 
 /** Make the round ready: level, post, confirmation. */

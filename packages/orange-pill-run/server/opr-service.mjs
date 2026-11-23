@@ -33,12 +33,17 @@ export function xHandleOf(text) {
   return /^[A-Za-z0-9_]{1,15}$/.test(n) ? n : null;
 }
 export const X_CHECK_GAP_MS = 15000, X_CHECKS_PER_HOUR = 20, LN_CHECK_GAP_MS = 5000;
+export const X_HOUSE = 'bitcoinarena_io', X_HOUSE_URL = 'https://x.com/bitcoinarena_io';   // kanban #3534: the account a placed player follows
 const houseX = () => new Set(String(process.env.OPR_HOUSE_X || 'bitcoinarena_io').split(',').map((x) => x.trim().replace(/^@/, '').toLowerCase()).filter(Boolean));   // kanban #3392
 const botListFromEnv = () => { try { const f = process.env.FAUCET_BOT_X_HANDLES; return new Set(f ? readFileSync(f, 'utf8').split('\n').map((l) => l.trim().replace(/^@/, '').toLowerCase()).filter((l) => l && !l.startsWith('#')) : []); } catch { return new Set(); } };
 
 const DAY_MS = 86400000, MIN_MS = 60000;
 export const DEFAULTS = Object.freeze({
   firstDay: '2026-11-23', daily: true, entrySats: 0, maxAttempts: 5, submitMs: 10 * MIN_MS, lastCallMs: 5 * MIN_MS, invoiceS: 600,
+  // FOLLOWING @bitcoinarena_io IS REQUIRED (kanban #3534, owner 2026-11-23 ~18:10Z "X folgen Pflicht ab sofort"): a round that ends after followSince
+  // places only a key whose X link follows; followTop: how many of a round's best linked keys are asked again on X before its lists are made, and
+  // every followEveryMs while a list waits (an unfollow before the payout loses the place)
+  followSince: '2026-11-23T18:10:00Z', followTop: 10, followEveryMs: 30 * MIN_MS,
   verifyGraceMs: 60 * MIN_MS, bountySats: 2500,   // the play bounty in real sats (owner 2026-11-22: 2,500 - 5,000 earlier that day, 10,000 before; it was 2,000) - every round reads it here, none stores its own
   lnChecksPerMinAll: 60, xChecksPerMinAll: 15,   // kanban #3333, #3353: wallet asks and X lookups per minute of all keys of ONE caller address (ipKey)
   lnChecksPerMinNet: 600, xChecksPerMinNet: 150,   // kanban #3353: the whole service's backstop per minute; a key with a run in a round still listing is not held by it
@@ -155,6 +160,8 @@ export function createOpr(o = {}) {
     CREATE TABLE IF NOT EXISTS x_link_moves (user_id TEXT NOT NULL, username TEXT NOT NULL, from_pubkey TEXT NOT NULL, from_linked_ms INTEGER NOT NULL, to_pubkey TEXT NOT NULL, at_ms INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS x_link_moves_by_from ON x_link_moves (from_pubkey, at_ms);
     CREATE TABLE IF NOT EXISTS x_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS x_checks_by_player ON x_checks (player, at_ms); CREATE INDEX IF NOT EXISTS x_checks_by_time ON x_checks (at_ms);`);
+  // FOLLOWS @bitcoinarena_io (kanban #3534): follows 1 / 0 as X last answered (null: not asked yet), follows_ms when, follows_why X's words
+  for (const col of ['follows INTEGER', 'follows_ms INTEGER', 'follows_why TEXT']) { try { db.exec(`ALTER TABLE x_links ADD COLUMN ${col}`); } catch { /* there already */ } }
   db.exec('CREATE TABLE IF NOT EXISTS ln_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ln_checks_by_player ON ln_checks (player, at_ms); CREATE INDEX IF NOT EXISTS ln_checks_by_time ON ln_checks (at_ms);');
   // THE CALLER'S ADDRESS OF A CHECK (kanban #3353): the minute caps of #3333 are counted per caller address, not for all callers together
   for (const tb of ['ln_checks', 'x_checks']) { try { db.exec(`ALTER TABLE ${tb} ADD COLUMN ip_key TEXT`); } catch { /* there already */ } db.exec(`CREATE INDEX IF NOT EXISTS ${tb}_by_ip ON ${tb} (ip_key, at_ms)`); }
@@ -629,14 +636,24 @@ export function createOpr(o = {}) {
     const m = q('SELECT * FROM x_link_moves WHERE from_pubkey = ? AND from_linked_ms <= ? AND at_ms > ? ORDER BY at_ms DESC LIMIT 1').get(String(pk), first, last);
     return m ? { user_id: m.user_id, username: m.username, linked_ms: m.from_linked_ms } : null;
   };
+  // kanban #3534: what X last said about the account behind a link (a moved account's: its current row's)
+  const followSinceMs = cfg.followSince == null || cfg.followSince === '' ? null : Date.parse(String(cfg.followSince));
+  const followRuleOn = (r) => followSinceMs !== null && Number(r.end_ms) > followSinceMs;
+  function followsOf(g) {
+    const row = g.follows !== undefined ? g : q('SELECT follows, follows_ms FROM x_links WHERE user_id = ?').get(String(g.user_id)) || {};
+    return { follows: row.follows == null ? null : row.follows === 1, ms: row.follows_ms == null ? null : Number(row.follows_ms) };
+  }
   function xOf(pk, r = null) {
     let g = xLinkOf(pk);
     if (r && !(g && Number(g.linked_ms) <= (firstRunOf(r.id, pk) ?? Infinity))) g = heldFor(pk, r) || g;
     if (!g) return { placed: false, x: null, why: 'no X account linked' };
     const l = { userId: g.user_id, username: g.username, linkedMs: g.linked_ms };
-    const x = { userId: String(l.userId), username: l.username || null, proof: 'game' };   // shown at sign-off (#3279)
+    const f = followsOf(g);
+    const x = { userId: String(l.userId), username: l.username || null, proof: 'game', follows: f.follows, followsMs: f.ms };   // shown at sign-off (#3279)
     if (isBotX(l.username)) return { placed: false, x, why: 'a known bot account' };
     if (houseX().has(String(l.username || '').toLowerCase())) return { placed: false, x, why: 'the Bitcoin Arena account is not a player account' };   // kanban #3392
+    // kanban #3534: a round ending after followSince (and /me with no round) places only an X account that follows @bitcoinarena_io
+    if ((!r || followRuleOn(r)) && f.follows !== true) return { placed: false, x, why: f.follows === false ? `@${l.username} does not follow @${X_HOUSE} yet - follow, then press Check again` : `not checked yet whether @${l.username} follows @${X_HOUSE} - press Check` };
     if (r && !(Number(l.linkedMs) <= r.end_ms + cfg.verifyGraceMs)) return { placed: false, x, why: 'the X account was linked more than 1 hour after the round ended' };
     if (r) {
       const first = firstRunOf(r.id, pk);
@@ -673,8 +690,16 @@ export function createOpr(o = {}) {
     if (a && !a.userId && /no such X account/i.test(String(a.why || ''))) return { ok: false, code: 404, why: 'no such X account', username: name };
     if (!a || !a.userId) { log(`x check for ${player.slice(0, 8)} not answered: ${a && a.why}`); return { ok: false, code: 503, why: 'X could not be checked right now - try again in a minute' }; }
     const userId = String(a.userId), username = String(a.username || name).replace(/^@/, '');
+    const follows = a.member === true ? 1 : a.member === false ? 0 : null;   // kanban #3534: X's answer kept with the link (null: not read - kept as it was)
+    const answer = (extra = {}) => ({ ok: true, x: { username, follows: follows === null ? null : follows === 1 }, ...(follows === 0 ? { follow: `@${username} does not follow @${X_HOUSE} yet - follow, then press Check again`, followUrl: X_HOUSE_URL } : {}), ...extra });
     const mine = xLinkOf(player);
-    if (mine && mine.user_id === userId) { q('UPDATE x_links SET username = ?, checked_ms = ? WHERE pubkey = ?').run(username, now(), player); return { ok: true, x: { username } }; }
+    if (mine && mine.user_id === userId) {
+      const t2 = now();
+      q('UPDATE x_links SET username = ?, checked_ms = ?, follows = COALESCE(?, follows), follows_ms = CASE WHEN ? IS NULL THEN follows_ms ELSE ? END, follows_why = COALESCE(?, follows_why) WHERE pubkey = ?')
+        .run(username, t2, follows, follows, t2, follows === null ? null : String(a.why || ''), player);
+      if (follows !== null && follows !== mine.follows) { log(`x @${username} of ${player.slice(0, 8)}: ${follows ? 'follows' : 'does not follow'} (#3534)`); refreshListsOf(player); }
+      return answer();
+    }
     const held = q('SELECT * FROM x_links WHERE user_id = ?').get(userId);
     const at = now();
     if (held && held.pubkey !== player && playingNow(held.pubkey, at))
@@ -686,13 +711,48 @@ export function createOpr(o = {}) {
         q('UPDATE x_links SET user_id = ?, checked_ms = ? WHERE pubkey = ?').run(`released-${at}-${userId}`, at, held.pubkey);
         log(`x @${username} moved from ${held.pubkey.slice(0, 8)} to ${player.slice(0, 8)} (#3382)`);
       }
-      q(`INSERT INTO x_links (pubkey, user_id, username, linked_ms, checked_ms) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (pubkey) DO UPDATE SET user_id = excluded.user_id, username = excluded.username, linked_ms = excluded.linked_ms, checked_ms = excluded.checked_ms`).run(player, userId, username, at, at);
+      q(`INSERT INTO x_links (pubkey, user_id, username, linked_ms, checked_ms, follows, follows_ms, follows_why) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (pubkey) DO UPDATE SET user_id = excluded.user_id, username = excluded.username, linked_ms = excluded.linked_ms, checked_ms = excluded.checked_ms,
+           follows = excluded.follows, follows_ms = excluded.follows_ms, follows_why = excluded.follows_why`).run(player, userId, username, at, at, follows, follows === null ? null : at, follows === null ? null : String(a.why || ''));
       db.exec('COMMIT');
     } catch (e) { db.exec('ROLLBACK'); if (/UNIQUE/i.test(e.message)) return { ok: false, code: 409, why: 'this X account is already used by another player', username }; throw e; }
-    log(`x @${username} linked to ${player.slice(0, 8)}${mine ? ` (was @${mine.username})` : ''}`);
+    log(`x @${username} linked to ${player.slice(0, 8)}${mine ? ` (was @${mine.username})` : ''}${follows === null ? '' : follows ? ', follows' : ', does not follow'}`);
     refreshListsOf(player);
-    return { ok: true, x: { username } };
+    return answer();
+  }
+  /**
+   * ASK X AGAIN WHETHER THESE LINKS FOLLOW (kanban #3534): each key's link looked up by its name; the answer counts only for the same account id
+   * (a name given away and taken by someone else: does not follow). No answer from X keeps what was there. -> { asked, follows, not, unread, changed }
+   */
+  async function recheckFollows(pubkeys) {
+    const out = { asked: 0, follows: 0, not: 0, unread: 0, changed: [] };
+    if (!xLookup) return out;
+    for (const pk of [...new Set(pubkeys.map(String))]) {
+      const g = xLinkOf(pk); if (!g) continue;
+      out.asked++;
+      let a; try { a = await xLookup(g.username); } catch (e) { a = { userId: null, member: null, why: String(e && e.message || e) }; }
+      let f = null, why = a && a.why;
+      if (a && a.userId && String(a.userId) !== String(g.user_id)) { f = 0; why = 'that X name belongs to another account now'; }
+      else if (a && !a.userId && /no such X account/i.test(String(a.why || ''))) { f = 0; why = 'no X account of that name now'; }
+      else if (a && a.userId && (a.member === true || a.member === false)) f = a.member ? 1 : 0;
+      if (f === null) { out.unread++; continue; }
+      if (f) out.follows++; else out.not++;
+      const t = now(), cur = xLinkOf(pk);
+      if (!cur || cur.user_id !== g.user_id) continue;   // changed while X was asked
+      q('UPDATE x_links SET follows = ?, follows_ms = ?, follows_why = ? WHERE pubkey = ? AND user_id = ?').run(f, t, String(why || ''), pk, g.user_id);
+      if (cur.follows !== f) { out.changed.push(pk); log(`x @${g.username} of ${pk.slice(0, 8)}: ${f ? 'follows' : 'does not follow'} now (#3534 re-check)`); }
+    }
+    return out;
+  }
+  /** EVERY LINK X WAS NEVER ASKED ABOUT (kanban #3534: the links saved before the rule), asked once - the service does it at its start. */
+  const recheckUnchecked = () => recheckFollows(q("SELECT pubkey FROM x_links WHERE follows IS NULL AND user_id NOT LIKE 'released-%' ORDER BY linked_ms").all().map((x) => x.pubkey));
+  /** THE ROUND'S BEST LINKED KEYS, asked again (kanban #3534): the board in order, the first cfg.followTop keys with an X link. */
+  async function recheckRound(r) {
+    const pks = [];
+    for (const b of boardOf(r.id)) { if (pks.length >= cfg.followTop) break; if (xLinkOf(b.player)) pks.push(b.player); }
+    const res = await recheckFollows(pks);
+    if (res.asked) log(`round ${r.id}: X follows re-checked for ${res.asked} (${res.follows} follow, ${res.not} do not, ${res.unread} not read) (#3534)`);
+    return res;
   }
   function publicBoard(round, viewer = null) {
     const r = roundRow(round);
@@ -890,8 +950,8 @@ export function createOpr(o = {}) {
       || q(`SELECT * FROM rounds WHERE start_ms > ? ${vis} ORDER BY start_ms LIMIT 1`).get(t)
       || q(`SELECT * FROM rounds WHERE 1 ${vis} ORDER BY end_ms DESC LIMIT 1`).get() || null;
   }
-  let ticking = false;
-  const alertedDays = new Set();
+  let ticking = false, followJob = null;
+  const alertedDays = new Set(), followAsked = new Map();
   async function tick() {
     if (ticking) return; ticking = true;
     try {
@@ -913,7 +973,18 @@ export function createOpr(o = {}) {
       for (const r of q(`SELECT * FROM rounds WHERE ${LIVE} AND end_ms <= ?`).all(now())) close(r, now());
       // the ceiling of every round that has a level and may still be listed or rebuilt (in the background); a round's lists wait for its own
       for (const r of q("SELECT * FROM rounds WHERE ceiling IS NULL AND seed IS NOT NULL AND state IN ('posting', 'ready', 'closed', 'listed') AND end_ms > ? ORDER BY start_ms DESC LIMIT 3").all(now() - 8 * DAY_MS)) ensureCeiling(r);
-      for (const r of q("SELECT * FROM rounds WHERE state = 'closed' AND end_ms + ? <= ?").all(cfg.verifyGraceMs, now())) { await ensureCeiling(r); makeLists(roundRow(r.id), now()); }
+      for (const r of q("SELECT * FROM rounds WHERE state = 'closed' AND end_ms + ? <= ?").all(cfg.verifyGraceMs, now())) {
+        await ensureCeiling(r);
+        if (followRuleOn(r)) { await recheckRound(r); followAsked.set(r.id, now()); }   // kanban #3534: a fresh X answer for the list
+        makeLists(roundRow(r.id), now());
+      }
+      // kanban #3534: while a list waits for sign-off its best keys are asked again every followEveryMs (in the background; an unfollow loses the place)
+      if (!followJob) for (const r of q("SELECT DISTINCT r.* FROM rounds r JOIN payout_lists l ON l.round = r.id WHERE r.state = 'listed' AND l.state = 'waiting'").all()) {
+        if (!followRuleOn(r) || now() - (followAsked.get(r.id) ?? -Infinity) < cfg.followEveryMs) continue;
+        followAsked.set(r.id, now());
+        followJob = recheckRound(r).then((res) => { if (res.changed.length) refreshLists(r.id); }).catch((e) => log(`follow re-check of ${r.id} failed: ${e.message}`)).finally(() => { followJob = null; });
+        break;
+      }
       q('DELETE FROM auth_seen WHERE at_ms < ?').run(now() - 5 * MIN_MS);
       q('DELETE FROM ln_checks WHERE at_ms < ?').run(now() - 60 * MIN_MS);
     } finally { ticking = false; }
@@ -1070,7 +1141,7 @@ export function createOpr(o = {}) {
         const r = url.searchParams.get('round') ? roundRow(url.searchParams.get('round')) : currentRound();
         const x = xOf(me, r);
         const mine = r ? q('SELECT * FROM attempts WHERE round = ? AND player = ? ORDER BY created_ms').all(r.id, me) : [];
-        return send(200, { ok: true, pubkey: me, name: nameOf(me), rowKey: rowKeyOf(me), lnAddress: storedLn(me), x: x.x ? { username: x.x.username } : null, placed: x.placed, placedWhy: x.placed ? null : x.why,
+        return send(200, { ok: true, pubkey: me, name: nameOf(me), rowKey: rowKeyOf(me), lnAddress: storedLn(me), x: x.x ? { username: x.x.username, follows: x.x.follows } : null, placed: x.placed, placedWhy: x.placed ? null : x.why,
           round: r ? r.id : null, used: r ? usedBy(r.id, me, now()) : 0, maxAttempts: r ? r.max_attempts : cfg.maxAttempts,
           attempts: mine.map((a) => ({ attempt: a.id, state: a.state === 'pending' || a.state === 'awaiting' ? 'pending-entry' : a.state === 'unpaid' ? 'entry-not-paid' : a.state,
             paid: a.paid_ms != null, why: a.why, score: J(a.score), startedMs: a.started_ms })) });
@@ -1094,5 +1165,5 @@ export function createOpr(o = {}) {
   }
 
   return { db, cfg, tick, handle, testRound, ensureDaily, startAttempt, checkAttempt, submit, submitChecked, settle, boardOf, publicBoard, publicRound, currentRound, roundRow: (id) => roundRow(id),
-    potOf: (id) => potOf(roundRow(id)), listsOf, decideList, rejectRow, disqualify, review, payable, claimBounty, saveLnAddress, saveX, xOf, postFields: (id) => postFields(roundRow(id)), close: () => db.close() };
+    potOf: (id) => potOf(roundRow(id)), listsOf, decideList, rejectRow, disqualify, review, payable, claimBounty, saveLnAddress, saveX, xOf, recheckFollows, recheckRound, recheckUnchecked, postFields: (id) => postFields(roundRow(id)), close: () => db.close() };
 }

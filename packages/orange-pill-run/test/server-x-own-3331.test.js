@@ -25,7 +25,7 @@ test('#3331 a handle linked to a feedback key in the Season 2 book saves for a f
   assert.equal(w.s2.claimName(feedbackKey.pk, 'x', { userId: '111', username: 'georgeprime' }).ok, true);
   w.s2.record(feedbackKey.pk, 'x', { member: true, nowMs: w.clock.now() });
   const r = await w.opr.saveX(game.pk, '@GeorgePrime');
-  assert.deepEqual(r, { ok: true, x: { username: 'GeorgePrime' } });
+  assert.deepEqual(r, { ok: true, x: { username: 'GeorgePrime', follows: true } });
   assert.equal(w.s2.links(game.pk).length, 0, 'nothing written into the bug bounty book');
   assert.equal(w.s2.links(feedbackKey.pk)[0].userId, '111', 'the feedback link stays as it was');
   const x = w.opr.xOf(game.pk);
@@ -104,8 +104,8 @@ test('#3331 POST /x over HTTP: signed in, the answers as the page reads them', a
       return [r.status, await r.json()]; };
     assert.deepEqual(await post({ x: 'nosuch' }), [404, { ok: false, why: 'no such X account', username: 'nosuch' }]);
     gap(w);
-    assert.deepEqual(await post({ x: '@georgeprime' }), [200, { ok: true, x: { username: 'georgeprime' } }]);
+    assert.deepEqual(await post({ x: '@georgeprime' }), [200, { ok: true, x: { username: 'georgeprime', follows: true } }]);
     const me = await fetch(`http://127.0.0.1:${port}/api/opr/me`, { headers: { authorization: signIn(kp, { path: '/me', createdAt: Math.floor(w.clock.now() / 1000) }) } }).then((r) => r.json());
-    assert.deepEqual(me.x, { username: 'georgeprime' }); assert.equal(me.placed, true);
+    assert.deepEqual(me.x, { username: 'georgeprime', follows: true }); assert.equal(me.placed, true);
   } finally { srv.close(); }
 });

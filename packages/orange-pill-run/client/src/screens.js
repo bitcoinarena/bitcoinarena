@@ -47,8 +47,12 @@ export function xLine(me, sats = PRIZE_SATS) {
   const ok = hasX && hasLn;
   if (ok) parts.push({ text: "- you can win", ok: true, sep: " " });
   const text = parts.map((x, i) => (i ? (x.sep || " · ") : "") + x.text).join("");
-  return { ok, text, parts, link: !me.x, ln: !hasLn };
+  // kanban #3534: an X account that does not follow @bitcoinarena_io (or was not asked yet) keeps the field, for Check again, with the follow link
+  return { ok, text, parts, link: !me.x || needsFollow(me), follow: needsFollow(me), ln: !hasLn };
 }
+/** FOLLOWING @bitcoinarena_io IS REQUIRED (kanban #3534, owner 2026-11-23): the account, the link, and whether /me says this player still has to. */
+export const X_HOUSE = "bitcoinarena_io", FOLLOW_URL = "https://x.com/bitcoinarena_io";
+export function needsFollow(me) { return !!(me && me.x && !me.placed && (me.x.follows === false || /follow/i.test(String(me.placedWhy || "")))); }
 
 /**
  * THE RUNS THIS PLAYER OPENED IN THE ROUND (#3251): GET /me's count, and never fewer than the runs it lists plus the ones this tab opened since
@@ -159,7 +163,7 @@ export function prizeLine(round, nowMs = Date.now()) {
   if (!round) return null;
   const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
   // short (owner 2026-11-22, iPhone): two lines at most on a 375 px phone
-  const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "needs X + Lightning address";
+  const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "needs X (follow @" + X_HOUSE + ") + Lightning address";   // #3534
   const promo = promoLine(round, nowMs);
   if (!round.test || nowMs >= FIRST_DAILY_MS) return promo ? { text, small, promo } : { text, small };
   return promo ? { text: "From " + FIRST_DAILY_WORDS + ": " + text, small, promo } : { text: "From " + FIRST_DAILY_WORDS + ": " + text, small };
@@ -253,12 +257,13 @@ export function xHandleOf(text) {
   return /^[A-Za-z0-9_]{1,15}$/.test(n) ? n : null;
 }
 /** What the X field says under it while typed: { text, kind, canSave }. stored: GET /me's x.username. */
-export function xFieldModel(text, stored) {
+// recheck (kanban #3534): the stored account does not follow yet - an empty field or the same name checks it again
+export function xFieldModel(text, stored, recheck = false) {
   const raw = String(text == null ? "" : text).trim();
-  if (!raw) return { text: "", kind: "", canSave: false };
+  if (!raw) return { text: "", kind: "", canSave: !!(recheck && stored) };
   const n = xHandleOf(raw);
   if (!n) return { text: "Not an X username", kind: "bad", canSave: false };
-  if (stored && n.toLowerCase() === String(stored).toLowerCase()) return { text: "✓ saved", kind: "ok", canSave: false };
+  if (stored && n.toLowerCase() === String(stored).toLowerCase()) return recheck ? { text: "", kind: "", canSave: true } : { text: "✓ saved", kind: "ok", canSave: false };
   return { text: "", kind: "", canSave: true };
 }
 /**
@@ -268,6 +273,8 @@ export function xFieldModel(text, stored) {
 export function xSaveAnswer(j, typed) {
   const at = "@" + (xHandleOf(typed) || String(typed || "").trim());
   if (!j || typeof j !== "object") return { ok: false, kind: "bad", text: "The check did not answer - try again" };
+  // kanban #3534: saved, but not following @bitcoinarena_io yet - the service's words, with the follow link
+  if (j.ok === true && j.x && j.x.follows === false) return { ok: true, kind: "bad", follow: true, text: String(j.follow || ("@" + j.x.username + " does not follow @" + X_HOUSE + " yet - follow, then press Check again")) };
   if (j.ok === true) return { ok: true, kind: "ok", text: "✓ saved @" + ((j.x && j.x.username) || xHandleOf(typed)) };
   const why = String(j.why || "");
   if (/no such X account|not an X username/i.test(why)) return { ok: false, kind: "bad", text: "No X account " + at + " - check the spelling. Not saved." };

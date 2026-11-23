@@ -39,7 +39,7 @@ test("#3331 the server's answer: saved when found, a clear message when the acco
   assert.equal(xSaveAnswer({ ok: false, why: "X could not be checked right now - try again in a minute" }, "dave").text, "X could not be checked right now - try again in a minute - not saved");
   assert.equal(xSaveAnswer(null, "dave").ok, false);
   const scr = readFileSync(new URL("../client/src/screens.js", import.meta.url), "utf8"), main = readFileSync(new URL("../client/src/main.js", import.meta.url), "utf8");
-  assert.equal(/report key|follow @|feedback\/social|socialUrl/i.test(scr + main), false, "no report key, no follow, no bug bounty door");
+  assert.equal(/report key|feedback\/social|socialUrl/i.test(scr + main), false, "no report key, no bug bounty door");   // #3534 (owner 2026-11-23): following @bitcoinarena_io is required now
   assert.match(main, /api\.post\("\/x", \{ x: typed \}\)/);
 });
 
@@ -51,4 +51,20 @@ test("#3328 the game never opens the page's My feedback dialog; the fields are e
   assert.equal(/placeholder="you@wallet.com"/.test(page), false);
   for (const p of ["i", "r"]) assert.match(page, new RegExp(`id="${p}XfIn"[^>]*placeholder="@yourXhandle"`));
   assert.equal((page.match(/>Check<\/button>/g) || []).length, 2);
+});
+
+test("#3534 not following @bitcoinarena_io: the save answer says so with the follow link, the field stays for Check again, the rules say it", async () => {
+  const { xSaveAnswer, xFieldModel, xLine, needsFollow, prizeLine } = await import("../client/src/screens.js");
+  const { RULES } = await import("../client/src/rules.js");
+  const a = xSaveAnswer({ ok: true, x: { username: "alice", follows: false }, follow: "@alice does not follow @bitcoinarena_io yet - follow, then press Check again" }, "alice");
+  assert.deepEqual(a, { ok: true, kind: "bad", follow: true, text: "@alice does not follow @bitcoinarena_io yet - follow, then press Check again" });
+  assert.equal(xSaveAnswer({ ok: true, x: { username: "alice", follows: true } }, "alice").text, "✓ saved @alice");
+  const me = { x: { username: "alice", follows: false }, placed: false, placedWhy: "@alice does not follow @bitcoinarena_io yet - follow, then press Check again", lnAddress: "a@b.com" };
+  assert.equal(needsFollow(me), true); assert.equal(xLine(me).link, true, "the field stays");
+  assert.equal(xFieldModel("", "alice", true).canSave, true, "an empty field checks the saved account again");
+  assert.equal(xFieldModel("@alice", "alice", true).canSave, true);
+  assert.equal(xFieldModel("@alice", "alice", false).canSave, false);
+  assert.equal(needsFollow({ x: { username: "alice", follows: true }, placed: true }), false);
+  assert.equal(prizeLine({ bountySats: 2500, entrySats: 0 }, Date.UTC(2026, 10, 24)).small, "needs X (follow @bitcoinarena_io) + Lightning address");
+  assert.match(RULES.find((r) => r[0] === "X account")[1], /follow @bitcoinarena_io on X/);
 });

@@ -25,7 +25,7 @@ test('#3382 the key holding the account has not played the running round: the ac
   assert.equal((await save(w, a, 'alice')).ok, true);
   const t = w.clock.now() + 16000;
   const m = await save(w, b, '@Alice');
-  assert.deepEqual(m, { ok: true, x: { username: 'Alice' } });
+  assert.deepEqual(m, { ok: true, x: { username: 'Alice', follows: true } });
   assert.equal(w.opr.xOf(a.pk).x, null); assert.equal(w.opr.xOf(a.pk).why, 'no X account linked');
   assert.equal(w.opr.xOf(b.pk, r).placed, true);
   assert.equal(row(w, b.pk).linked_ms, t);

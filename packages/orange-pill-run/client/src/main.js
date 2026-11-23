@@ -13,7 +13,7 @@ import { resultOf, validateLog } from "../../src/sim/replay.js";
 import { fit, drawWorld, view, usd } from "./render.js";
 import { makeApi } from "./api.js";
 import { createEntry, entryOf } from "./entry.js";
-import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf } from "./screens.js";
+import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, X_HOUSE, FOLLOW_URL } from "./screens.js";
 import { RULES, RULES_TITLE } from "./rules.js";
 import { makeAudio, snapWorld, worldEvents } from "./audio.js";
 import { makeClock, snapMovers, drawBetween } from "./frameloop.js";
@@ -197,15 +197,23 @@ function paintWallet() {
 }
 let introTop = 10, introFitH = 0;
 // the X / Lightning status (#3251): each part green or red as it stands
+// kanban #3534: the follow link to @bitcoinarena_io (a new tab)
+function followLink(label = "Follow @" + X_HOUSE) { const a = document.createElement("a"); a.href = FOLLOW_URL; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = label; a.className = "follow"; return a; }
 function paintStatus(el, st) {
   el.textContent = ""; if (!st) return;
   st.parts.forEach((x, i) => { if (i) el.append(x.sep || " · "); const sp = document.createElement("span"); sp.className = x.ok ? "st-ok" : "st-bad"; sp.textContent = x.text; el.append(sp); });
+}
+// the prize line's "needs X (follow @bitcoinarena_io) + ..." with the handle as the follow link (#3534)
+function paintSmall(el, text) {
+  el.textContent = ""; const at = "@" + X_HOUSE, i = text.indexOf(at);
+  if (i < 0) { el.textContent = text; return; }
+  el.append(text.slice(0, i), followLink(at), text.slice(i + at.length));
 }
 function paintIntro() {
   const m = introModel({ round: S.round, me: S.me, board: S.board, wallet: wallet(), nowMs: Date.now(), loading: !S.loaded, opened: openedIn(), top: introTop });
   $("iLine").textContent = m.line;
   $("iBounty").hidden = true;
-  $("iPrize").hidden = !m.prize; $("iPrizeText").textContent = m.prize ? m.prize.text : ""; $("iPrizeSmall").textContent = m.prize ? " " + m.prize.small : "";
+  $("iPrize").hidden = !m.prize; $("iPrizeText").textContent = m.prize ? m.prize.text : ""; paintSmall($("iPrizeSmall"), m.prize ? " " + m.prize.small : "");
   $("iPromo").hidden = !(m.prize && m.prize.promo); $("iPromo").textContent = (m.prize && m.prize.promo) || "";
   const dl = $("iFacts"); dl.textContent = ""; dl.hidden = !m.facts;
   for (const [k, v, cls] of m.facts || []) { const d = document.createElement("div"); if (cls) d.className = cls; const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; d.append(dt, dd); dl.append(d); }
@@ -383,20 +391,23 @@ function paintXf(p, show = true) {
   const form = $(p + "Xf"), inp = $(p + "XfIn"), btn = $(p + "XfBtn"), why = $(p + "XfWhy"), st = XF[p];
   const on = show && !!api && !!S.me;
   form.hidden = !on; if (!on) { why.hidden = true; return; }
-  const stored = (S.me.x && S.me.x.username) || "";
-  const m = st.msg || xFieldModel(inp.value, stored);
+  const stored = (S.me.x && S.me.x.username) || "", recheck = needsFollow(S.me);   // #3534: Check again while it does not follow
+  // #3534: the service's reason while nothing else is said (does not follow / not checked yet), with the follow link
+  const m = st.msg || (recheck && !inp.value.trim() ? { text: S.me.placedWhy || ("@" + stored + " does not follow @" + X_HOUSE + " yet - follow, then press Check again"), kind: "bad", follow: true } : xFieldModel(inp.value, stored, recheck));
   why.textContent = m.text; why.className = "lnwhy " + (m.kind || ""); why.hidden = !m.text;
-  if (!btn.dataset.busy) btn.disabled = !xFieldModel(inp.value, stored).canSave;
+  if (m.follow && m.text) why.append(" ", followLink());
+  inp.placeholder = recheck && stored ? "@" + stored : "@yourXhandle";
+  if (!btn.dataset.busy) btn.disabled = !xFieldModel(inp.value, stored, recheck).canSave;
 }
 async function saveX(p) {
   const inp = $(p + "XfIn"), btn = $(p + "XfBtn"), st = XF[p];
   if (btn.disabled || btn.dataset.busy) return;
-  const typed = inp.value.trim();
+  const typed = inp.value.trim() || (needsFollow(S.me) && S.me.x.username) || "";   // #3534: an empty field checks the saved account again
   btn.dataset.busy = "1"; btn.disabled = true; st.msg = { text: "Checking @" + (xHandleOf(typed) || typed) + " on X …", kind: "" }; paintXf(p);
   const j = await api.post("/x", { x: typed }).catch(() => null);
   const a = xSaveAnswer(j, typed);
   delete btn.dataset.busy;
-  st.msg = { text: a.text, kind: a.kind }; st.dirty = !a.ok;
+  st.msg = { text: a.text, kind: a.kind, follow: !!a.follow }; st.dirty = !a.ok;
   if (a.ok) { const m = await api.getSigned("/me" + (S.round ? "?round=" + encodeURIComponent(S.round.id) : "")).catch(() => null); if (m && m.ok) S.me = m; inp.value = ""; st.dirty = false; }
   paintXf(p); paintIntro(); if (!$("result").hidden && resultArgs) paintResult(resultArgs);
   HOOKS.x = { ok: a.ok, text: a.text };

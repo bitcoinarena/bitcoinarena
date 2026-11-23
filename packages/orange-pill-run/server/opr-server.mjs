@@ -58,3 +58,6 @@ createServer((req, res) => { opr.handle(req, res); }).listen(port, '127.0.0.1', 
 const tick = () => opr.tick().catch((e) => log(`tick failed: ${e.stack || e.message}`));
 tick();
 setInterval(tick, Number(env.OPR_TICK_MS || 15000));
+// kanban #3534: the links saved before following was required are asked once at the start (in the background, X's calls spaced)
+if (xLookup) opr.recheckUnchecked().then((r) => { if (r.asked) log(`X follows of the links never asked: ${r.asked} asked, ${r.follows} follow, ${r.not} do not, ${r.unread} not read (#3534)`); })
+  .catch((e) => log(`X follows re-check failed: ${e.message}`));
