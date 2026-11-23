@@ -15,7 +15,7 @@ const records = { recordOf: (f) => (f === FID ? { record: { federationId: FED, g
 test('#3340 a liquidation row names its phase on the tip, ended past the remainder block, and why no claim door is named', () => {
   const l = createLiquidations({ records, clocks: TESTNET_CLOCKS, verify: () => false });
   const [x] = l.list({ tip: 885 });
-  assert.deepEqual([x.liquidatesAt, x.claimWindowCloses, x.lateClaimsUntil, x.remainderSplitsAt], [892, 901, 1024, 1024]);
+  assert.deepEqual([x.liquidatesAt, x.claimWindowCloses, x.lateClaimsUntil, x.remainderSplitsAt], [892, 901, 1023, 1024]);
   const at = (tip) => l.list({ tip })[0].phase;
   assert.deepEqual([at(885), at(892), at(900), at(901), at(1023), at(1024), at(5000)],
     ['halted', 'claim-window', 'claim-window', 'late-claims', 'late-claims', 'ended', 'ended']);

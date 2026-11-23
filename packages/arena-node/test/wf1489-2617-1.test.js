@@ -88,7 +88,7 @@ test('#2617 the report: a lying first seat (halt 800, short clocks, unsigned rec
   console.log('  MEASURED #2617 liar first:', JSON.stringify({ haltHeight: liq.haltHeight, closes: liq.claimWindowCloses, late: liq.lateClaimsUntil, agree: `${liq.seatsAgree}/${liq.seats}`,
     signers: liq.haltSigners, pays: got.pays, remainderTxid: got.v.remainderTxid || null }));
   assert.deepEqual(got.taken.map((t) => t.ok), [true, true]);
-  assert.deepEqual([liq.haltHeight, liq.liquidatesAt, liq.claimWindowCloses, liq.lateClaimsUntil], [1000, 1010, 1020, 1100], 'the clocks from the verified record, computed here');
+  assert.deepEqual([liq.haltHeight, liq.liquidatesAt, liq.claimWindowCloses, liq.lateClaimsUntil], [1000, 1010, 1020, 1099], 'the clocks from the verified record, computed here');
   assert.equal(liq.record.guardians.length, 7);
   assert.deepEqual(got.pays, [`${P1}:4000000,${P2}:3000000`], 'both holders at face, nothing else');
   assert.equal(got.v.remainderTxid, undefined, 'the remainder waits for 1100');

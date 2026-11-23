@@ -66,6 +66,9 @@ function splitPart({ claims, payouts, federationOf, feesOf, part, reserveKeyOf =
     const spendableMsat = poolMsat - inputFeesMsat;
     const unpaid = [];
     let paying = payouts.filter((p) => p.msat > 0n);
+    // A LIGHTNING SEND IS ONE INVOICE OF ONE AMOUNT, never split across federations - checked before any part is dropped below (kanban #2934,
+    // feedback #257: a send whose part was too small here was dropped first and the round passed the guard)
+    if (byFed.size > 1 && paying.some((p) => p.sent)) return refuse(`a ${part} payout is a Lightning send of one amount, and the round's locks are in ${byFed.size} federations`);
     // from 33 a fee part its input fees eat whole is the same hole (below: not claimed), not a refusal of the round's whole settlement
     if (unreachedStay && part === 'fee' && spendableMsat <= 0n) {
       holes.push({ federation: fid, poolMsat, inputFeesMsat, unpaid,

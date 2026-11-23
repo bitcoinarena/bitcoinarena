@@ -113,7 +113,7 @@ test('a late note is still paid, and the remainder cannot be split before the ta
   const when = liquidationSchedule({ haltHeight: halt });
   assert.equal(when.claimWindowOpens, halt + 288, 'claims open when the liquidation does, abandon_blocks after the halt');
   assert.equal(when.claimWindowCloses, halt + 288 + 216, 'and run claim_blocks from there');
-  assert.equal(when.lateClaimsUntil, halt + 4032, 'late claims run to four weeks after the halt');
+  assert.equal(when.lateClaimsUntil, halt + 4031, 'late claims run to the block before four weeks after the halt (kanban #2934: never at the height the remainder splits)');
   assert.equal(when.remainderSplitsAt, halt + 4032);
 
   // THE WHOLE POINT: the window closing is NOT when the nodes get paid.

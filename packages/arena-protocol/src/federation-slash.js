@@ -164,7 +164,9 @@ export function liquidationSchedule({ haltHeight, clocks = MAINNET_CLOCKS }) {
     ok: true,
     claimWindowOpens: haltHeight + clocks.abandonBlocks,
     claimWindowCloses: haltHeight + clocks.abandonBlocks + clocks.claimBlocks,
-    lateClaimsUntil: haltHeight + clocks.drainBlocks,
+    // ONE BOUNDARY (kanban #2934, feedback #256): late notes were taken AT halt + drain_blocks, the height the remainder may split at - §23A.5
+    // orders late notes first. The last late-claim height is the block before the split
+    lateClaimsUntil: haltHeight + clocks.drainBlocks - 1,
     remainderSplitsAt: haltHeight + clocks.drainBlocks,
   };
 }

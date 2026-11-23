@@ -99,3 +99,12 @@ test('refused by name: a lock in no federation, a federation without a fee rule,
   if (first) assert.match(splitByFederation(sent, { roundId: RID, federationOf, feesOf: () => NO_FEES }).why, /Lightning send of one amount/);
   assert.equal(splitByFederation({ ok: true, nothing: true }, { roundId: RID, federationOf, feesOf: () => NO_FEES }).settlements.length, 0);
 });
+
+test('#2934 a Lightning send in a round over several federations is refused even when its part is too small to pay and dropped (feedback #257)', () => {
+  const FEES = { ppm: 1000n, baseMsat: 1000n };
+  const plan = planWith(FEES);
+  const q = plan.payouts.find((p) => p.kind === 'qualifier');
+  const tiny = { ...q, pubkey: new Uint8Array(32).fill(0x5e), payoutPk: new Uint8Array(33).fill(0x02), msat: 1n, sent: { paymentHash: 'aa' } };
+  const sent = { ...plan, payouts: [...plan.payouts, tiny] };
+  assert.match(splitByFederation(sent, { roundId: RID, federationOf, feesOf: () => FEES }).why || 'settled', /Lightning send of one amount/);
+});
