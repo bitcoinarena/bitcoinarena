@@ -12,6 +12,7 @@
 // the round fits the manifest (run length, rank curve, min_score). Nothing here imports a game: `replay.js` drives the
 // adapter it is handed (start, eventsOf, step, stateHash, result, picture, runTicksFits).
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { sharedWorldOf } from '../../arena-protocol/src/known-game.js';
 import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf, payoutRuleForRound } from '../../arena-protocol/src/manifest.js';
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
@@ -24,8 +25,19 @@ import { sandboxFor, sandboxChecked } from './core-sandbox.js';
  * the reason, and the node does not start on it. A map already made by this function is handed back as it is. None
  * given hosts none (§0A.4: nothing is implied; the reference launcher hands nextblock).
  */
-export function hostedPlugins(registrations = [], { verify = verifyEd25519, log = (l) => console.warn(l) } = {}) {
+export function hostedPlugins(registrations = [], { verify = verifyEd25519, log = (l) => console.warn(l), donors = [] } = {}) {
   if (registrations instanceof Map) return registrations;
+  // A PACKAGE'S CONFIGS GET BACK WHAT THE PACKAGE FORMAT DROPS (kanban #3371, audit hosting a6-3-1): a version taken from a package (owner install,
+  // autoUpdate) has every config as {} (#1814: only the signed manifest's hashes), so Next Block's worldShared and de2f263d's committeeBeforeMs
+  // were lost and the seat replayed shared-world rounds with each player's own seed. An empty config takes the object another registration
+  // (or `donors`: what the seat already hosts) gives the same core hash and config hash; and below, the configs the protocol's known-game table
+  // plays as one world (sharedWorldOf, what the player's page reads) are shared here too
+  const donated = new Map();
+  const coresOf = (p) => (p && p.cores instanceof Map ? [...p.cores] : []);
+  for (const p of [...registrations, ...donors]) for (const [ch, c] of coresOf(p))
+    for (const [h, cfg] of (c && c.configs) || []) if (cfg && typeof cfg === 'object' && Object.keys(cfg).length && !donated.has(`${ch}|${h}`)) donated.set(`${ch}|${h}`, cfg);
+  for (const p of registrations) for (const [ch, c] of coresOf(p))
+    for (const [h, cfg] of [...((c && c.configs) || [])]) if (cfg && typeof cfg === 'object' && !Object.keys(cfg).length && donated.has(`${ch}|${h}`)) c.configs.set(h, donated.get(`${ch}|${h}`));
   const byId = new Map(registrations.map((p) => { try { return [toHex(p.gameId), p.manifest]; } catch { return [null, null]; } }));
   // AN INSTALLED UPDATE CARRIES ITS ANCESTORS' MANIFESTS: its parent stands even when no longer hosted
   for (const p of registrations) for (const a of (p && p.ancestors) || []) { try { const k = toHex(gameIdOf(a)); if (!byId.has(k)) byId.set(k, a); } catch { /* not a manifest */ } }
@@ -70,7 +82,9 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519, log 
     // `replayPage`: the game's own replay page, when it has one - the engine serves it, never draws a game
     // `sharedWorld`: the configs the game says make one world per round (a config's `worldShared`), which the engine's
     // seed asks of the round's game instead of a list of its own
-    const sharedWorld = [...new Set([...p.cores.values()].flatMap((c) => [...c.configs].filter(([, cfg]) => cfg && cfg.worldShared).map(([h]) => h)))];
+    const installed = new Set([...p.cores.values()].flatMap((c) => [...c.configs.keys()]));
+    const sharedWorld = [...new Set([...[...p.cores.values()].flatMap((c) => [...c.configs].filter(([, cfg]) => cfg && cfg.worldShared).map(([h]) => h)),
+      ...sharedWorldOf(stands.gameId).filter((h) => installed.has(h))])];   // kanban #3371
     out.set(id, Object.freeze({ name: p.name || p.manifest.gameName, gameId: stands.gameId, manifest: p.manifest, cores: p.cores,
       replayPage: p.replayPage || null, sharedWorld: Object.freeze(sharedWorld),
       // the name a player knows the game by and its square icon (an SVG file), when it gives them

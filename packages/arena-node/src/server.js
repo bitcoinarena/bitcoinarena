@@ -1638,7 +1638,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     }
     // a package this seat cannot host is refused, never thrown out of an autoUpdate sweep (kanban #1814)
     let entry;
-    try { entry = hostedPlugins([reg]).get(game); } catch (e) { return { ok: false, status: 422, checked: true, why: `kept, but it cannot be hosted: ${e.message}` }; }
+    // kanban #3371: a package's empty configs take the objects the seat already hosts for the same core and config
+    try { entry = hostedPlugins([reg], { donors: [...hosted.values()] }).get(game); } catch (e) { return { ok: false, status: 422, checked: true, why: `kept, but it cannot be hosted: ${e.message}` }; }
     hosted.set(game, entry);
     noteNextblockGames(new Map([[game, entry]]));   // kanban #2991
     if (replaces !== null) superseded.set(replaces, game);
