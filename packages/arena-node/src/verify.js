@@ -2103,7 +2103,7 @@ export class Verifier {
       } catch { continue; }                  // a peer that is down is not a fault
       const tried = new Set(this.round.postings(roundIdBytes, entryIdBytes).map((x) => hex(x.signerNodePubkey)));
       for (let at = 0; at + SIGNED_POSTING_BYTES <= body.length; at += SIGNED_POSTING_BYTES)
-        this.#keepPeerPosting(roundIdBytes, entryIdBytes, body.slice(at, at + SIGNED_POSTING_BYTES), playerPubkey, signerNodes, tried);
+        this.#keepPeerPosting(roundIdBytes, entryIdBytes, body.slice(at, at + SIGNED_POSTING_BYTES), playerPubkey, signerNodes, tried, transcriptHash);
     }
 
     const count = transcriptIsPublished({
@@ -2778,7 +2778,7 @@ export class Verifier {
   }
 
   /** One posting from a peer: about this round and player, from a joined signer node, and signed by it. */
-  #keepPeerPosting(roundIdBytes, entryIdBytes, record, playerPubkey, signerNodes, tried = null) {
+  #keepPeerPosting(roundIdBytes, entryIdBytes, record, playerPubkey, signerNodes, tried = null, transcriptHash = null) {
     let p, signature;
     try {
       const split = splitSignedPosting(record);
@@ -2786,6 +2786,10 @@ export class Verifier {
       p = decodeTranscriptPosting(split.body);
     } catch { return false; }
     if (hex(p.roundId) !== hex(roundIdBytes) || hex(p.playerPubkey) !== hex(playerPubkey)) return false;
+    // AND IT POSTS THIS ENTRY'S AGREED TRANSCRIPT (kanban #3361, audit gossip-a6-2-1, high): a posting names no entry, so one seat answered
+    // GET /postings for E2 with the honest postings of the same player's E1 - they filled E2's slots for good (INSERT OR IGNORE) and the
+    // agreed run read 'not published', VOID. A posting of another transcript is not kept under this entry.
+    if (transcriptHash && hex(p.transcriptHash) !== hex(transcriptHash)) return false;
     if (!signerNodes.some((s) => hex(s) === hex(p.signerNodePubkey))) return false;
     // kanban #2729: one signature check per signer key and answer, none for a key held already
     if (tried) { if (tried.has(hex(p.signerNodePubkey))) return false; tried.add(hex(p.signerNodePubkey)); }
