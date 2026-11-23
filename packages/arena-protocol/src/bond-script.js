@@ -93,6 +93,47 @@ export const BOND_MATURITY_OFFSET = Object.freeze({ mainnet: 4320, testnet4: 144
  */
 export const BOND_V1_READABLE = Object.freeze(['regtest', 'testnet4']);
 
+/**
+ * WHICH TEMPLATE-1 BONDS STILL COUNT (kanban #3548, feedback #404). Template 1's recovery leaf carries genesis' maturity
+ * (testnet4: 100), so a template-1 bond is withdrawable the block it confirms: a 50,000-sat one confirmed at 162,909 was
+ * counted at census 162,912 and its recovery leaf spent at 162,920. On testnet4 template 1 is read for the seven legacy
+ * genesis bonds only: by outpoint, or by a confirmation before the block their template-2 re-bonds spent them in (156,038,
+ * read off the chain 2026-11-23). Any other template-1 bond is not stake. Regtest keeps reading template 1 (its fixtures).
+ */
+export const BOND_V1_BEFORE = Object.freeze({ testnet4: 156038 });
+
+/** The seven legacy testnet4 genesis bonds (display txid:vout), all spent by their template-2 re-bonds at 156,038. */
+export const TESTNET4_LEGACY_V1_BONDS = Object.freeze([
+  '0c82db5990331a62f91f5cd10678a1d51b1dacafeea3ae6adebc2b803689b99d:0',
+  '42a50fb691d2c204f4308710f54cca3742a55e1434ddebaf454511d47e499326:0',
+  '696dff16f0988f6a3427be2332aa18b84edaf206f22c256e8e60aefbac520d94:0',
+  '60924213c3d11edce374c546438d50df2e37638e8555be5efe8a8940b5e29d57:0',
+  '0d0fb9b063769da06a81d500c302432b5ff92901c2ed196a137a7f73f293f842:0',
+  '2a5e6afe08c8e7d55c39b7bcd0d17c41083a0d7eb1d44a12685c4e9fef472de9:0',
+  '565a7ba30d89ba5be935151782ea4a52c23ca653c861314af4fb41ab69f27806:0',
+]);
+
+const hexOf = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+/** A txid as given (internal-order bytes, or display hex) and its vout, in TESTNET4_LEGACY_V1_BONDS' form. */
+function legacyOutpoint(outpoint) {
+  if (!outpoint || !Number.isInteger(outpoint.vout)) return null;
+  const t = outpoint.txid;
+  const display = t instanceof Uint8Array && t.length === 32 ? hexOf(Uint8Array.from(t).reverse())
+    : typeof t === 'string' && /^[0-9a-f]{64}$/i.test(t) ? t.toLowerCase() : null;
+  return display ? `${display}:${outpoint.vout}` : null;
+}
+
+/** Whether a template-1 bond counts on `network`: everywhere it is read without a cutoff, else a listed outpoint or an early one. */
+export function legacyV1Counts(network, confirmationHeight, outpoint) {
+  const before = BOND_V1_BEFORE[network];
+  if (before === undefined) return { ok: true };
+  const op = legacyOutpoint(outpoint);
+  if (op && network === 'testnet4' && TESTNET4_LEGACY_V1_BONDS.includes(op)) return { ok: true };
+  if (Number.isInteger(confirmationHeight) && confirmationHeight < before) return { ok: true };
+  return { ok: false, why: `bond script template 1 is counted on ${network} only for the legacy genesis bonds (confirmed before ${before}): `
+    + `its recovery leaf carries genesis' maturity, so ${Number.isInteger(confirmationHeight) ? `a bond confirmed at ${confirmationHeight}` : 'that bond'} is withdrawable at once` };
+}
+
 /** BIP-65: a CLTV argument at or above this is a time, not a height. */
 const LOCKTIME_THRESHOLD = 500000000;
 
@@ -122,10 +163,12 @@ export function bondMaturityOf(advert, { genesisMaturity, network } = {}) {
 /**
  * WHETHER A TEMPLATE-2 BOND'S MATURITY IS FAR ENOUGH FROM ITS CONFIRMATION (5A.3B): at least `confirmationHeight` plus
  * this network's offset. A later height is the node's own choice and only keeps its money longer; an earlier one is a
- * bond the node can take back before the network's maturity, and is not counted. Template 1 answers ok where it is
- * still read (`bondMaturityOf` refuses it elsewhere).
+ * bond the node can take back before the network's maturity, and is not counted. Template 1 answers `legacyV1Counts`
+ * (kanban #3548: on testnet4 only the legacy genesis bonds; `bondMaturityOf` refuses it on mainnet). `outpoint` is
+ * { txid, vout }, the txid as internal-order bytes or display hex.
  */
-export function maturityStands(advert, confirmationHeight, network) {
+export function maturityStands(advert, confirmationHeight, network, outpoint) {
+  if (advert && advert.bondScriptTemplateVersion === BOND_SCRIPT_TEMPLATE_VERSION) return legacyV1Counts(network, confirmationHeight, outpoint);
   if (!advert || advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2) return { ok: true };
   const offset = BOND_MATURITY_OFFSET[network];
   if (!Number.isInteger(offset)) return { ok: false, why: `no bond maturity offset is set for ${network}` };

@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import {
   bondOutputKey, bondInternalKey, bondMaturityOf, maturityStands, maturityHeightFor,
-  BOND_MATURITY_OFFSET, BOND_TEMPLATE_V2,
+  BOND_MATURITY_OFFSET, BOND_TEMPLATE_V2, BOND_V1_BEFORE, TESTNET4_LEGACY_V1_BONDS,
 } from '../../arena-protocol/src/bond-script.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
@@ -102,7 +102,34 @@ test('on testnet4 the maturity is the confirmation plus 144, and one block short
   assert.equal(maturityStands(v2(160320 - 1), 156000, 'mainnet').ok, false);
   assert.equal(maturityStands(v2(156000 + 4320), 156000, 'mainnet').ok, true);
   assert.match(maturityStands(v2(156144), undefined, 'testnet4').why, /no confirmation height is known/);
-  assert.equal(maturityStands({ bondScriptTemplateVersion: 1 }, 156000, 'testnet4').ok, true, 'template 1 is not measured here');
+  assert.equal(maturityStands({ bondScriptTemplateVersion: 1 }, 156000, 'testnet4').ok, true, 'a legacy-era template 1 is not measured here');
+});
+
+// A NEW TEMPLATE-1 BOND ON TESTNET4 IS NO STAKE (kanban #3548, feedback #404): its recovery leaf carries genesis' 100, so it
+// is spendable the block it confirms. A 50,000-sat template-1 bond confirmed at 162,909 was listed as serving at census 162,912
+// and its recovery leaf spent at 162,920. Template 1 is read on testnet4 only for the seven legacy genesis bonds, all
+// confirmed before 156,038 - the block their template-2 re-bonds spent them in.
+test('#3548 on testnet4 a template-1 bond confirmed at or after the cutoff is not counted; the legacy ones still are', () => {
+  const v1 = { bondScriptTemplateVersion: 1 };
+  assert.equal(BOND_V1_BEFORE.testnet4, 156038);
+  const late = maturityStands(v1, 162909, 'testnet4');
+  assert.equal(late.ok, false, 'the report\'s bond, confirmed 162,909');
+  assert.match(late.why, /template 1 is counted on testnet4 only for the legacy genesis bonds/);
+  assert.equal(maturityStands(v1, 156038, 'testnet4').ok, false, 'the cutoff block itself');
+  assert.equal(maturityStands(v1, 156037, 'testnet4').ok, true, 'a bond of the legacy era');
+  assert.equal(maturityStands(v1, undefined, 'testnet4').ok, false, 'no height known, no legacy outpoint named');
+  // THE SEVEN, BY OUTPOINT: counted with or without a height
+  assert.equal(TESTNET4_LEGACY_V1_BONDS.length, 7);
+  for (const op of TESTNET4_LEGACY_V1_BONDS) {
+    const [txid, vout] = op.split(':');
+    const internal = Uint8Array.from(Buffer.from(txid, 'hex')).reverse();
+    assert.equal(maturityStands(v1, undefined, 'testnet4', { txid: internal, vout: Number(vout) }).ok, true, op);
+    assert.equal(maturityStands(v1, 170000, 'testnet4', { txid: txid, vout: Number(vout) }).ok, true, `${op} as display hex`);
+  }
+  assert.equal(maturityStands(v1, 170000, 'testnet4', { txid: b32(9), vout: 0 }).ok, false, 'another outpoint');
+  // regtest keeps reading template 1 at any height (its fixtures); template 2 is unchanged
+  assert.equal(maturityStands(v1, 900001, 'regtest').ok, true);
+  assert.equal(maturityStands({ bondScriptTemplateVersion: 2, bondMaturityHeight: 162909 + 144 }, 162909, 'testnet4').ok, true);
 });
 
 test('the census counts a template-2 bond at confirmation + offset, excludes one a block short by name, and still counts template 1', () => {
