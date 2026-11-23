@@ -82,7 +82,7 @@ const origin = (u) => { try { return new URL(u).origin; } catch { return null; }
 // Two daemons behind one HTTPS reverse proxy differ by first path segment
 // (/blwp-a vs /blwp-b). Origin alone would count them as one source and an
 // https page could not fetch http:// Tailscale nodes (Safari mixed content).
-const sourceKey = (u) => {
+export const sourceKey = (u) => {
   try {
     const x = new URL(u);
     const head = x.pathname.split('/').filter(Boolean)[0] || '';

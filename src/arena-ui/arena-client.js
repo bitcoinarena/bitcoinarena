@@ -3477,8 +3477,13 @@ function decodeInputBatch(bytes) {
   }
   if (b.tapes.length > 1) throw new Error('a batch carries at most one tape');
   // one encoding per batch: empty optional tails are written as none
-  if (r.at === bytes.length && bytes.length !== encodeInputBatch(b).length) throw new Error('an empty optional vector is not canonical');
   if (r.at !== bytes.length) throw new Error('trailing bytes after the batch');
+  // ONE BATCH, ONE BYTE STRING (kanban #2927, feedback #233): the check was by length only, so vectors out of the encoder's order decoded -
+  // batchId hashes the sorted re-encode while a seat keeps the received bytes, and two samples at one tick stored in two orders replayed to
+  // two state hashes under one batch id. The bytes must be exactly the encoder's.
+  const again = encodeInputBatch(b);
+  if (again.length !== bytes.length) throw new Error('an empty optional vector is not canonical');
+  for (let i = 0; i < again.length; i++) if (again[i] !== bytes[i]) throw new Error('a batch\'s vectors are not in canonical order');
   return b;
 }
 
@@ -14300,7 +14305,10 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
             + `round runs ${protocolVersionName(contract.protocolVersion)}` });
           continue;
         }
-        eligible.push(e); continue;
+        // NODE-SIGNED (kanban #3348): whether the body that decides this entry is one its node signed - a stranger's own bond to a node's key
+        // under another operator id carries an unsigned body, and the emergency doors take no emergency key from it
+        eligible.push({ ...e, nodeSigned: signedOwn.has(e.decidedBy ? `${Array.from(e.decidedBy.txid).join(',')}:${e.decidedBy.vout}` : `${Array.from(raw.txid).join(',')}:${raw.vout}`) });
+        continue;
       }
       const roles = u.advert.roles || [];
       const versions = u.advert.protocolVersions || [];
@@ -14321,7 +14329,7 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
       }
       // the update's games replace the bond's first advertisement's (a hosted-games change is an update)
       eligible.push({ ...e, advert: sumsBonds(contract) ? ownMaturity(u.advert, e.advert) : u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
-        updatedBy: { txid: u.txid, height: u.height, position: u.position } });
+        updatedBy: { txid: u.txid, height: u.height, position: u.position }, nodeSigned: true });   // an update is checked against the node key
     }
   } else if (eligible.some(wantsPresig)) {
     // no signature check, so no update is read, so no presig was: the bond is named, as an ancestor's is above, and not counted
@@ -26398,9 +26406,17 @@ const payoutKind = (p) => p.kind || 'qualifier';
 const normalPayouts = (payouts) => payouts.map((p) => ({ ...p, kind: payoutKind(p), pk: p.pk.toLowerCase(), msat: String(p.msat) }));
 // the player's payout in a settlement (kanban #2014): its kind read as the group key reads it
 const isQualifierTo = (p, pk) => payoutKind(p) === 'qualifier' && String(p.pk).toLowerCase() === String(pk).toLowerCase();
+// ONE SEAT PER BOX, HOWEVER THE LINK SPELLS IT (kanban #3350, audit client-a6-1-1, high): http://liar.test, http://liar.test/ and
+// http://liar.test// were three "seats" - their unsigned ACCEPTED settlement outvoted the round's two honest seats and the winner's payout
+// read "none". A seat is its origin and first path segment (join.js sourceKey: seats behind one proxy differ by path); the first spelling asks.
+const distinctSeats = (nodes) => {
+  const seen = new Set(), out = [];
+  for (const n of nodes || []) { const k = sourceKey(String(n)) || String(n).replace(/\/+$/, ''); if (!seen.has(k)) { seen.add(k); out.push(n); } }
+  return out;
+};
 async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
   // EVERY SIGNER NODE AT ONCE (kanban #593)
-  const answers = await Promise.all([...new Set(nodes || [])].map(async (node) => {
+  const answers = await Promise.all(distinctSeats(nodes).map(async (node) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
@@ -26442,7 +26458,7 @@ async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee
 /** HOW MANY SEATS MUST AGREE ON A ROUND'S SETTLEMENT (kanban #1163): its settlement threshold, never more than the seats asked. */
 const settlementAgreement = (round, nodes = []) => {
   let t = 1; try { t = sharesNeededFor(round); } catch { t = 1; }
-  return Math.max(1, Math.min(Number(t) || 1, new Set(nodes || []).size || 1));
+  return Math.max(1, Math.min(Number(t) || 1, distinctSeats(nodes).length || 1));   // seats, not spellings (kanban #3350)
 };
 
 /**
@@ -40442,6 +40458,17 @@ const signEmergencyDeparture = (d, sign) => ({ ...d, signature: sign(emergencyDe
  * height the seat has seen (not ahead of its tip). `advert` the node's census advertisement; `fresh`: on taking it, posted at most
  * EMERGENCY_FRESH_BLOCKS before the tip. Answers { ok, nodePubkey, postedAt } or why not.
  */
+/**
+ * THE CENSUS ENTRY WHOSE ADVERTISEMENT NAMES A NODE'S EMERGENCY KEY (kanban #3348, audit census-a6-1-1, high): the first entry under the node's
+ * key whose deciding body the node signed (census.js `nodeSigned`; an entry without the mark is taken as before). A stranger's own bond to a
+ * node's key under another operator id stands in the census with the stranger's unsigned body, sorted first by txid: its emergency key let one
+ * stranger-signed leave request take the node out of every seating and make a guardian DEPARTED.
+ */
+function emergencyEntryOf(entries, nodePubkey) {
+  const node = toHex(nodePubkey);
+  return (entries || []).find((e) => e && e.nodeSigned !== false && e.pubkey && toHex(e.pubkey) === node) || null;
+}
+
 function emergencyDepartureStands(d, { advert, tip, verify, fresh = false }) {
   try { encodeEmergencyDeparture(d); } catch (e) { return { ok: false, why: e.message }; }
   if (!advert) return { ok: false, why: 'that node is not in the census' };
