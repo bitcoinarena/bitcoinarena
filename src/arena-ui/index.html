@@ -4516,6 +4516,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // sondern übertragen in die andere federation"; "es sollte automatisch passieren"): before a top-up, what the round's federation lacks
           // is moved from the wallet's federation that holds the most spendable sats - its e-cash to a seat, the seat's e-cash of this federation
           // back (ARENA_EXCHANGE_INTO). No gateway, no invoice, no dialog. The Lightning swap and its "Enter by swap" press are gone from here.
+          let exchangeRefused = '';
           try {
             const here = Array.from(named.round.federationId, (b) => b.toString(16).padStart(2, '0')).join('');
             const needMsat = BigInt(named.round.stakeMsat) + BigInt(donation.donationMsat || 0n);
@@ -4524,6 +4525,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             if (have < needMsat && window.ARENA_EXCHANGE_INTO) {
               const r = await window.ARENA_EXCHANGE_INTO({ to: here, toInvite: named.federation, needMsat: needMsat - have, nodes: named.nodes || [], seed, LockClient: wasm.LockClient, onStep });
               window.ARENA_EXCHANGED = r;
+              // kanban #3542: a CRITICAL federation is not drawn from - said on the line and in the deposit offer that follows
+              if (r && r.critical) { exchangeRefused = r.why; onStep(r.why); }
               console.log(`[arena] exchange into ${here.slice(0, 8)}: ${r.ok ? `${r.msat} msat from ${String(r.from).slice(0, 8)} in ${r.ms} ms` : r.why}`);
             }
           } catch (e) { console.warn('[arena] exchange: ' + e.message); }
@@ -4558,7 +4561,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           lap('early deposit');
           await ARENACLIENT.fundPlayerWallet(Object.assign({}, wallet, { early,
             // THE PLAYER CHOOSES THE DEPOSIT (GROSS-INVOICE-2053): the modal - the round tabs, a gross invoice, a close.
-            askDeposit: (offer) => window.ARENA_ASK_JOIN_DEPOSIT(offer, (o) => { if (!window.ARENA_MONEY_ALERT.room()) { window.ARENA_MONEY_ALERT.needRoom(); throw new Error('this browser\u2019s storage has to be compressed before a deposit'); } return showDepositOffer(o, { message: ARENACLIENT.DEPOSIT_INSUFFICIENT }); }),
+            askDeposit: (offer) => window.ARENA_ASK_JOIN_DEPOSIT(offer, (o) => { if (!window.ARENA_MONEY_ALERT.room()) { window.ARENA_MONEY_ALERT.needRoom(); throw new Error('this browser\u2019s storage has to be compressed before a deposit'); } return showDepositOffer(o, { message: ARENACLIENT.DEPOSIT_INSUFFICIENT + (exchangeRefused ? ' (' + exchangeRefused.replace(/^your/, 'Your') + '.)' : '') }); }),
             // NOT PAST THE ROUND'S ENTRY (MF 18): the request ends at the round's last entry instant, by name
             entryClosesMs: ARENACLIENT.entryOpenUntilMs ? Number(ARENACLIENT.entryOpenUntilMs(named.round)) : null,
             onLanded: () => { const el = document.getElementById('arena-deposit'); if (el) { if (el._deposit) { try { el._deposit.unmount(); } catch { /* cleared */ } el._deposit = null; } el.textContent = ''; el.className = ''; } },
@@ -6193,8 +6196,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (resumeOnly) { if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); return { ok: false, resumed: keptKeys.length, ms: Date.now() - t0, why: 'resumed only' }; }
       const spendable = (p) => BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n;
       const parts = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).filter((p) => /^[0-9a-f]{64}$/.test(p.federation) && p.federation !== to);
-      const src = parts.filter((p) => spendable(p) >= needMsat).sort((x, y) => (spendable(y) > spendable(x) ? 1 : -1))[0];
-      if (!src) return { ok: false, why: 'no other federation of this wallet holds enough spendable sats' };
+      // NEVER OUT OF A CRITICAL FEDERATION (kanban #3542; the Lightning swap refused one before #614): its notes move to its successor by
+      // succession (ARENA_EVACUATE), not into a round - the status this page verified (ARENA_FED_LOADS); the player is told why
+      const statusOf = (f) => { const s = window.ARENA_FED_LOADS && window.ARENA_FED_LOADS.get ? window.ARENA_FED_LOADS.get(f) : null; return String((s && s.status) || ''); };
+      const enough = parts.filter((p) => spendable(p) >= needMsat);
+      const src = enough.filter((p) => statusOf(p.federation) !== 'CRITICAL').sort((x, y) => (spendable(y) > spendable(x) ? 1 : -1))[0];
+      if (!src) {
+        const crit = enough.find((p) => statusOf(p.federation) === 'CRITICAL');
+        if (crit) return { ok: false, critical: crit.federation, why: `your sats are in federation ${crit.federation.slice(0, 8)}, which is CRITICAL: they are not moved into a game from there - they move to its successor federation by themselves (or withdraw them)` };
+        return { ok: false, why: 'no other federation of this wallet holds enough spendable sats' };
+      }
       const from = src.federation;
       const w = await openW(from, inviteOf(from));
       if (typeof w.sendEcash !== 'function') return { ok: false, why: 'this page\'s wallet cannot send an amount of e-cash' };
@@ -10906,7 +10917,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             const toInvite = ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(window.ARENA_BROWSER_STORE(), fedHex) : null;
             await window.ARENA_MERGE_NOW([fedHex], JOIN_MERGE_MS, { seed, LockClient: wasm.LockClient, force: true, extra: toInvite ? { [fedHex]: toInvite } : {} });
           };
-          while (window.ARENA_JOIN === moving && (Date.now() - t0 < JOIN_MOVE_WAIT_MS || (moving.mergeAsked && !moving.mergeDone)) && hereMsat() < needMsat) {
+          while (window.ARENA_JOIN === moving && !moving.critical && (Date.now() - t0 < JOIN_MOVE_WAIT_MS || (moving.mergeAsked && !moving.mergeDone)) && hereMsat() < needMsat) {
             const prep = window.ARENA_PREPARE_FUNDS;
             // the plan read again each pass: a merge that lands in another federation (measured: a new wallet merging the old one's 4dc88be7 sats
             // into 4dc88be7 while the round is in 337ae01a) leaves a swap to make
@@ -10928,6 +10939,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               const first = !moving.sent && !pending && !(prep && prep.lastMs && Date.now() - prep.lastMs < 15000);
               window.ARENA_JOIN_MOVING = exchange(!first).then((x) => {
                 if (first && x && (x.ok || /not answered/.test(String(x.why || '')))) moving.sent = true;
+                if (x && x.critical) moving.critical = x.why;   // kanban #3542: not drawn from a CRITICAL federation - the wait ends by name
                 if (first) console.log('[arena] join ' + String(id).slice(0, 16) + ': #2909 exchange into ' + fedHex.slice(0, 8) + ': '
                   + (x && x.ok ? x.msat + ' msat from ' + String(x.from).slice(0, 8) + ' in ' + x.ms + ' ms' : (x && x.why) || 'no answer'));
               }).catch((e) => console.warn('[arena] join #2909 exchange: ' + e.message)).finally(() => { window.ARENA_JOIN_MOVING = null; });
@@ -10938,8 +10950,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           if (window.ARENA_JOIN !== moving) return;   // another tap took over
           if (hereMsat() < needMsat) {
             moving.state = 'refused'; moving.stage = ''; moving.moving = false;
-            moving.why = 'your sats did not reach this game\'s federation (' + fedHex.slice(0, 8) + ') in ' + Math.round(JOIN_MOVE_WAIT_MS / 1000) + ' s - move them over with Move (Settings, under your balance), then play';
-            answer(false, 'not-funded-here', { coveredBy: plan.coveredBy, ownHere: plan.ownHere, waitedMs: Date.now() - t0 });
+            moving.why = moving.critical || ('your sats did not reach this game\'s federation (' + fedHex.slice(0, 8) + ') in ' + Math.round(JOIN_MOVE_WAIT_MS / 1000) + ' s - move them over with Move (Settings, under your balance), then play');
+            answer(false, moving.critical ? 'source-critical' : 'not-funded-here', { coveredBy: plan.coveredBy, ownHere: plan.ownHere, waitedMs: Date.now() - t0 });
             return;
           }
           // the tapped round while its lead holds, else the soonest round of the same game, stake and federation that still has it
