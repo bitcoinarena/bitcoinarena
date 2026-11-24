@@ -64,7 +64,8 @@ test('core-8cbc74b2.js is the bundle pinned for version 7, the app\'s own bytes,
   const name = 'core-8cbc74b2.js', file = fileOf(name), hex = '8cbc74b27bee78727fa395fcc5e5181beb4072f837adbee0e9ea278ff427d387';
   assert.deepEqual(LIST.games.nextblock.pinnedV7[name], [sha(file)]);
   assert.equal(sha(file), sha(readFileSync(new URL(`../../nextblock/dist/${name}`, import.meta.url))), 'the app\'s dist bundle');
-  assert.doesNotMatch(file.toString('utf8'), /blwp|kanban|owner/i);
+  // the pinned bytes as the app ships them (kanban #3535): its comments say "the owner" where a name was - no blwp, no ticket numbers
+  assert.doesNotMatch(file.toString('utf8'), /blwp|kanban/i);
   const window = loader((f) => fileOf(f));
   const loaded = await window.ARENA_LOAD_CORE(hex);
   assert.equal(loaded.ok, true, loaded.why);
