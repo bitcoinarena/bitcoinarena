@@ -240,7 +240,7 @@ import { FINAL, PROVISIONALLY_FINAL, SUSPENDED } from '../../arena-protocol/src/
 import { transcriptBytesHash, SIGNED_POSTING_BYTES, decodeTranscriptPosting, splitSignedPosting } from '../../arena-protocol/src/posting.js';
 import { decodeTranscript, checkTranscript, transcriptHash as hashOfTranscriptObj } from '../../arena-protocol/src/transcript.js';   // the relay door's check (kanban #1532, #2242)
 import { federationIsBonded } from '../../arena-protocol/src/federation.js';
-import { hostedPlugins, pluginForRound, advertisedAppsCheck } from './plugins.js';
+import { hostedPlugins, pluginForRound, advertisedAppsCheck, runLengthFitsAsync } from './plugins.js';
 import { gameMarkets, gameMarketSweep, heldOutcomes, gameVoidOf, gameEvidenceOf, attestedTable, marketFinalityOf, marketStateOf, marketDeadlineOf, VALUE_HELD_OUTCOME, DEADLINE_VOID_GRACE_MS } from './game-market.js';
 import { isHeadToHead, marketOfRound, isGameMarket, isScalar, isDrawnAttest, GAME_MARKET_REFUND } from '../../arena-protocol/src/manifest.js';
 import { decodeValueAttestation, valueAttestationStands, valueAttestationBodyId, isValueAttestationBytes } from '../../arena-protocol/src/scalar.js';
@@ -10318,6 +10318,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!bonded.ok) return text(res, 409, bonded.why);
         }
 
+        // kanban #3556: THE RUN LENGTH ASKED OF THE CORE WITHOUT BLOCKING this thread - round.open below reads the answers it left
+        { const f = pluginForRound(contract, hosted);
+          if (f.ok && !f.attested && !f.headToHead) await runLengthFitsAsync(f.core, f.config, contract.blockTicks); }
         const id = round.open(contract);
         // AND KEEP THE BEACON THIS SIGNER NODE CAN NAME FOR IT NOW (M3.3-34), through
         // the kept reader above: a signer node restarted before it ever replays a run

@@ -330,6 +330,30 @@ export function decideBounded(failed, key, run) {
     throw e;
   }
 }
+/** decideBounded for a decide whose core is waited for without blocking the seat's thread (kanban #3556). */
+export async function decideBoundedAsync(failed, key, run) {
+  const had = failed.get(key);
+  if (had && had.n >= DECIDE_TRIES) throw new Error(had.why);
+  try { return await run(); } catch (e) {
+    if (failed.size >= DECIDE_FAILED_MAX && !failed.has(key)) failed.delete(failed.keys().next().value);
+    const now = failed.get(key);
+    failed.set(key, { n: (now ? now.n : 0) + 1, why: `${e.message} (not decided again here: kanban #3298)` });
+    throw e;
+  }
+}
+/**
+ * headToHeadResults WITH THE GAME'S DECIDE ASKED WITHOUT BLOCKING (kanban #3556, RCE audit #3552): `decideAsync(moves, config)` answers a
+ * promise. The rule stays headToHeadResults' own - it is run once to learn whether and with what the game is asked, and again with
+ * its verdict - so the moves the core sees and the results are exactly the synchronous ones.
+ */
+export async function headToHeadResultsAsync(entries, decideAsync, config, opts) {
+  const ASK = Symbol('ask');
+  let asked = null;
+  try { return headToHeadResults(entries, (moves, cfg) => { asked = { moves, config: cfg }; throw ASK; }, config, opts); }
+  catch (e) { if (e !== ASK) throw e; }
+  const verdict = await decideAsync(asked.moves, asked.config);
+  return headToHeadResults(entries, () => verdict, config, opts);
+}
 
 export class Verifier {
   constructor(round, {
@@ -1071,8 +1095,9 @@ export class Verifier {
       try { box = found.core ? sandboxFor(found.core) : null; } catch (e) { throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter does not load in its sandbox: ${e.message}`); }
       if (!box || !box.meta.decide) throw new Error(`game "${found.plugin.manifest.gameName}"'s decide adapter is not installed on this node`);
       if (!this.decideFailed) this.decideFailed = new Map();
-      const results = decideBounded(this.decideFailed, `${hex(roundIdBytes)}:${JSON.stringify(list)}`,
-        () => headToHeadResults(list, (moves, config) => box.call('decide', { moves, config }), found.config, { players: found.plugin.manifest.players }));
+      // kanban #3556: the core is waited for without blocking this seat's thread (core-sandbox.js callAsync)
+      const results = await decideBoundedAsync(this.decideFailed, `${hex(roundIdBytes)}:${JSON.stringify(list)}`,
+        () => headToHeadResultsAsync(list, (moves, config) => box.callAsync('decide', { moves, config }), found.config, { players: found.plugin.manifest.players }));
       if (!stored) return { held, results };
       // kanban #2625: kept once - a decision a concurrent close kept first is the one signed from
       return fromStored(this.round.keepHeadToHeadDecision(roundIdBytes, { results,
