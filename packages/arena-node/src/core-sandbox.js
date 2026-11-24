@@ -124,10 +124,16 @@ export function coreFiles(core) {
   return { files: new Map([[SINGLE_ENTRY, bytes.toString('utf8')]]), entry: SINGLE_ENTRY };
 }
 
+/** THE LONGEST BIGINT a core may answer, in characters (kanban #3558): BigInt() of a core's digits runs in this thread, where no limit
+ *  of the core's applies - 4 MB of them cost the seat about 1 s per decide (measured 854 ms). A 256-bit number is 78 digits. */
+export const BIG_DIGITS_MAX = 256;
 /** Reads back a driver answer: tagged bigints and bytes restored. */
 const revive = (s) => JSON.parse(s, (k, x) => {
   if (x && typeof x === 'object' && !Array.isArray(x)) {
-    if (typeof x.$big === 'string' && Object.keys(x).length === 1) return BigInt(x.$big);
+    if (typeof x.$big === 'string' && Object.keys(x).length === 1) {
+      if (x.$big.length > BIG_DIGITS_MAX) throw new Error(`the core answered a $big of ${x.$big.length} characters, and a core's bigint has at most ${BIG_DIGITS_MAX} digits`);
+      return BigInt(x.$big);
+    }
     if (typeof x.$u8 === 'string' && Object.keys(x).length === 1) return Uint8Array.from(x.$u8.match(/../g) || [], (h) => parseInt(h, 16));
   }
   return x;

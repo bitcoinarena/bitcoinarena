@@ -489,6 +489,10 @@ function build() {
   if (budget.over() !== null) throw new Error(`the core failed while loading: ${budget.over()}`);
   if (driver.status === 'errored') throw new Error(`the core failed while loading: ${said(driver.error)}`);
   if (driver.status !== 'evaluated') throw new Error('the core did not finish loading (a core may not wait on anything)');
+  // kanban #3558: a top-level await that never settles leaves the status 'evaluated' too - the driver's own body has then not run
+  let finished = false;
+  try { finished = driver.namespace.LOADED === true; } catch { finished = false; }
+  if (!finished) throw new Error('the core did not finish loading (a core may not wait on anything)');
   // EVERY CALL IS A SCRIPT RUN IN THE CONTEXT, so its microtasks run after it, inside the node's deadline (microtaskMode
   // afterEvaluate) - the driver's door and the two strings it is handed sit on the context's own global
   Object.defineProperty(context, '__arenaCall', { value: driver.namespace.call, writable: false, configurable: false, enumerable: false });
