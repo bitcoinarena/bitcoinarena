@@ -35,20 +35,17 @@
  },
  {
   "name": "Sidecar",
-  "version": "1.18.2",
+  "version": "1.19.0",
   "kind": "Browser extension",
-  "date": "2026-11-22",
+  "date": "2026-11-24",
   "testedBy": null,
   "how": "automatic",
   "url": "https://sidecar.top/",
   "platform": "Chrome, Firefox",
   "checks": {
-   "login": "ok",
-   "seed": "ok",
-   "decrypt": "ok",
-   "sign": "ok"
+   "browser": "read wallet seed: page.waitForFunction: Error: your Nostr relays did not answer in time (wss://relay.bitcoinarena.io): try again in a moment (no new wallet is m"
   },
-  "result": "works"
+  "result": "problems"
  },
  {
   "name": "Amber",
