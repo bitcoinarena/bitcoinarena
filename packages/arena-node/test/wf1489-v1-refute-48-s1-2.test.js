@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
@@ -49,7 +50,7 @@ const FILTERS = [
 
 for (const oldTags of [false, true]) {
   test(`#1720 a bounded answer equals the full scan (${oldTags ? 'tags table of the build before' : 'fresh store'})`, async () => {
-    const dir = mkdtempSync(join(process.cwd(), 'wf1720-')), path = join(dir, 'r.db'), evs = make(400);
+    const dir = mkdtempSync(join(tmpdir(), 'wf1720-')), path = join(dir, 'r.db'), evs = make(400);
     fill(path, evs, oldTags);
     const r = await startRelay({ port: 0, dbPath: path });
     try {

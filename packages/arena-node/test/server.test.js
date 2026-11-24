@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { openStore } from '../src/store.js';
 import { serve, MAX_FRAME_BYTES } from '../src/server.js';
 import { encodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
-import { encodeInputBatch, signedBatchOf, batchId, MAX_INPUT_BATCH_BYTES } from '../../arena-protocol/src/batch.js';
+import { encodeInputBatch, signedBatchOf, batchId, MAX_INPUT_BATCH_BYTES, MAX_SIGNED_INPUT_BATCH_BYTES } from '../../arena-protocol/src/batch.js';
 import {
   encodeCheckpoint, decodeCheckpoint, checkpointId, NO_PREVIOUS,
   joinSigned, splitSigned, SIGNED_CHECKPOINT_BYTES, CHECKPOINT_BYTES,
@@ -275,10 +275,14 @@ test('the socket refuses a frame no protocol message could be', async () => {
   // vector, and 3146053 once a tick carried another eight bytes (65535 * 8 =
   // 524280 of the 524544 it moved by). The number is pinned so that a transcript
   // growing is a decision somebody writes down, not something a cap follows.
+  // 3906984 since protocol 5's signed price readings (729a3c2c1, kanban #312), and
+  // the frame is the signed batch since kanban #1503 (eac14d091): its type byte and
+  // 64-byte signature on top, 3907049.
   const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
-    assert.equal(MAX_FRAME_BYTES, MAX_INPUT_BATCH_BYTES);
-    assert.equal(MAX_FRAME_BYTES, 3146053);
+    assert.equal(MAX_FRAME_BYTES, MAX_SIGNED_INPUT_BATCH_BYTES);
+    assert.equal(MAX_SIGNED_INPUT_BATCH_BYTES, 1 + MAX_INPUT_BATCH_BYTES + 64);
+    assert.equal(MAX_INPUT_BATCH_BYTES, 3906984);
 
     const closed = await new Promise((resolve) => {
       const sock = new WebSocket(`ws://127.0.0.1:${node.port}/play`);
@@ -296,9 +300,11 @@ test('a batch longer than the round it belongs to is refused by name', async () 
   // The transport refuses what cannot decode; this refuses what decodes and
   // still could not be honest. The ceiling is `blockTicks` off the contract
   // the node already stores, so it is the round's own number.
+  // A round of BLOCK_TICKS (10800) ticks: 10801 ticks are 216194 bytes, past the 65535 a transcript frames a batch in, and
+  // that refusal comes first (kanban #2707, d2d5225fb). A short round's own ceiling is under it, so this one has 100 ticks.
   const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED });
   try {
-    const c = contract();
+    const c = { ...contract(), blockTicks: 100 };
     const rid = (await post(node.port, '/round', encodeRoundContract(c))).bytes;
     const joined = entryFor(rid);
     const eid = (await post(node.port, '/entry', encodeEntryContract(joined))).bytes;

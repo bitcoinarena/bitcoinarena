@@ -15,6 +15,8 @@ const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
 const PAINT = slice('    function paintMoney() {', '\n    }\n');
+// paintMoney reads the backup line and paints the notice through the page's own backupLineNow and paintBackupNotice (kanban #1033)
+const BACKUP = [slice('    const backupLineNow = () => {', '\n    };\n'), slice('    function paintBackupNotice(', '\n    }\n')];
 const EARLY = slice("  document.getElementById('arena-settings-go').addEventListener('click', () => {", '\n  });');
 const CATCH_UP = slice('    if (window.ARENA_SETTINGS_EARLY && settingsPanel()', '\n');
 
@@ -30,7 +32,7 @@ function strip({ unity = true, boot = false, lobby = LOBBY, driving = false, bro
   const document = { getElementById: (id) => (id === 'canvas' ? canvas : id === 'boot' ? (boot ? {} : null) : id === 'arena-backup-warn' && !boot ? null : els[id] || null) };
   const window = { ArenaText, ArenaBits, ARENA_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: null, unityInstance: unity ? {} : undefined };
   const ARENACLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
-  pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], PAINT, 'return paintMoney();')(
+  pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], [...BACKUP, PAINT], 'return paintMoney();')(
     document, window, ARENACLIENT, () => driving, () => ({}), () => 'seed', () => false, () => broughtIn);
   return { money: els['arena-money'].style.display, warn: boot ? els['arena-backup-warn'].style.display : 'gone', balance: els['arena-lobby-balance'].style.display };
 }

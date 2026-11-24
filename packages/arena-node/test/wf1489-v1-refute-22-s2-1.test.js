@@ -37,9 +37,11 @@ test('#1513 v1-refute-22-s2-1: strangers\' free keys filling the total do not sh
     await r.close();
     r = await startRelay({ port: 0, dbPath, limits });
     const afterRestart = await publish(r.port, honest, socks);
+    // a re-sent event the relay keeps is answered OK true with 'duplicate:' (kanban #3262, 9e841a48e): kept, not refused
     const why = (oks) => oks.map((m) => [m[2], m[3]]);
-    assert.deepEqual({ now: why(now), retry: why(retry), afterRestart: why(afterRestart) },
-      { now: why(now).map(() => [true, '']), retry: why(now).map(() => [true, '']), afterRestart: why(now).map(() => [true, '']) },
+    const kept = (oks) => oks.map((m) => [m[2], m[3] === '' || /^duplicate: /.test(m[3])]);
+    assert.deepEqual({ now: why(now), retry: kept(retry), afterRestart: kept(afterRestart) },
+      { now: why(now).map(() => [true, '']), retry: why(now).map(() => [true, true]), afterRestart: why(now).map(() => [true, true]) },
       'honest new events refused on a relay strangers filled');
   } finally { for (const w of socks) w.terminate(); await r.close(); }
 });

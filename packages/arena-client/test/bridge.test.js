@@ -143,7 +143,9 @@ test('the page prints its own word only while there is no client to have one', (
   const line = read(library.ArenaNetStatus).text;
   assert.equal(line.split(' ')[0], 'error');
   assert.match(line, /\(the node refused the round\)/);
-  assert.equal(library.ArenaNetEnded(), 0, 'a session that never opened has not ended');
+  // A SESSION THE NODE REFUSED IS OVER (arena.jslib, 2026-09-26, the 21:13 case): nothing is live, so the game's running
+  // mark ends and the lobby comes back - it was "not ended" before that patch
+  assert.equal(library.ArenaNetEnded(), 1, 'a session the node refused is over');
 });
 
 // THE GAME'S TICKS PAST THE RUN'S END ARE NOT INPUTS. `net.tick` is built inside the

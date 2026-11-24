@@ -23,13 +23,15 @@ test('no deposit asked at the press when another federation of the player holds 
   assert.equal(run([], 100000n), false);
 });
 
-test('the swap source: OPEN as before, or unverified and on the known-good list with an invite', () => {
-  const src = cut("              const known = ARENACLIENT.federationIsKnown", "const mayPay = st ? (st.status === 'OPEN' || (st.status === 'unverified' && known)) : known;");
-  const run = (st, isKnown, remembered) => new Function('ARENACLIENT', 'vault', 'st', 'other', src + '; return { mayPay, fromInvite };')(
-    { federationIsKnown: () => isKnown, rememberedInvite: () => remembered }, () => ({}), st, S);
-  assert.deepEqual(run({ status: 'unverified' }, true, 'fed1remembered'), { mayPay: true, fromInvite: 'fed1remembered' }, '4dc88be7 today');
-  assert.deepEqual(run(undefined, true, 'fed1remembered'), { mayPay: true, fromInvite: 'fed1remembered' }, 'not listed yet');
-  assert.equal(run({ status: 'unverified' }, false, 'x').mayPay, false, 'an unknown federation that is not verified does not pay');
-  assert.deepEqual(run({ status: 'OPEN', invite: 'fed1status' }, false, null), { mayPay: true, fromInvite: 'fed1status' }, 'OPEN as before');
-  assert.equal(run({ status: 'CRITICAL', invite: 'x' }, true, 'x').mayPay, false, 'a CRITICAL one moves by succession, not here');
+// THE LIGHTNING SWAP IS GONE (bf1353a38, kanban #614: "Kein Lightning swap, sondern übertragen in die andere federation"): the money moves by an
+// e-cash exchange with a seat (ARENA_EXCHANGE_INTO), its source the player's other federation with the most spendable sats - no status or
+// known-good gate, so 4dc88be7 read "Not checked yet" pays all the same
+test('the exchange source: the other federation with the most spendable sats, an unverified one too; none when none holds enough', () => {
+  const src = cut('      const spendable = (p) => ', 'const from = src.federation;');
+  const run = (parts, needMsat, to = R) => new Function('window', 'needMsat', 'to', src.replace(/\n\s*const from = src\.federation;$/, '') + '; return src.federation;')(
+    { ARENA_WALLET_BALANCE: { parts } }, needMsat, to);
+  assert.equal(run([{ federation: R, sats: 0 }, { federation: S, sats: 200, status: 'unverified' }], 100000n), S, '4dc88be7 today: unverified, it pays');
+  assert.equal(run([{ federation: S, sats: 150 }, { federation: 'cd'.repeat(32), sats: 400 }], 100000n), 'cd'.repeat(32), 'the one holding the most');
+  assert.equal(run([{ federation: S, sats: 200, merging: 150 }], 100000n).ok, false, 'sats still merging do not pay');
+  assert.equal(run([{ federation: R, sats: 900 }, { federation: S, sats: 50 }], 100000n).ok, false, 'not the round\'s own, and 50 sat do not cover 100');
 });

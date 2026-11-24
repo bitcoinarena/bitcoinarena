@@ -100,7 +100,15 @@ export async function lockRound({ minScore = 1, stakeMsat = STAKE, port = lockPo
     chainFor: slot.chainFor, randomnessFor: slot.randomnessFor, lnurlFetch: address.fetchLike, ...serveOpts });
   // THE CHAIN §13A'S WINDOWS ARE READ FROM (RULED 2026-09-24): one block clock both signer nodes read.
   const nodes = [];
+  // THE ROUND'S TIMES COUNT FROM THE NODES STANDING, NOT FROM THE CALL (kanban #3071): a caller's `endMs` is "now + its lead", and
+  // since 38abec6c5 (#2688) every node starts its own sandboxed cores - seven of them take 6-7 s on an idle machine and far more in a
+  // full parallel run, which ate a 4 s or even a 40 s lead and closed the entries before the first handout. The time the nodes took
+  // to start is added to `endMs` of a round of more than two nodes; the round's own times (w.c) and `w.endMs` are the ones to skip to.
+  // A 2-of-2 round keeps the caller's end: its two nodes start in well under its lead, and tests that stand two such rounds on one clock
+  // (hosted-apps) settle the second inside the first's window only at the old times.
+  const booting = testNow();
   for (let i = 0; i < n; i++) { const d = await mk(); d.round.chainView = CLOCK.chainView(); nodes.push(d); }
+  if (endMs !== null && n > 2) endMs += testNow() - booting;
   const [a, b] = nodes;
   for (const d of nodes) {
     const there = nodes.filter((o) => o !== d).map((o) => `http://127.0.0.1:${o.port}`);
@@ -157,7 +165,7 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
   const beacon = slot.randomnessFor({ contract: c });
   assert.ok(beacon && beacon.hash, 'the bonded chain names no beacon for the round');
   console.log(`  BEACON (lockRound): ${toHex(beacon.hash)} at ${beacon.height}`);
-  return { ...on, needed: receiptsNeeded(n), c, rid, claimPk: held.pool.groupPublicKey, randomness: beacon.hash };
+  return { ...on, needed: receiptsNeeded(n), c, rid, claimPk: held.pool.groupPublicKey, randomness: beacon.hash, endMs };
 }
 
 // `feeLock` DEFAULTS TO TRUE (2026-09-21): on a federation that charges no base fee this round's gate mints

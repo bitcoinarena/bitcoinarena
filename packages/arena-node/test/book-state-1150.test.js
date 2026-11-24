@@ -36,7 +36,9 @@ const player = (n) => ({ ...LOSER, name: `q${n}`, key: b32(0xa0 + n), worldSecre
 const cents = (c) => ({ price: BigInt(c) * 1000n });
 
 test('kanban #1150: no batch below one a seat holds is signed, a signed sell is sold once, and nothing locked after the close trades - seven seats', { timeout: 170000 }, async () => {
-  const w = await lockRound({ n: 7, stakeMsat: 10_000n, round: ROUND, endMs: testNow() + 1800000,
+  // the close on a batch boundary (alignCloseMs): C1 needs the late locks in before the cutoff after the close, and that was whatever
+  // the close's place in its 500 ms interval left - 84 / 216 ms measured, against seven seats' locks of 374..473 ms on Linux
+  const w = await lockRound({ n: 7, stakeMsat: 10_000n, round: ROUND, endMs: testNow() + 1800000, alignCloseMs: B,
     serveOpts: { plugins: [NEXTBLOCK, UPDOWN.registration], donationSets: [TEST_DONATION_SET_KEYS_REGTEST], orderBatchTimer: false } });
   skipTo(Number(w.c.committeeTimeMs) + 100);
   const rid = toHex(w.rid);

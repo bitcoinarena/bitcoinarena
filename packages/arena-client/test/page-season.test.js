@@ -99,7 +99,8 @@ test('opened from a tile: the game\'s seats in turn, the first that answers, the
   assert.equal(p.box.classList.contains('show'), true);
   assert.equal(p.parts['.state'].textContent, 'Asking the nodes …');
   await settle();
-  assert.deepEqual(seasonAsks(p.asked), ['https://seat-1.example/season?game=nextblock&days=7&scope=network', 'https://seat-2.example/season?game=nextblock&days=7&scope=network']);
+  // A FEW AT ONCE (kanban #941, f0b521fdb): the page races its first 4 seats - all three asked together, the first that answers is drawn
+  assert.deepEqual(seasonAsks(p.asked), ['https://seat-1.example/season?game=nextblock&days=7&scope=network', 'https://seat-2.example/season?game=nextblock&days=7&scope=network', 'https://seat-3.example/season?game=nextblock&days=7&scope=network']);
   assert.equal(p.parts.h2.textContent, 'Tick Tock, Next Block');
   assert.equal(p.parts['.head'].textContent, 'Tick Tock, Next Block · last 7 days · 2 players ahead · from 13 of 13 nodes');
   const rows = rowsOf(p.parts['.board']);
@@ -118,13 +119,13 @@ test('the day switch asks for 30 and 90 days at once, and marks the window it sh
   await settle();
   p.days[1].click();
   await settle();
-  assert.equal(p.asked.at(-1), 'https://seat-1.example/season?game=nextblock&days=30&scope=network');
+  assert.deepEqual(seasonAsks(p.asked).slice(-3), GAME.nodes.map((n) => n + '/season?game=nextblock&days=30&scope=network'));
   assert.deepEqual(p.days.map((b) => b.getAttribute('aria-pressed')), ['false', 'true', 'false']);
   assert.equal(p.parts['.head'].textContent, 'Tick Tock, Next Block · last 30 days · 2 players ahead · from 13 of 13 nodes');
   assert.equal(rowsOf(p.parts['.board'])[0].net, '+126 sat');
   p.days[2].click();
   await settle();
-  assert.equal(p.asked.at(-1), 'https://seat-1.example/season?game=nextblock&days=90&scope=network');
+  assert.deepEqual(seasonAsks(p.asked).slice(-3), GAME.nodes.map((n) => n + '/season?game=nextblock&days=90&scope=network'));
   assert.equal(rowsOf(p.parts['.board'])[0].net, '+378 sat');
   const n = p.asked.length;
   p.days[2].click();
@@ -133,9 +134,9 @@ test('the day switch asks for 30 and 90 days at once, and marks the window it sh
   // AN ANSWER THAT COMES BACK AFTER A NEWER ASK IS DROPPED: 7 days asked, then 30 before 7 answered; 7 answers last
   p.holdBack.on = true;
   p.days[0].click(); p.days[1].click();
-  const [seven, thirty] = p.pending;
-  thirty.resolve(); await settle();
-  seven.resolve(); await settle();
+  const held = (d) => p.pending.filter((x) => new URL(x.url).pathname === '/season' && new URL(x.url).searchParams.get('days') === d);
+  for (const x of held('30')) x.resolve(); await settle();
+  for (const x of held('7')) x.resolve(); await settle();
   assert.equal(p.parts['.head'].textContent, 'Tick Tock, Next Block · last 30 days · 2 players ahead · from 13 of 13 nodes', 'the older ask drew over the newer');
 });
 
@@ -145,7 +146,7 @@ test('asked again every 30 s while open, never while closed; Back and Escape clo
   await settle();
   assert.deepEqual([...p.timers.values()].map((t) => t.ms), [30000], 'one ask pending, in 30 s');
   await p.fire();
-  assert.equal(seasonAsks(p.asked).length, 2);
+  assert.equal(seasonAsks(p.asked).length, 6, 'each ask races the three seats');
   assert.deepEqual([...p.timers.values()].map((t) => t.ms), [30000], 'and the next one, never two');
   p.parts['.back'].click();
   assert.equal(p.box.classList.contains('show'), false);
@@ -156,7 +157,7 @@ test('asked again every 30 s while open, never while closed; Back and Escape clo
   p.window.ARENA_SEASON.open(GAME);
   p.docHandlers.keydown({ key: 'Escape' });
   assert.equal(p.window.ARENA_SEASON.isOpen(), false);
-  p.pending[0].resolve(); await settle();
+  for (const x of p.pending) x.resolve(); await settle();
   assert.equal(p.timers.size, 0, 'an answer after the close asked again');
 });
 

@@ -56,7 +56,7 @@ test('#1489 r1-h2h-2 / #2658: the house opponent\'s reveal (revealAsPage from cl
     const botSaid = (await botGoes).seats || [];
     const humanSaid = await revealMove({ entryIdHex: toHex(human.eid), move: SCISSORS, salt: sP, nodes: w.nodes.map((d) => url(d, '')) });
     // past the reveal deadline (the round's end): the seats close and decide
-    skipTo(endMs + 500);
+    skipTo(w.endMs + 500);   // the end lockRound moved by its nodes' start (kanban #3071)
     await closeRound(w, { window: false });
     let n = w.nodes.map(() => 0);
     for (let i = 0; i < 80 && !n.every((v) => v >= 2); i++) { await wait(100); n = await decided(w.nodes, w); }

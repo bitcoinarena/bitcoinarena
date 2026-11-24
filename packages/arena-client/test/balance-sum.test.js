@@ -11,7 +11,9 @@ const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.met
 const a = HTML.indexOf("      window.ARENA_WALLETS = window.ARENA_WALLETS || new Map();");
 const b = HTML.indexOf('      // WHERE THE MONEY SITS, ON A TAP');
 // every sum is kept for this phrase (kanban #572, ce093ab: the page's top-level lastBalance) - here the kept sums are counted on window
-const src = 'const lastBalance = (bal) => { window.ARENA_KEPT_SUMS = (window.ARENA_KEPT_SUMS || 0) + 1; };\n' + HTML.slice(a, b);
+// the page's tab handover channel (index.html: new BroadcastChannel('arena.handover')) is a browser's; in Node it is a live MessagePort
+// that nothing here closes and that keeps the test process from ever exiting - so the block sees no BroadcastChannel, as a browser without one
+const src = 'const BroadcastChannel = undefined;\n' + 'const lastBalance = (bal) => { window.ARENA_KEPT_SUMS = (window.ARENA_KEPT_SUMS || 0) + 1; };\n' + HTML.slice(a, b);
 // window.ArenaBalance.drawSplit as the page's bundle draws it (kanban #564), its parts as plain nodes of the fake document
 const drawSplit = (mk) => (host, p) => {
   host.textContent = '';
@@ -63,7 +65,8 @@ test('a sum asked before the wallet opens does not stop every later sum; notes s
   const w = { held: 3000000n, issuing: 1000000n, balanceMsat: async () => String(w.held), issuingMsat: async () => String(w.issuing) };
   window.ARENA_KEEP_WALLET(A, w);                 // the wallet opens
   await sum();
-  assert.deepEqual([window.ARENA_WALLET_BALANCE.sats, window.ARENA_WALLET_BALANCE.arriving], [3000, 1000], 'summed, and the arriving notes said');
+  // the notes being issued count in the balance (kanban #1391) and are said beside it
+  assert.deepEqual([window.ARENA_WALLET_BALANCE.sats, window.ARENA_WALLET_BALANCE.arriving], [4000, 1000], 'summed with the arriving notes, and those said');
   w.held = 4000000n; w.issuing = 0n;             // the notes land
   await sum();
   assert.deepEqual([window.ARENA_WALLET_BALANCE.sats, window.ARENA_WALLET_BALANCE.arriving], [4000, 0]);
@@ -115,7 +118,7 @@ test('when the statuses land, a held federation with no wallet open is summed ag
   await window.ARENA_SUM_HELD();                    // the statuses land
   assert.deepEqual([window.ARENA_WALLET_BALANCE.sats, opens], [2553, 1], 'B opened and summed');
   assert.equal(window.ARENA_SUM_HELD(), null, 'every held federation open: no further read');
-  const calls = HTML.split('window.ARENA_FED_LOADS = all;').slice(1).map((s) => s.split('\n').slice(0, 2).join('\n'));
+  const calls = HTML.split('window.ARENA_FED_LOADS = all;').slice(1).map((s) => s.split('\n').slice(0, 5).join('\n'));   // the statuses kept (#631) and the split repainted may come first
   assert.equal(calls.length, 2, 'both places that set the statuses');
   for (const c of calls) assert.match(c, /if \(window\.ARENA_SUM_HELD\) window\.ARENA_SUM_HELD\(\);/);
 });

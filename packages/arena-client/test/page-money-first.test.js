@@ -15,7 +15,9 @@ const row = (id, fed) => ({ id, contract: { federationId: Uint8Array.from(Buffer
 const toHex = (u) => Buffer.from(u).toString('hex');
 
 function moneyFirstWith(balance, deposit = null) {
-  const a = HTML.indexOf('    function moneyFirst(rows) {');
+  // moneyFirst(rows, onlyOurs) since 8f478bdec (kanban #926); called here as the lobby calls it, with rows alone
+  const a = HTML.indexOf('    function moneyFirst(rows, onlyOurs = false) {');
+  assert.ok(a > 0, 'index.html orders its rows in moneyFirst');
   const body = HTML.slice(a, HTML.indexOf('\n    }\n', a) + 7);
   const window = { ARENA_WALLET_BALANCE: balance, ARENA_DEPOSIT_FEDERATION: deposit };
   const out = {};

@@ -44,7 +44,8 @@ test('testnet4-found.mjs refuses six nodes, no chain, and a chain that is not AR
   const cookie = join(d, '.cookie'); writeFileSync(cookie, '__cookie__:x');
   const nodes = (n) => Array.from({ length: n }, (_, i) => `${23221 + 10 * i}:${join(d, `node-${i + 1}.db`)}`);
   const six = await run(process.execPath, ['testnet4-found.mjs', ...nodes(6)], { ARENA_BITCOIND_URL: 'http://127.0.0.1:1', ARENA_BITCOIND_COOKIE: cookie });
-  assert.match(six.stderr, /the testnet federation is seven guardians \(5 of 7\); got 6/);
+  // the size is ARENA_FOUND_N, seven by default (kanban #326, 2dda1dbce): the message names it
+  assert.match(six.stderr, /this federation is 7 guardians; got 6/);
   const noChain = await run(process.execPath, ['testnet4-found.mjs', ...nodes(7)], { ARENA_BITCOIND_URL: '', ARENA_BITCOIND_COOKIE: '' });
   assert.match(noChain.stderr, /ARENA_BITCOIND_URL and ARENA_BITCOIND_COOKIE: the chain the guardians run on/);
   const rpc = await rpcServer('regtest');

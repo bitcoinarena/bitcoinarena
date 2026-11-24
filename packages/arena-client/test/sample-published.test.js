@@ -37,7 +37,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const FEE_SATS = 17314, BTC_HUND = 42;
 
-async function rig(opts = {}) {
+async function rig({ others = [], ...opts } = {}) {
   const node = await serve(openStore(), { plugins: HOSTED, port: 0, ...FUNDED, ...opts });
   const client = new Client({ base: `http://127.0.0.1:${node.port}`, core, sign, verify });
   const c = {
@@ -49,7 +49,7 @@ async function rig(opts = {}) {
     stakeMsat: 0n, bondMinSats: 50000n, blockTicks: BLOCK_TICKS,
     exposureReference: 1000, corridorHalfWidth: 40, spawnFreeRadius: 20,
     timeFloor: 30, timeCeil: 150, minScore: 1, rankNumerator: 3, rankDenominator: 4,
-    nodes: [node.round.pubkey],
+    nodes: [node.round.pubkey, ...others],
   };
   const rid = await client.openRound(c);
   const entry = {
@@ -116,11 +116,15 @@ test('an ended run submits no more samples', async () => {
 
 test('the committee\'s price: an attested sample goes out at its tick with its signatures, the node checks and stores it; another tick is refused', async () => {
   const { priceSampleId, centsToTapeUnits } = await import('../../arena-protocol/src/price-sample.js');
-  const { node, client, rid, eid } = await rig();
+  // A SAMPLE STANDS ON THE COMMITTEE'S THRESHOLD, receiptsNeeded(gameVerifySlots) - 5 for 7 slots (b0936b5ab, kanban #675; it was
+  // receiptsNeeded(nodes.length), 1 of this rig's 1 node): the round names four more committee keys, and five sign
+  const more = Array.from({ length: 4 }, () => schnorr.utils.randomSecretKey());
+  const { node, client, rid, eid } = await rig({ others: more.map((k) => schnorr.getPublicKey(k)) });
   try {
     await drive(client, 300);
     const tick = client.offered, cents = 8297193;
-    const sigs = [[node.round.pubkey, schnorr.sign(priceSampleId({ roundId: rid, tick, priceCents: cents }), node.round.identity.secret)]];
+    const id = priceSampleId({ roundId: rid, tick, priceCents: cents });
+    const sigs = [[node.round.pubkey, schnorr.sign(id, node.round.identity.secret)], ...more.map((k) => [schnorr.getPublicKey(k), schnorr.sign(id, k)])];
     assert.equal(client.submitAttestedSample({ tick: tick + 1, priceCents: cents, sigs }), false, 'a tick the run is not at');
     assert.equal(client.submitAttestedSample({ tick, priceCents: cents, sigs }), true);
     await drive(client, 150);

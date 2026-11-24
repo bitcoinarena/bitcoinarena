@@ -276,7 +276,7 @@ test('once a round is joined, a later Init from C# cannot put the core back in t
       + `two late calls with 0x${(SOLO_SEED >>> 0).toString(16)} left it there`);
   } finally {
     try {
-        const cl = Module?.blwpNet?.client;
+        const cl = Module?.arenaNet?.client;   // the bridge names it arenaNet (kanban #522); blwpNet is undefined and left the client reconnecting for ever
         if (cl) { cl.ended = true; cl.close(); }  // ended, then closed: a plain close reads as a drop and reconnects for ever
         // AND THE PAGE'S TICK CLOCK: a BroadcastChannel the bridge keeps for the page's life, which in Node is a live
         // MessagePort - measured: all five tests passed in 3.3 s and the file never exited, held by three of them.
@@ -451,7 +451,7 @@ test('a join held open while the game steps publishes from the tick the core is 
     // player's session. Traced here: that loop's backoff timer was the one
     // thing left alive, and this file never exited.
     try {
-      const cl = Module?.blwpNet?.client;
+      const cl = Module?.arenaNet?.client;   // the bridge names it arenaNet (kanban #522); blwpNet is undefined and left the client reconnecting for ever
       if (cl) { cl.ended = true; cl.close(); }
       // AND THE PAGE'S TICK CLOCK: a BroadcastChannel the bridge keeps for the page's life, which in Node is a live
       // MessagePort - measured: all five tests passed in 3.3 s and the file never exited, held by three of them.

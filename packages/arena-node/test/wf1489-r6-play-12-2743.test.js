@@ -53,6 +53,9 @@ test('#1489-r6-play-12: 40 strangers\' GET /transcript of one long run hold the 
       prev = batchId(b);
     }
     const q = `http://127.0.0.1:${a.port}/transcript?round=${toHex(rid)}&entry=${toHex(eid)}`;
+    // the 10,800 stores above hold this one thread ~10 s - past the 5 s the seat keeps an idle connection, and the client's pool shares
+    // the thread: let both sides' keep-alive timers run first, or the first GET goes out on a socket the seat is closing (ECONNRESET)
+    await new Promise((r) => setTimeout(r, 50));
     const one0 = Date.now(); const r0 = await fetch(q); await r0.arrayBuffer(); const oneMs = Date.now() - one0;
     assert.equal(r0.status, 200);
     const h = monitorEventLoopDelay({ resolution: 5 }); h.enable();

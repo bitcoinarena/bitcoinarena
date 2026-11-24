@@ -19,10 +19,12 @@ const END = '    // RESCAN FOR MISSING MONEY';
 function lift() {
   const src = readFileSync(fileURLToPath(PAGE), 'utf8');
   const at = src.indexOf(START), end = src.indexOf(END);
+  // a pass looks at the unmatched orders' records first and closes a refund-only one, by the page's own refundOrderKeys / unfilledPickKeys / closeRefundOnly (kanban #3009)
+  const ra = src.indexOf('    const orderKeyOf = (r) =>'), rb = src.indexOf('\n    }\n', src.indexOf('    function closeRefundOnly(')) + '\n    }\n'.length;
   return pageFunction(PAGE, ['ARENACLIENT', 'window', 'performance', 'keptRecords', 'newestKept', 'backKey', 'withRecordPhrase', 'lookRound',
     'collectHeld', 'collectFailed', 'collectNote', 'lookSaid', 'noteStakeBack', 'roundAsk', 'stakeBack', 'vault', 'paintHistory', 'paintWallet',
     'roundFeedbackOnce', 'rescanWanted'],
-  [src.slice(at, end)], 'return { lookThePayout, asking: () => payoutAsking };', 'let payoutAsking = false, payoutAskingSince = 0;');
+  [src.slice(ra, rb), src.slice(at, end)], 'return { lookThePayout, asking: () => payoutAsking };', 'let payoutAsking = false, payoutAskingSince = 0;');
 }
 
 test('a kept record whose look never returns: the records after it are still looked at and collected, and the pass ends', async () => {

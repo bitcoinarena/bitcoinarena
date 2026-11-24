@@ -16,6 +16,9 @@ import { ArenaText, ArenaBits } from './arena-text.js';   // the page's React li
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const cut = (from, end) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.slice(0, 40)}`); const b = HTML.indexOf(end, a); return HTML.slice(a, b + end.length); };
+// a pass looks at the unmatched orders' records first and closes a refund-only one, by the page's own refundOrderKeys / unfilledPickKeys / closeRefundOnly (kanban #3009)
+const REFUND = HTML.slice(HTML.indexOf('    const orderKeyOf = (r) =>'), HTML.indexOf('\n    }\n', HTML.indexOf('    function closeRefundOnly(')) + '\n    }\n'.length);
+assert.ok(REFUND.includes('const unfilledPickKeys = ') && REFUND.includes('function closeRefundOnly('), 'index.html picks the refund-only orders first');
 const PAYOUT = cut('    let payoutAskingSince = 0;', '\n      payoutAsking = false; payoutAskingSince = 0;\n      paintWallet();\n    }\n');
 const PENDING = cut('    async function lookThePending() {', '\n      paintMoney();\n      } finally { st.busy = false; }\n    }\n');
 
@@ -40,7 +43,7 @@ function page({ record, theLook, collect }) {
   // this test's one record is the tab's own
   record.own = true;
   const fns = pageFunction(PAGE, ['window', 'document', 'vault', 'ARENACLIENT', 'lookRound', 'roundAsk', 'newestKept', 'collectSeed', 'collectNote', 'lookSaid',
-    'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase', 'collectFailed', 'collectHeld', 'performance'], [PAYOUT, PENDING], 'return { lookThePayout, lookThePending };')(
+    'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase', 'collectFailed', 'collectHeld', 'performance'], [REFUND, PAYOUT, PENDING], 'return { lookThePayout, lookThePending };')(
     window, document, vault, ARENACLIENT, lookRound, () => ({}), () => record, () => 'seed', () => {}, () => '', () => {}, () => {}, () => {}, false,
     async () => { throw new Error('no /standing in this test'); }, () => ({ collectable: [record], uncollectable: [] }), (r, fn) => fn(), new Map(), new Set(), { now: () => 60000 });   // past the 30 s the looks leave an order after a load (kanban #803)
   return { ...fns, window, marked };
