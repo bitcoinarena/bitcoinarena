@@ -2438,5 +2438,177 @@
  "3565": {
   "text": "Committees and bonds: after a reach-mode switch the owner page keeps the old tunnel address and fails to load",
   "kind": "bug"
+ },
+ "3566": {
+  "text": "Node software: one seat can unstake a head-to-head player for a stranger's lower copy",
+  "kind": "bug"
+ },
+ "3567": {
+  "text": "Node software: forked timing across seats can sign two results for one transcript",
+  "kind": "bug"
+ },
+ "3568": {
+  "text": "Other: a player can time the first mark and see prices early",
+  "kind": "bug"
+ },
+ "3569": {
+  "text": "Federation: reading past a capped summary list rebuilds every plan on every read",
+  "kind": "bug"
+ },
+ "3570": {
+  "text": "Node software: unusual season windows miss the cache and fan a full read out to every seat",
+  "kind": "bug"
+ },
+ "3571": {
+  "text": "Committees and bonds: a creator-set bond floor can leave their own nodes as the whole committee",
+  "kind": "bug"
+ },
+ "3572": {
+  "text": "Node software: a crowded room cache can void a live paid round",
+  "kind": "bug"
+ },
+ "3573": {
+  "text": "Faucet and feedback: a full review list can drop a waiting report so its bounty is never approved",
+  "kind": "bug"
+ },
+ "3574": {
+  "text": "Settlement: several names of one box can still outvote the seats",
+  "kind": "bug"
+ },
+ "3575": {
+  "text": "Node software: two spellings of one box can look like a purchase and refuse the join",
+  "kind": "bug"
+ },
+ "3576": {
+  "text": "Node software: several names of one box can skew a paid entry and refuse it",
+  "kind": "bug"
+ },
+ "3577": {
+  "text": "Node software: two names of one box can drop a paid item with no honest holder",
+  "kind": "bug"
+ },
+ "3578": {
+  "text": "Node software: one game's non-stopping replay holds the only worker and delays other closes",
+  "kind": "bug"
+ },
+ "3579": {
+  "text": "Faucet and feedback: Orange Pill Run: a winner can lose the bounty after a social relink",
+  "kind": "bug"
+ },
+ "3580": {
+  "text": "Faucet and feedback: Orange Pill Run: resubmitting a public replay can move the bounty",
+  "kind": "bug"
+ },
+ "3581": {
+  "text": "Other: Orange Pill Run: a public replay read still rebuilds the whole board each time",
+  "kind": "bug"
+ },
+ "3582": {
+  "text": "Other: Orange Pill Run: scored runs from one network are stored without bound",
+  "kind": "bug"
+ },
+ "3583": {
+  "text": "Other: owner doors keep stranger requests before the owner check, and that map grows",
+  "kind": "bug"
+ },
+ "3584": {
+  "text": "Other: spelling variants of one entry miss the door cache and rebuild the whole run",
+  "kind": "bug"
+ },
+ "3585": {
+  "text": "Node software: a relayed identity check can take an honest seat's place in the season merge",
+  "kind": "bug"
+ },
+ "3586": {
+  "text": "Other: fee approvals from any key are kept without limit and rechecked on every read",
+  "kind": "bug"
+ },
+ "3587": {
+  "text": "Node software: one season seat's unsigned player list can name a key that never played",
+  "kind": "bug"
+ },
+ "3588": {
+  "text": "Federation: one guardian under two names can meet the gateway quorum alone",
+  "kind": "bug"
+ },
+ "3589": {
+  "text": "Node software: leaderboard key confirmation can be met by one box twice, or skipped for one seat",
+  "kind": "bug"
+ },
+ "3590": {
+  "text": "Other: Orange Pill Run: junk submits on a shared address count as plays and refuse everyone else",
+  "kind": "bug"
+ },
+ "3591": {
+  "text": "Website: Orange Pill Run: a changing junk query rebuilds the public board on every request",
+  "kind": "bug"
+ },
+ "3592": {
+  "text": "Reserves: the relay rechecks unkept copies of a seat's own events on every resend",
+  "kind": "bug"
+ },
+ "3593": {
+  "text": "Website: several names of one box in a join link can outvote the seats and forfeit a player",
+  "kind": "bug"
+ },
+ "3594": {
+  "text": "Federation: a bad reserve figure can crash every seat that reads it",
+  "kind": "bug"
+ },
+ "3595": {
+  "text": "Other: a listed bot can be paid the human amount after a fresh social link",
+  "kind": "bug"
+ },
+ "3596": {
+  "text": "Committees and bonds: a locked stake can stay unhanded when one seat never answers a join",
+  "kind": "bug"
+ },
+ "3597": {
+  "text": "Other: Orange Pill Run: one address's social lookups can stall listing, closing, and making rounds",
+  "kind": "bug"
+ },
+ "3598": {
+  "text": "Other: Orange Pill Run: one address can open never-played attempts from fresh keys without bound",
+  "kind": "bug"
+ },
+ "3599": {
+  "text": "Other: relay subscription budgets count values, not size, so idle sockets hold extra memory",
+  "kind": "bug"
+ },
+ "3600": {
+  "text": "Other: the relay seed pool accepts any key ever seen, so one free profile can fill it",
+  "kind": "bug"
+ },
+ "3601": {
+  "text": "BTC Up/Down game: an order shows as placing, then vanishes with no error and no history",
+  "kind": "bug"
+ },
+ "3602": {
+  "text": "Other: a collect-failed notice is cut off mid-word and names the round twice",
+  "kind": "bug"
+ },
+ "3603": {
+  "text": "Other: Orange Pill Run: a run can be paid after its score is known",
+  "kind": "bug"
+ },
+ "3605": {
+  "text": "Node software: a twin added while a tally waits is never counted, so seats can disagree",
+  "kind": "bug"
+ },
+ "3606": {
+  "text": "Node software: an automatic update restarts node services the owner had stopped",
+  "kind": "bug"
+ },
+ "3607": {
+  "text": "Other: two tabs can overwrite a collect-in-progress flag and lose the refund mark",
+  "kind": "bug"
+ },
+ "3608": {
+  "text": "Other: a fee-gate wait can mark a yielded entry as seen without its lock",
+  "kind": "bug"
+ },
+ "3609": {
+  "text": "Other: a memory crash had no guard, and restart left tunnels missing",
+  "kind": "bug"
  }
 }
