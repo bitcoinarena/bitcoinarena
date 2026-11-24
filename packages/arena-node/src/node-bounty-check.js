@@ -64,11 +64,21 @@ export const seatBaseOf = (u) => { try { const x = new URL(String(u).trim().repl
 // THE CENSUS THE CHECK TRUSTS (kanban #1682): node key -> its advertised endpoints, bonded entries only. `census` given as a list of
 // { node, endpoint, bondSats } (GET /roles's `nodes`), or read from `censusSeats` - seats the caller trusts (the faucet's own configured seats),
 // never the listed seats an outsider can add: three colluding seats answering /roles would name any fresh key again
-async function trustedCensus({ census, censusSeats, fetchJson }) {
+// KANBAN #3610: a trusted census seat's OWN advertised endpoints (its census entry's endpoint / announced, under the node key its /roles names) ->
+// that seat's base, in `aliases`. The faucet asks its seats at 127.0.0.1, while the chain lists them at their public (tail-net Funnel) name, which
+// seatPublicFetch refuses by name (#1809) - so the team's own seats never answered as witnesses and an outside node that served 300 rounds read
+// "0 committees". Only a trusted seat's own entry is aliased: a stranger's endpoint is still asked where it is, through the public fetch
+async function trustedCensus({ census, censusSeats, fetchJson, aliases = new Map() }) {
   const lists = [];
   if (Array.isArray(census)) lists.push(census);
   await Promise.all([...new Set((censusSeats || []).map(seatBaseOf).filter(Boolean))].map(async (u) => {
-    try { const j = await fetchJson(`${u}/roles`); if (j && Array.isArray(j.nodes)) lists.push(j.nodes); } catch { /* a census seat that does not answer adds nothing */ } }));
+    try { const j = await fetchJson(`${u}/roles`); if (j && Array.isArray(j.nodes)) lists.push(j.nodes);
+      const self = String((j && j.node) || '').toLowerCase();
+      if (/^[0-9a-f]{64}$/.test(self) && j && Array.isArray(j.nodes)) for (const e of j.nodes) {
+        if (String((e && e.node) || '').toLowerCase() !== self) continue;
+        for (const at of [seatBaseOf(e.endpoint), seatBaseOf(e.announced)]) if (at && at !== u && !aliases.has(at)) aliases.set(at, u);
+      }
+    } catch { /* a census seat that does not answer adds nothing */ } }));
   const out = new Map();
   for (const list of lists) for (const e of list) {
     const k = String((e && e.node) || '').toLowerCase(), at = seatBaseOf(e && e.endpoint);
@@ -90,7 +100,10 @@ export async function nodeBountyCheck({ node, npub, seats, fetchJson, nowMs = Da
   const n = String(node || '').toLowerCase(), me = String(npub || '').toLowerCase();
   // THE OWNER KEY IS OPTIONAL (the owner 2026-11-10: "npub muss nicht sein"): with one, the answer says whether it is the node's owner - a hint for the reviewer
   if (!/^[0-9a-f]{64}$/.test(n) || (me && !/^[0-9a-f]{64}$/.test(me))) return { ok: false, why: 'a node key (and, if given, an owner key), 64 hex each' };
-  const bonded = await trustedCensus({ census, censusSeats, fetchJson });
+  // KANBAN #3610: a trusted seat's own public endpoint is read at the trusted seat itself (aliases above); every other address as before
+  const aliases = new Map(), direct = fetchJson;
+  const bonded = await trustedCensus({ census, censusSeats, fetchJson: direct, aliases });
+  fetchJson = (url) => { const s = String(url); for (const [at, base] of aliases) if (s.startsWith(`${at}/`)) return direct(base + s.slice(at.length)); return direct(url); };
   const inCensus = bonded.has(n);
   // seat address -> the census nodes advertised there (kanban #1682): only such a seat's /served is a witness, for one of those node keys.
   // ONE ADDRESS, SEVERAL NODES (kanban #1866, #1888): it was "neither" - one cheap bonded node advertising an honest witness's endpoint
