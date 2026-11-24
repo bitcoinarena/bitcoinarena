@@ -28595,11 +28595,12 @@ const MARK_INPUT_WAIT_MS = 10000;
 const FEED_WINDOW = 32;
 // A SEAT STILL TAKING THE HANDOUT IS ASKED AGAIN (kanban #828, 2026-11-02 04:05:41Z, both players of round a5fc9c2f): postHandout goes on once enough seats
 // took it, the entry goes to one seat, and that seat's handout can still be on its way; its 400 ended the join with the stake already locked. 8 s; any other refusal stands.
-async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500 } = {}) {
+// Answers { status, bytes }; each ask is bounded by ENTRY_ANSWER_MS (kanban #3596), and a seat silent past it throws.
+async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500, answerMs = ENTRY_ANSWER_MS } = {}) {
   for (let n = 0; ; n++) {
-    const r = await fetcher(url, { method: 'POST', body });
+    const r = await entryAnswered(fetcher, url, body, answerMs);
     if (r.status === 201) return r;
-    const said = (await r.text()).trim();
+    const said = entryWords(r.bytes);
     // AND A SEAT WHOSE SEATING CERTIFICATE IS STILL ON ITS WAY (the owner's report 2026-11-10 08:54Z, round 0ff01991: the six seats had signed the seating,
     // the certificate reached them after the entry, which came 9 s before the close; the join ended with the stake locked) - asked again the same 8 s
     if (n + 1 >= tries || !/publish the handout first|that round is not seated yet/.test(said)) throw new Error(`the node refused the entry: ${said}`);
@@ -28658,6 +28659,24 @@ const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSE
 // not yet seen voids the entry anyway; two minutes covers a join held to a round that starts later.
 const LOCK_HAND_MS = 120000;
 const LOCK_ACCEPT_HEAD_MS = 3000;   // the lock client's acceptance first; the seats' own check after it
+
+// ONE SEAT'S ANSWER TO POST /entry, BODY INCLUDED, WITHIN ENTRY_ANSWER_MS OR NOT AT ALL (kanban #3596, audit client a7-3-1): measured, one
+// committee seat that took POST /entry and never answered held Client.join for good - joinOn's fetch had no deadline, join awaited every
+// peer, so the stake lock was handed to no seat and the session never opened. A seat silent past the bound did not take the entry; the
+// feed's 'no such entry' path offers it again. The market's submitPick bounds the same door (ENTRY_WAIT_MS).
+const ENTRY_ANSWER_MS = 15000;
+async function entryAnswered(fetcher, url, body, ms = ENTRY_ANSWER_MS) {
+  let timer;
+  const late = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`no answer to the entry within ${ms} ms`)), ms); });
+  try {
+    return await Promise.race([(async () => {
+      const r = await fetcher(url, { method: 'POST', body, signal: AbortSignal.timeout(ms) });
+      const bytes = typeof r.arrayBuffer === 'function' ? new Uint8Array(await r.arrayBuffer()) : new TextEncoder().encode(String(await r.text()));
+      return { status: r.status, bytes };
+    })(), late]);
+  } finally { clearTimeout(timer); }
+}
+const entryWords = (bytes) => new TextDecoder().decode(bytes.subarray(0, 4096)).trim();
 
 const OPENED_ROUNDS = new Map();
 
@@ -29036,7 +29055,7 @@ class Client {
     // and the chip named it because its frozen run had gone furthest.
     this.playerPubkey = entry.playerPubkey;
 
-    const joined = agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
+    const joined = agrees(mine, r.bytes, 'entry');
     // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS beside it (kanban #1897, #1938): what binds the stake and fee lock to this entry and no copy
     // (not waited on: it never throws, and the join's time is the player's - `lockClaimed` holds each seat's answer to come)
     this.lockClaimed = [];
@@ -29047,7 +29066,11 @@ class Client {
     // A node that will not take it is written down, not thrown: this node took
     // the entry, and the run can still be played.
     this.joinedEntry = entry;
-    this.peerJoins = await Promise.all(this.peers.map((base) => this.joinOn(base)));
+    // NOT WAITED ON PAST WHAT THE ROUND NEEDS (kanban #3596): each peer's answer is bounded (ENTRY_ANSWER_MS), and once the home seat and
+    // the peers that took the entry are the `needed` seats of the round's stake lock, join goes on - a peer still answering lands in
+    // `peerJoins` when it does, and the lock hand-off below asks every seat again until each took the lock. Without a stake lock (no
+    // count to go by) every peer's bounded answer is waited for, as before.
+    await this.#joinPeers(this.stakeLock && Number(this.stakeLock.needed) > 0 ? Number(this.stakeLock.needed) : Infinity);
 
     // AND THE STAKE LOCK GOES TO EVERY SIGNER NODE NOW THAT THE ENTRY IS THERE (§23.1
     // step 5, W1b). A signer node verifies it in the federation and only then counts
@@ -29064,6 +29087,22 @@ class Client {
       this.lockHanding = this.#handLocksUntilTaken(mine);
     }
     return joined;
+  }
+
+  #joinPeers(needed) {
+    const peers = this.peers;
+    const joins = peers.map((base) => ({ base, ok: false, why: 'no answer yet', pending: true }));
+    this.peerJoins = joins;
+    if (!peers.length) return Promise.resolve(joins);
+    return new Promise((done) => {
+      let answered = 0, took = 1;   // the home seat took it
+      peers.forEach((base, i) => this.joinOn(base).then((j) => {
+        joins[i] = j;
+        answered++;
+        if (j.ok) took++;
+        if (answered === peers.length || took >= needed) done(joins);
+      }));
+    });
   }
 
   async #handLocksUntilTaken(mine) {
@@ -29160,11 +29199,11 @@ class Client {
   /** Signer nodes this client's entry on one other committee node. */
   async joinOn(base) {
     try {
-      const p = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(this.joinedEntry) });
+      const p = await entryAnswered((...a) => fetch(...a), `${base}/entry`, encodeEntryContract(this.joinedEntry));   // bounded (kanban #3596)
       // and the player's claim on its locks (kanban #1897, #1938)
       if (p.status === 201 && this.stakeLock && typeof this.stakeLock.claimFor === 'function')
         (this.lockClaimed = this.lockClaimed || []).push(postLockClaim({ node: base, entryId: entryId(this.joinedEntry), claimFor: this.stakeLock.claimFor }));
-      return { base, ok: p.status === 201, why: p.status === 201 ? null : (await p.text()).trim() };
+      return { base, ok: p.status === 201, why: p.status === 201 ? null : entryWords(p.bytes) };
     } catch (e) { return { base, ok: false, why: e.message }; }
   }
 
