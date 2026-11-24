@@ -20138,7 +20138,12 @@ let seatedLookup = null;
 const federationOfClient = new WeakMap();
 /** The page's lookup of a federation's seated gateways (null: none). */
 const SEATED_AGREE = 2;   // kanban #3183: seat answers that must name a gateway seated
-function useSeatedGateways(lookup) { seatedLookup = typeof lookup === 'function' ? lookup : null; }
+// `keys` (the network's seat keys, hex, or a function answering them: the page's ARENA_CENSUS_KEYS), `verify` (BIP-340) and `fetcher`: how the
+// answers' seats are told apart (kanban #3588, seat-identity.js seatsOf)
+let seatedProofs = {};
+function useSeatedGateways(lookup, { keys = null, verify = null, fetcher = null } = {}) {
+  seatedLookup = typeof lookup === 'function' ? lookup : null; seatedProofs = { keys, verify, fetcher };
+}
 /** Which federation a lock client is a wallet of (openPlayerWallet notes it). */
 function noteClientFederation(client, federationHex) { if (client && typeof client === 'object' && federationHex) federationOfClient.set(client, String(federationHex).toLowerCase()); }
 /**
@@ -20160,7 +20165,30 @@ async function seatedGatewaysOf(client) {
   // guardian's, so a guardian seat added a gateway of its own there and, answering first, named it seated - it led every deposit and the swap's
   // receive leg. The lookup now hands each seat's answer ({ answers: [[url, ...], ...] }); a gateway is seated only when at least
   // SEATED_AGREE answers name it, in the order the first of them gives. A bare list is one seat's word: nothing seated from it.
-  const answers = got && Array.isArray(got.answers) ? got.answers.filter(Array.isArray) : [];
+  // ONE SEAT, ONE ANSWER (kanban #3588, audit client-a7-2-1, the gap in #3183): the answers carried no seat, so one guardian seat named in a link
+  // under two paths of its box (https://evil.example/a, /b) was the two seats SEATED_AGREE asks for, and its own gateway led the deposit and the
+  // swap legs again. The lookup hands each answer with the address it came from ({ seat, urls }); the addresses are grouped into seats as
+  // seat-identity.js seatsOf does (one host is one seat unless each of its URLs proves a distinct key of the network's seats), and a seat's
+  // answers are one answer - none when they disagree. A bare list (an older lookup) is a seat of its own.
+  const raw = got && Array.isArray(got.answers) ? got.answers : [];
+  const tagged = raw.map((a, i) => (Array.isArray(a) ? { seat: `#${i}`, urls: a } : a && Array.isArray(a.urls) ? { seat: String(a.seat || `#${i}`), urls: a.urls } : null)).filter(Boolean);
+  const idOf = new Map();
+  try {
+    const { keys, verify, fetcher } = seatedProofs;
+    const bases = tagged.map((a) => a.seat).filter((x) => /^https?:\/\//.test(x));
+    const several = new Set(bases.map(hostOf)).size < bases.length;
+    const ks = !several ? [] : typeof keys === 'function' ? await keys() : keys;
+    for (const g of await seatsOf(bases, { keys: Array.isArray(ks) ? ks : [], verify, fetcher: fetcher || fetch, ms: 2500 })) for (const u of g.urls) idOf.set(u, g.id);
+  } catch { /* each address then by its host */ }
+  const bySeat = new Map();
+  for (const a of tagged) {
+    const id = idOf.get(a.seat) || (/^https?:\/\//.test(a.seat) ? `host:${hostOf(a.seat)}` : a.seat);
+    if (!bySeat.has(id)) bySeat.set(id, []);
+    bySeat.get(id).push(a.urls);
+  }
+  const answers = [];
+  // a seat's answers agree when they name the same gateways, in any order
+  for (const said of bySeat.values()) { const v = seatVoice(said, (urls) => JSON.stringify([...new Set(urls.filter(Boolean).map((x) => gwKey(x)))].sort())); if (v) answers.push(v); }
   const seen = new Map();
   for (const a of answers) for (const u of new Set(a.filter(Boolean).map((x) => gwKey(x)))) seen.set(u, (seen.get(u) || 0) + 1);
   const l = [];
