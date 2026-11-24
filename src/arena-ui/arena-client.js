@@ -18823,6 +18823,118 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
     stakeShares: payouts.filter((p) => p.kind === 'qualifier').map((p) => ({ pubkey: p.pubkey, msat: p.msat })) };
 }
 
+// ---- arena-client/src/seat-identity.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// ONE SEAT, ONE VOTE, HOWEVER MANY URLS A LINK GIVES IT (kanban #3574, audit client-a7-1-1, the gap in #3350).
+//
+// A join or lobby link's node= list is the link author's: one box named under several paths (http://liar.test/a, /b, /c) was several
+// "seats", and its unsigned answers outvoted the round's real ones. Counting by host alone is wrong the other way: the live seats share one
+// public host and differ by path (https://h/guardian-1 .. /guardian-7), and one vote per host would make seven seats one.
+//
+// So a host's URLs are separate seats only when each of them PROVES a distinct node key of the round's key set: GET /identity?nonce=<fresh>
+// answers the seat's BIP-340 signature over identityProofDigest(nonce) (arena-node server.js, kanban #2982/#3253) - a box cannot sign for a
+// key it does not hold, and the fresh nonce keeps it from replaying another seat's answer. Every URL of a host that proves no key of the set
+// (no answer, a bad signature, a key the round did not draw) is that host's one seat together. A URL alone on its host is a seat by itself,
+// as before (nothing is asked of it). A seat with several URLs is asked at each, and its answers count as one vote - none when they disagree
+// (seatVoice).
+//
+// What this cannot stop: one box under several HOSTNAMES (evil0.example, evil1.example, ...: wildcard DNS) that answer no identity is still
+// one seat per hostname. Where the answers a door counts carry their own signatures (a lock-set certificate, a signed fee proposal) the door
+// checks those instead; where they do not, the most a door can do is keep those seats from outnumbering the round's proven ones.
+
+
+
+/** The digest a seat signs at GET /identity?nonce= (the same as arena-node's identityProofDigest). */
+const identityProofDigest = (nonce) => taggedHash('ARENA/v1/NodeIdentityProof', nonce);
+
+const seatUrlTrimmed = (u) => String(u).replace(/\/+$/, '');
+/** A URL's host as seats are grouped by it: its hostname, lower case, without a trailing dot (ports and paths of one box are one host). */
+const hostOf = (u) => {
+  try { const x = new URL(String(u)); if (x.hostname) return x.hostname.toLowerCase().replace(/\.+$/, ''); } catch { /* not a URL */ }
+  return seatUrlTrimmed(u);
+};
+/** The node list with each source once (origin + first path segment, join.js sourceKey; the first spelling kept) - the #3350 step. */
+const distinctSources = (nodes) => {
+  const seen = new Set(), out = [];
+  for (const n of nodes || []) { const k = sourceKey(String(n)) || seatUrlTrimmed(n); if (!seen.has(k)) { seen.add(k); out.push(n); } }
+  return out;
+};
+const seatKeyHex = (k) => { try { return (typeof k === 'string' ? k : toHex(k)).toLowerCase(); } catch { return ''; } };
+
+// A PROVEN KEY IS KEPT A WHILE (the IDENTITY_KEEP_MS of join.js: a seat's key does not change behind its URL, and a page asks often); only
+// a proof is kept - a URL that proved nothing is asked again the next time
+const PROOF_KEEP_MS = 300000;
+const PROVEN_KEYS = new Map(), PROVEN_KEYS_MAX = 2000;
+const forgetProofs = () => PROVEN_KEYS.clear();
+const proofNonce = () => { const n = new Uint8Array(32); globalThis.crypto.getRandomValues(n); return n; };
+
+/** The node key the seat at `base` proves over a fresh nonce (64 hex, lower case), or null. `verify(sig, msg, key)`: BIP-340. */
+async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, now = Date.now() } = {}) {
+  base = seatUrlTrimmed(base);
+  const kept = PROVEN_KEYS.get(base);
+  if (kept && now - kept.at < PROOF_KEEP_MS) return kept.key;
+  if (typeof verify !== 'function') return null;
+  try {
+    const nonce = proofNonce();
+    const r = await fetcher(`${base}/identity?nonce=${toHex(nonce)}`, { signal: AbortSignal.timeout(ms) });
+    if (!r || !r.ok) return null;
+    const j = JSON.parse(await r.text());
+    const key = j && typeof j.node === 'string' ? j.node.toLowerCase() : '';
+    if (!/^[0-9a-f]{64}$/.test(key) || !/^[0-9a-f]{128}$/i.test(String(j.sig))) return null;
+    if (!verify(fromHex(String(j.sig).toLowerCase()), identityProofDigest(nonce), fromHex(key))) return null;
+    if (PROVEN_KEYS.size >= PROVEN_KEYS_MAX) PROVEN_KEYS.delete(PROVEN_KEYS.keys().next().value);
+    PROVEN_KEYS.set(base, { key, at: now });
+    return key;
+  } catch { return null; }
+}
+
+/**
+ * THE SEATS BEHIND A NODE LIST: [{ id, urls, key }] in the list's order. `keys`: the round's node keys (bytes or hex) - a host's URL is a
+ * seat of its own only when it proves one of them (and no other URL proved the same key: those are one seat). `verify`: BIP-340
+ * (the page's curve.verify). Without keys or verify every host is one seat.
+ */
+async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 8000 } = {}) {
+  const want = new Set((keys || []).map(seatKeyHex).filter(Boolean));
+  const byHost = new Map();
+  for (const u of distinctSources(nodes)) { const h = hostOf(u); if (!byHost.has(h)) byHost.set(h, []); byHost.get(h).push(u); }
+  const seats = [];
+  await Promise.all([...byHost.entries()].map(async ([host, urls]) => {
+    if (urls.length === 1 || !want.size || typeof verify !== 'function') { seats.push({ id: `host:${host}`, urls, key: null, at: urls[0] }); return; }
+    const proven = await Promise.all(urls.map((u) => provenKeyAt(u, { fetcher, verify, ms })));
+    const byKey = new Map(), rest = [];
+    urls.forEach((u, i) => {
+      const k = proven[i];
+      if (k && want.has(k)) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(u); } else rest.push(u);
+    });
+    for (const [k, us] of byKey) seats.push({ id: `key:${k}`, urls: us, key: k, at: us[0] });
+    if (rest.length) seats.push({ id: `host:${host}`, urls: rest, key: null, at: rest[0] });
+  }));
+  // one key proven on two hosts is one seat (a seat reached at two names)
+  const merged = new Map();
+  for (const s of seats) {
+    const m = merged.get(s.id);
+    if (m) m.urls.push(...s.urls); else merged.set(s.id, { ...s, urls: [...s.urls] });
+  }
+  const order = new Map(distinctSources(nodes).map((u, i) => [u, i]));
+  return [...merged.values()].sort((a, b) => order.get(a.at) - order.get(b.at)).map(({ id, urls, key }) => ({ id, urls, key }));
+}
+
+/**
+ * ONE SEAT'S VOICE: its URLs' answers as one vote. `answers` are the answers of the seat's URLs; `keyOf(a)` what an answer says, or null
+ * for no answer (a refusal, a timeout). The first answer when every answer that said something says the same, else null - a seat whose
+ * URLs disagree has no vote.
+ */
+function seatVoice(answers, keyOf) {
+  let first = null, k0 = null;
+  for (const a of answers || []) {
+    const k = keyOf(a);
+    if (k === null || k === undefined) continue;
+    if (first === null) { first = a; k0 = k; } else if (k !== k0) return null;
+  }
+  return first;
+}
+
 // ---- arena-protocol/src/bech32.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -19138,6 +19250,7 @@ function lockClaimKeyOf(entry) {
 // wallet that holds it; and a lock already made, that no signer node has committed
 // yet, is kept with its stake (`saveLock`), so a reload before the signer node takes
 // the entry uses that lock instead of dealing and paying again.
+
 
 
 
@@ -21769,9 +21882,16 @@ const distinctSeats = (nodes) => {
   for (const n of nodes || []) { const k = sourceKey(String(n)) || String(n).replace(/\/+$/, ''); if (!seen.has(k)) { seen.add(k); out.push(n); } }
   return out;
 };
-async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
+// ONE VOTE PER SEAT, NOT PER URL (kanban #3574, audit client-a7-1-1, the gap in #3350): http://liar.test/a, /b and /c of one box were still
+// three seats (distinctSeats keeps path-distinct URLs, as the live seats differ by path) and their unsigned ACCEPTED settlement outvoted the
+// round's two. Now the URLs of one host are one seat unless each proves a distinct node key of the round (`keys`: round.nodes; `verify`: the
+// page's curve.verify) at GET /identity?nonce= (seat-identity.js seatsOf); a seat with several URLs is asked at each and counts once, and
+// not at all when they disagree. The threshold is capped by those seats, not by URLs.
+async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null } = {}) {
+  const seats = await seatsOf(nodes, { keys, verify, fetcher });
   // EVERY SIGNER NODE AT ONCE (kanban #593)
-  const answers = await Promise.all(distinctSeats(nodes).map(async (node) => {
+  const asked = seats.flatMap((seat) => seat.urls.map((node) => ({ seat, node })));
+  const answers = await Promise.all(asked.map(async ({ node }) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
@@ -21791,25 +21911,38 @@ async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee
       return { said: `${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}` };
     } catch (e) { return { said: `${node}: ${e.message}` }; }
   }));
-  const accepted = answers.filter((a) => a.ok);
+  // (kanban #3574) one answer per seat: the one its URLs agree on, none when they disagree
+  const bySeat = new Map(seats.map((seat) => [seat, []]));
+  asked.forEach((q, i) => bySeat.get(q.seat).push(answers[i]));
+  const accepted = [];
+  for (const [seat, said] of bySeat) {
+    const v = seatVoice(said, (a) => (a.ok ? a.key : null));
+    if (v) accepted.push({ ...v, urls: said.filter((a) => a.ok).map((a) => a.from) });
+    else if (said.some((a) => a.ok)) answers.push({ said: `${seat.urls[0]}: its URLs disagree on the settlement - no vote` });
+  }
   // the same settlement: its txid and its payouts in their order (an output's index is its place in the list)
   // (kanban #1671) each answer's key was built in its own seat's try
   const groups = new Map();
   for (const a of accepted) { const k = a.key; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
   const ranked = [...groups.values()].sort((x, y) => y.length - x.length);
-  const need = Math.max(1, Number(needed) || 1);
+  // the caller's threshold was capped by the URLs asked (settlementAgreement); where those URLs are fewer seats, by the seats (kanban #3574)
+  const urls = distinctSeats(nodes).length;
+  const need = Math.max(1, seats.length < urls ? Math.min(Number(needed) || 1, seats.length) : Number(needed) || 1);
   const pays = (a) => !!payee && a.moved.payouts.some((p) => isQualifierTo(p, payee));
   const agreed = ranked.find((g) => g.length >= need) || null;
   // `seats`: the seats that answered this settlement (kanban #1355): the round's own, whose word a stake's "none" may rest on
-  const seatsOf = (g) => g.map((a) => String(a.from).replace(/\/+$/, ''));
-  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need, seats: seatsOf(agreed) };
+  const seatsOfGroup = (g) => g.flatMap((a) => a.urls.map((u) => String(u).replace(/\/+$/, '')));
+  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need, seats: seatsOfGroup(agreed) };
   const paying = ranked.find((g) => g.some(pays));
-  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true, seats: seatsOf(paying) };
+  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true, seats: seatsOfGroup(paying) };
   const said = answers.filter((a) => !a.ok).map((a) => a.said);
   if (ranked.length) return { ok: false, agreeing: ranked[0].length, needed: need,
     why: `only ${ranked[0].length} of the ${need} seats needed agree on this round's settlement yet${said.length ? ` (${said.join('; ')})` : ''}` };
   return { ok: false, agreeing: 0, needed: need, why: `no seat holds an accepted settlement of this round yet (${said.join('; ')})` };
 }
+// WHAT A SEAT PROVES ITSELF AGAINST (kanban #3574): the round's node keys and the page's BIP-340 verify, for settlementOf's seatsOf
+const seatProofs = (round, curve) => ({ keys: Array.isArray(round && round.nodes) ? round.nodes : [],
+  verify: curve && typeof curve.verify === 'function' ? (sig, msg, key) => { try { return !!curve.verify(sig, msg, key); } catch { return false; } } : null });
 /** HOW MANY SEATS MUST AGREE ON A ROUND'S SETTLEMENT (kanban #1163): its settlement threshold, never more than the seats asked. */
 const settlementAgreement = (round, nodes = []) => {
   let t = 1; try { t = sharesNeededFor(round); } catch { t = 1; }
@@ -21860,7 +21993,7 @@ async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, s
     if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
   } catch { /* an unreadable note is no note */ }
   onStep('asking the seats for the round\'s settlement');
-  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
+  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine, ...seatProofs(round, curve) });
   if (!s.ok) return { ok: false, final: false, why: s.why };
   const at = s.moved.payouts.findIndex((p) => isQualifierTo(p, mine));
   if (at < 0) return { ok: false, final: true, txid: s.txid, why: 'the round\'s settlement pays this seed\'s key nothing: no payout to collect' };
@@ -22050,7 +22183,7 @@ async function returnStake({ round, roundId, invite, seed, curve, LockClient, st
   // look already found forfeited by the signer nodes (kanban #593, playtest 2026-10-23: round 8464c5fd never settled, its seats
   // had signed the forfeit of the unfilled order's locks, and the collect asked for a settlement first - nothing was redeemed)
   if (!refused && !forfeited) {
-    const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes) });
+    const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), ...seatProofs(round, curve) });
     if (!s.ok) return { ok: false, final: false, why: s.why };
   }
   let got;
@@ -23001,7 +23134,7 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
   // (an Arena lock is read with its own call: `fields` says which; a payout output is a stock contract)
   const held = async (txid, outIdx, fields = null) => !client || !!JSON.parse(await lockStatusOf(client, fields, txid, Number(outIdx))).stored;
   // THE SETTLEMENT THE ROUND'S THRESHOLD OF SEATS AGREES ON (kanban #1163): "none" only on their word, never one seat's
-  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
+  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine, ...seatProofs(round, curve) });
   const contractIdOf = contractIdVia(LockClient || (client && client.constructor));
   let payout;
   const paidNote = note(noteKeyOf(PAYOUT_NOTE, roundId, mine, order));
@@ -38549,14 +38682,28 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
   try { marked = JSON.parse((keep && keep.getItem(ZAPS_COLLECTING_KEY)) || '[]'); } catch { marked = []; }
   const collecting = new Set(Array.isArray(marked) ? marked : []);
   const begun = new Set(collecting);   // marked by an earlier pass: this pass's own spent answer to its own first refund is not one
-  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
+  // TWO TABS' PASSES MERGE, THE LAST WRITER NO LONGER WINS (kanban #3607, state audit #1489 sm1-page-8): `keep` is the browser's store,
+  // shared by every tab, and a pass wrote its own in-memory copy of these lists back whole. Two tabs (two phrases) whose passes overlapped:
+  // tab A wrote its mark and sent its refund, tab B - which read the list before A's mark - wrote its list over it, A's tab closed before
+  // the answer, and the reload filed A's accepted refund `spent`, never booked. Each write now reads the stored list again right before it
+  // and changes only this pass's own entries: the outpoints it settled are added (arena.zaps.collected), the marks it began are added and
+  // only the marks of the outpoints it settled leave (arena.zaps.collecting). No await lies between the read and the write.
+  const storedList = (k) => { try { const a = JSON.parse((keep && keep.getItem(k)) || '[]'); return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []; } catch { return []; } };
+  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...new Set([...storedList(ZAPS_COLLECTED_KEY), ...seen])].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
   // A MARK NAMES THE VERSION REFUNDED (kanban #2803, audit r21 client-1): a mark was the bare outpoint, so one seat listed a made-up outpoint whose
   // amount the refund could not even parse (the mark stayed), then the same outpoint with any amount: the refund found no contract, the mark said
   // "begun here" and the made-up row was booked as collected (a Referral of any size). A mark is now outpoint#hash(federation, amount, image, item);
   // only the same version's refund counts as begun. A bare outpoint (a mark from before) still counts for any version.
   const markOf = (d, image) => `${d.outpoint}#${toHex(sha256(new TextEncoder().encode(JSON.stringify([String(d.federationId).toLowerCase(), String(d.amountMsat), image, d.item || null])))).slice(0, 32)}`;
-  const dropMarks = (outpoint) => { for (const k of [...collecting]) if (k === outpoint || k.startsWith(`${outpoint}#`)) collecting.delete(k); };
-  const keepCollecting = () => { if (keep) putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...collecting].slice(-ZAPS_SEEN_KEPT))); };
+  const markedHere = new Set(), settledHere = new Set();   // kanban #3607: this pass's own marks, and the outpoints whose marks it drops
+  const outpointOfMark = (k) => String(k).split('#')[0];
+  const dropMarks = (outpoint) => { settledHere.add(outpoint); for (const k of [...collecting]) if (outpointOfMark(k) === outpoint) collecting.delete(k); };
+  const keepCollecting = () => {
+    if (!keep) return;
+    const merged = new Set(storedList(ZAPS_COLLECTING_KEY).filter((k) => !settledHere.has(outpointOfMark(k))));
+    for (const k of markedHere) if (collecting.has(k)) merged.add(k);
+    putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...merged].slice(-ZAPS_SEEN_KEPT)));
+  };
   let cursors = {};
   try { cursors = JSON.parse((keep && keep.getItem(ZAPS_CURSOR_KEY)) || '{}') || {}; } catch { cursors = {}; }
   if (typeof cursors !== 'object' || Array.isArray(cursors)) cursors = {};
@@ -38661,8 +38808,8 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
     // kanban #2319: the intent is written ahead; a refund whose mark cannot be kept is not sent (its answer could be lost unbooked)
     if (!collecting.has(mark)) {
-      collecting.add(mark);
-      try { keepCollecting(); } catch (e) { collecting.delete(mark); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
+      collecting.add(mark); markedHere.add(mark);
+      try { keepCollecting(); } catch (e) { collecting.delete(mark); markedHere.delete(mark); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
     }
     let said;
     try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { return { ...d, why: String(e && e.message || e) }; }
