@@ -52,6 +52,14 @@ export function signedSeasonRoundsJson(round, rounds, sign) {
 }
 
 /**
+ * THE ROUNDS WITH ENTRIES, FOUND BY THE ENTRIES' INDEX (kanban #3562, the outage of 2026-11-24 00:00-00:40Z): asked as a scan of every
+ * round with an EXISTS per row, a pass read the whole rounds table - seat 1's copy: 673,190 rounds, 2,358 with entries, 920 MB read, 3.3 s
+ * cold on the Beelink's disk - and GET /season and /season-rounds run it every 5 minutes per game set; with the seats' load the passes held
+ * the loop 28-46 s at a time. Driven from entries_by_round: 23 MB, 0.26 s. The rows and their order (the table's rowid order) are the scan's.
+ */
+export const SEASON_ROUNDS_SQL = 'SELECT r.round_id, r.contract FROM rounds r WHERE r.round_id IN (SELECT DISTINCT round_id FROM entries) ORDER BY r.rowid';
+
+/**
  * The rounds of `games` (a Set of game id hex) this node holds with entries, started in [fromMs, toMs), read into the
  * shape protocol season.js takes. `isMarket(contract)`: whether the round's game is attested (a market) - its entries
  * carry no result, only a pick, and their amounts come from the settlement alone.
@@ -59,7 +67,7 @@ export function signedSeasonRoundsJson(round, rounds, sign) {
 export function seasonRounds(round, { games, fromMs, toMs, isMarket = () => false } = {}) {
   const db = round.db;
   // ONLY ROUNDS WITH ENTRIES - a season is of players, and a seat holds thousands of series rounds nobody joined
-  const rows = db.prepare('SELECT r.round_id, r.contract FROM rounds r WHERE EXISTS (SELECT 1 FROM entries e WHERE e.round_id = r.round_id)').all();
+  const rows = db.prepare(SEASON_ROUNDS_SQL).all();
   const out = [];
   for (const row of rows) {
     let c;
