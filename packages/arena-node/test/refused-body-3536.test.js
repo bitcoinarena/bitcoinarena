@@ -12,12 +12,28 @@ process.env.ARENA_BODY_MOST = '65536';   // set before server.js loads: a small 
 const { openStore } = await import('../src/store.js');
 const { serve } = await import('../src/server.js');
 
+// THE ANSWER IS READ EVEN IF THE SEAT CLOSES THE SOCKET WHILE THE BODY IS STILL GOING OUT: the seat answers a refused body at once and closes
+// after a short linger; a client that blindly writes all of 1 MiB can get EPIPE / ECONNRESET on macOS before it reads the answer. So the body goes
+// out chunk by chunk, each after the last was flushed, the writing stops once an answer came, and a socket error after an answer is no failure.
 const post = (port, path, bytes, { chunked = false } = {}) => new Promise((res) => {
+  let answer = null, done = false;
+  const finish = (s) => { if (!done) { done = true; res(s); } };
   const headers = { 'content-type': 'application/json', ...(chunked ? {} : { 'content-length': bytes.length }) };
   const r = request({ host: '127.0.0.1', port, path, method: 'POST', headers }, (x) => {
-    let t = ''; x.on('data', (c) => { t += c; }); x.on('end', () => res(`${x.statusCode} ${t.slice(0, 80)}`)); });
-  r.on('error', (e) => res(`closed (${e.code || e.message})`));
-  if (chunked) { for (let i = 0; i < bytes.length; i += 16384) r.write(bytes.subarray(i, i + 16384)); r.end(); } else r.end(bytes);
+    let t = ''; answer = `${x.statusCode} `;
+    x.on('data', (c) => { t += c; answer = `${x.statusCode} ${t.slice(0, 80)}`; });
+    x.on('end', () => finish(answer)); x.on('error', () => finish(answer)); x.on('close', () => setTimeout(() => finish(answer), 20));
+  });
+  r.on('error', (e) => setTimeout(() => finish(answer || `closed (${e.code || e.message})`), 100));
+  const chunks = [];
+  for (let i = 0; i < bytes.length; i += 16384) chunks.push(bytes.subarray(i, i + 16384));
+  const next = (i) => {
+    if (done || r.destroyed) return;
+    if (answer != null) return;   // answered: the rest of the body is not sent
+    if (i >= chunks.length) return r.end();
+    r.write(chunks[i], (err) => { if (!err) setImmediate(() => next(i + 1)); });
+  };
+  next(0);
 });
 
 test('#3536 a body past the limit at a door that parses JSON is answered 413, declared or streamed; a bad small body is still 400', async () => {
