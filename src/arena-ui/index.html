@@ -8054,7 +8054,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (keptHere && !answered && !board.children.length) { draw(keptHere); window.ArenaText.say(state, 'Updating from the nodes \u2026'); }
         // EIGHT SEATS AT ONCE, 45 s EACH (kanban #3289, measured on the stage 2026-11-22: a seat builds its network season in 22-50 s, past the 12 s
         // the board gave it, so no node's board ever came; the seat keeps what it built 5 min, so the next ask is quick)
-        const v = await ARENACLIENT.fetchSeason({ nodes: Array.isArray(g.nodes) ? g.nodes : [], game: g.name, days: s.days, title: g.title || g.name,
+        // ONE SEAT, ONE CONFIRMATION OF A ROW'S KEY (kanban #3589): seats behind one host count apart only when each proves a key of the checked census
+        const v = await ARENACLIENT.fetchSeason({ keys: window.ARENA_CENSUS_KEYS, verify: window.ARENA_CURVE && window.ARENA_CURVE.verify ? (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k) : null,
+          nodes: Array.isArray(g.nodes) ? g.nodes : [], game: g.name, days: s.days, title: g.title || g.name,
           viewer: viewer(), fetch: (u, o) => fetch(u, o), via, timeout, race: 8, answerMs: 45000 });
         if (v.ok) { s.kept.set(keptKey, v); if (s.kept.size > 16) s.kept.delete(s.kept.keys().next().value); }
         answered = true;
