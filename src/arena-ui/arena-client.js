@@ -38549,14 +38549,28 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
   try { marked = JSON.parse((keep && keep.getItem(ZAPS_COLLECTING_KEY)) || '[]'); } catch { marked = []; }
   const collecting = new Set(Array.isArray(marked) ? marked : []);
   const begun = new Set(collecting);   // marked by an earlier pass: this pass's own spent answer to its own first refund is not one
-  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
+  // TWO TABS' PASSES MERGE, THE LAST WRITER NO LONGER WINS (kanban #3607, state audit #1489 sm1-page-8): `keep` is the browser's store,
+  // shared by every tab, and a pass wrote its own in-memory copy of these lists back whole. Two tabs (two phrases) whose passes overlapped:
+  // tab A wrote its mark and sent its refund, tab B - which read the list before A's mark - wrote its list over it, A's tab closed before
+  // the answer, and the reload filed A's accepted refund `spent`, never booked. Each write now reads the stored list again right before it
+  // and changes only this pass's own entries: the outpoints it settled are added (arena.zaps.collected), the marks it began are added and
+  // only the marks of the outpoints it settled leave (arena.zaps.collecting). No await lies between the read and the write.
+  const storedList = (k) => { try { const a = JSON.parse((keep && keep.getItem(k)) || '[]'); return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []; } catch { return []; } };
+  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...new Set([...storedList(ZAPS_COLLECTED_KEY), ...seen])].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
   // A MARK NAMES THE VERSION REFUNDED (kanban #2803, audit r21 client-1): a mark was the bare outpoint, so one seat listed a made-up outpoint whose
   // amount the refund could not even parse (the mark stayed), then the same outpoint with any amount: the refund found no contract, the mark said
   // "begun here" and the made-up row was booked as collected (a Referral of any size). A mark is now outpoint#hash(federation, amount, image, item);
   // only the same version's refund counts as begun. A bare outpoint (a mark from before) still counts for any version.
   const markOf = (d, image) => `${d.outpoint}#${toHex(sha256(new TextEncoder().encode(JSON.stringify([String(d.federationId).toLowerCase(), String(d.amountMsat), image, d.item || null])))).slice(0, 32)}`;
-  const dropMarks = (outpoint) => { for (const k of [...collecting]) if (k === outpoint || k.startsWith(`${outpoint}#`)) collecting.delete(k); };
-  const keepCollecting = () => { if (keep) putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...collecting].slice(-ZAPS_SEEN_KEPT))); };
+  const markedHere = new Set(), settledHere = new Set();   // kanban #3607: this pass's own marks, and the outpoints whose marks it drops
+  const outpointOfMark = (k) => String(k).split('#')[0];
+  const dropMarks = (outpoint) => { settledHere.add(outpoint); for (const k of [...collecting]) if (outpointOfMark(k) === outpoint) collecting.delete(k); };
+  const keepCollecting = () => {
+    if (!keep) return;
+    const merged = new Set(storedList(ZAPS_COLLECTING_KEY).filter((k) => !settledHere.has(outpointOfMark(k))));
+    for (const k of markedHere) if (collecting.has(k)) merged.add(k);
+    putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...merged].slice(-ZAPS_SEEN_KEPT)));
+  };
   let cursors = {};
   try { cursors = JSON.parse((keep && keep.getItem(ZAPS_CURSOR_KEY)) || '{}') || {}; } catch { cursors = {}; }
   if (typeof cursors !== 'object' || Array.isArray(cursors)) cursors = {};
@@ -38661,8 +38675,8 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
     // kanban #2319: the intent is written ahead; a refund whose mark cannot be kept is not sent (its answer could be lost unbooked)
     if (!collecting.has(mark)) {
-      collecting.add(mark);
-      try { keepCollecting(); } catch (e) { collecting.delete(mark); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
+      collecting.add(mark); markedHere.add(mark);
+      try { keepCollecting(); } catch (e) { collecting.delete(mark); markedHere.delete(mark); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
     }
     let said;
     try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { return { ...d, why: String(e && e.message || e) }; }
@@ -42677,6 +42691,13 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
 const H2H_VOID_SLACK_MS = 1000;
 const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
 
+// HOW MANY LISTED ADDRESSES MUST SAY A THING SO THAT `share` OF THE COMMITTEE'S n SEATS ARE AMONG THEM (kanban #3593): at most n of the listed
+// addresses are seats, so the addresses beyond n - names or paths of one box - are added to the share. The per-host count (#3307) stays beside it:
+// paths of one box are one host, names of one box are addresses beyond n. Without a committee: 0 (the per-host count alone, as before)
+const addressesForShare = (listed, committee, share) => {
+  const n = committee && committee.length ? committee.length : 0;
+  return n ? Math.min(listed, Math.max(0, listed - n) + share) : 0;
+};
 /** How long one ask of the lock set waits for the seats still out once a majority answered (kanban #3025). */
 const H2H_STRAGGLER_MS = 500;
 async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_MS, stragglerMs = H2H_STRAGGLER_MS }) {
@@ -42697,7 +42718,12 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
   // BY HOST, NOT BY ADDRESS (kanban #3307, audit h2h-a5-2-1): a join link naming the seats plus nine paths of one box made the box's instant answers a
   // majority of the listed addresses, so every poll ended H2H_STRAGGLER_MS after them and an honest seat slower than that was never heard. The
   // straggler rule starts once a majority of HOSTS answered (each host one vote, as #2709 counts them)
+  // A MAJORITY OF THE COMMITTEE, NOT OF THE NAMES (kanban #3593, audit h2h-a7-3-1, the gap in #3307): a hostname costs nothing, so one box under nine
+  // DNS names was nine hosts, its instant answers a majority of them, and the cut again shut out honest seats answering in 600 ms. With a committee
+  // of n seats the cut also waits until so many addresses answered that a majority of the n is among them (addressesForShare)
   const answeredHosts = new Set(), hostMajority = Math.floor(hosts.length / 2) + 1;
+  const addressMajority = addressesForShare(listed.length, committee, committee && committee.length ? Math.floor(committee.length / 2) + 1 : 0);
+  let answeredAddresses = 0;
   await new Promise((done) => {
     let left = listed.length;
     if (!left) { done(); return; }
@@ -42710,10 +42736,10 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
         });
       } catch { said[i] = null; }
       if (!early) { const st = stands(said[i]); if (st) { early = { entries: st.entries, atMs: st.atMs }; done(); } }
-      answeredHosts.add(hostOf[i]);
+      answeredHosts.add(hostOf[i]); answeredAddresses++;
       if (--left === 0) done();
       // a majority of the seats' hosts answered: the rest get H2H_STRAGGLER_MS more, then this ask ends with what came (the next poll asks all again)
-      else if (!straggle && answeredHosts.size >= hostMajority) straggle = setTimeout(done, stragglerMs);
+      else if (!straggle && answeredHosts.size >= hostMajority && answeredAddresses >= addressMajority) straggle = setTimeout(done, stragglerMs);
     });
   });
   if (straggle) clearTimeout(straggle);
@@ -42744,7 +42770,9 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
   const voidOf = new Map();
   for (const [i, x] of said.entries()) if (x && typeof x === 'object') { if (!voidOf.has(hostOf[i])) voidOf.set(hostOf[i], []); voidOf.get(hostOf[i]).push(x.void === true ? 'void' : 'not'); }
   const voids = [...voidOf.values()].filter((v) => hostWord(v) === 'void').length;
-  return { required: true, certified, void: !certified && voids > 0, voids: certified ? 0 : voids };
+  // kanban #3593: and how many addresses said it, for the committee's share (addressesForShare)
+  const voidAddresses = said.filter((x) => x && typeof x === 'object' && x.void === true).length;
+  return { required: true, certified, void: !certified && voids > 0, voids: certified ? 0 : voids, voidAddresses: certified ? 0 : voidAddresses };
 }
 
 /**
@@ -42758,9 +42786,28 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
   // page gave up at close + 9 s and showed "Not revealed - you lose" while the opponent revealed): a seat's VOID after the window still ends the
   // wait at once; with none, a late certificate opens the reveal up to close + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS
   const giveUpAt = Number(entryCloseMs) + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS;
+  // the reveal to every listed seat (each address once, seatsByHost #2709), posted again every poll to each whose answer is not final, until
+  // each gave a final one or the reveal's deadline passed (#3015, #3154, #3204 below)
+  const revealUntilFinal = async () => {
+    const { listed } = seatsByHost(nodes);
+    let seats = await revealMove({ entryIdHex, move, salt, nodes: listed, identity, fetcher, timeoutMs });
+    const askAgain = (x) => x.status === 0 || x.status === 404 || x.status === 408 || x.status === 425 || x.status === 429 || x.status >= 500
+      || (x.status === 409 && /not certified yet|ask again|try again/i.test(String(x.why || '')));
+    while (now() <= giveUpAt) {
+      const again = seats.filter(askAgain);
+      if (!again.length) break;
+      await sleep(H2H_LOCK_SET_POLL_MS);
+      const more = await revealMove({ entryIdHex, move, salt, nodes: again.map((x) => x.node), identity, fetcher, timeoutMs });
+      seats = seats.map((x) => more.find((m) => m.node === x.node) || x);
+    }
+    return seats;
+  };
   for (;;) {
     const got = await lockSetOfSeats({ roundIdHex, nodes, committee, verify, entryCloseMs, fetcher, timeoutMs });
-    if (got.required === false) return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: null };
+    // "NOT REQUIRED" IS ASKED AGAIN TOO (kanban #3593, audit h2h-a7-3-1 (b)): it is any address's unsigned word, and one box under nine DNS names
+    // saying it made the page post its reveal once and return - the honest seats' "not certified yet - ask again shortly" was never followed up
+    // (FORFEIT). The reveal is now posted to every listed seat until each gave a final answer, as a certified one is (#3015, #3204)
+    if (got.required === false) return { seats: await revealUntilFinal(), certified: null };
     if (got.certified) {
       if (!got.certified.entries.includes(String(entryIdHex))) return { seats: [], notCertified: true, why: 'your entry is not in the round\'s certified lock set: it is not played, its stake comes back' };
       // NOT DONE WHILE THE SEATS ASK AGAIN (kanban #3015, audit h2h r1-1, measured 2026-11-19: a seat one signature ahead served its certificate
@@ -42782,18 +42829,7 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
       // so it is no reason to stop asking a seat whose answer is not final: every listed seat (each address once, seatsByHost #2709) is posted
       // again every poll until each one has given a final answer (a reveal taken, or a refusal that will not change) or the reveal's deadline
       // passes.
-      const { listed } = seatsByHost(nodes);
-      let seats = await revealMove({ entryIdHex, move, salt, nodes: listed, identity, fetcher, timeoutMs });
-      const askAgain = (x) => x.status === 0 || x.status === 404 || x.status === 408 || x.status === 425 || x.status === 429 || x.status >= 500
-        || (x.status === 409 && /not certified yet|ask again|try again/i.test(String(x.why || '')));
-      while (now() <= giveUpAt) {
-        const again = seats.filter(askAgain);
-        if (!again.length) break;
-        await sleep(H2H_LOCK_SET_POLL_MS);
-        const more = await revealMove({ entryIdHex, move, salt, nodes: again.map((x) => x.node), identity, fetcher, timeoutMs });
-        seats = seats.map((x) => more.find((m) => m.node === x.node) || x);
-      }
-      return { seats, certified: got.certified };
+      return { seats: await revealUntilFinal(), certified: got.certified };
     }
     // ONE SEAT'S VOID IS NOT FINAL (kanban #2798, #1489 r21-h2h-1): `void` is any seat's unsigned word, and a seat that said it on the first
     // poll - while the honest seats were still certifying - made the page skip its reveal and forfeit a round the others played. Before the
@@ -42805,9 +42841,12 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
     // point (plus a second of clock slack) and only when more seats said it than a committee's dishonest share can (n - threshold + 1);
     // else the page keeps asking until its own deadline
     const n = committee && committee.length ? committee.length : seatsByHost(nodes).listed.length;
-    const voidsNeeded = Math.max(1, Math.min(seatsByHost(nodes).hosts.length, n - lockSetThreshold(n) + 1));   // kanban #3307: voids are counted per host
+    const { listed, hosts } = seatsByHost(nodes);
+    const voidsNeeded = Math.max(1, Math.min(hosts.length, n - lockSetThreshold(n) + 1));   // kanban #3307: voids are counted per host
+    // kanban #3593: and by address, the addresses beyond the committee's n added - nine DNS names of one box are nine addresses beyond the seats
+    const voidAddressesNeeded = addressesForShare(listed.length, committee, n - lockSetThreshold(n) + 1);
     const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS + H2H_VOID_SLACK_MS;
-    if ((got.void && got.voids >= voidsNeeded && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
+    if ((got.void && got.voids >= voidsNeeded && (got.voidAddresses || 0) >= voidAddressesNeeded && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
     if (onWait) { try { onWait('certifying'); } catch { /* the page's own */ } }
     await sleep(H2H_LOCK_SET_POLL_MS);
   }
