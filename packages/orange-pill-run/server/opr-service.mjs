@@ -54,6 +54,7 @@ export const DEFAULTS = Object.freeze({
   entryPayMs: 30000,   // kanban #3603: a paid run's entry settles within this of its start (and before its submit), or the run does not count
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], promoEnd: null, adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
+  ipUnplayedShare: 10,   // kanban #3598: an address's attempts that keep nothing, per round, at most this many times its kept-run share (100 in a daily round)
   refusedLogNetBytes: 2e6, refusedLogRoundBytes: 200e6,   // kanban #3355: refused logs kept per round from one network (IPv6 /48, IPv4 /24) and from all
 });
 // FREE ROUNDS (kanban #3273, owner 2026-11-22: "a free round - no testnet sats, but 2,000 real sats for the winner" - since 10,000, #3251): a round made now has
@@ -305,8 +306,18 @@ export function createOpr(o = {}) {
   // refused at once ('malformed', nothing stored) - so 10 throw-away refusals from two free keys locked the address again. A key's first attempt
   // counts only the address's runs that are kept: scored ones ('awaiting': one waiting for its entry) and refusals that stored their log (what #3283
   // bounds) - a refusal that kept nothing does not take another key's first attempt
-  const ipFull = (r, key, { first = false } = {}) => !!key && q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND ${first ? "(state IN ('scored', 'awaiting') OR (state = 'rejected' AND log IS NOT NULL))" : "state != 'expired'"}`)
-    .get(r.id, key).n >= cfg.ipAttemptsShare * r.max_attempts;
+  // THE OTHER ATTEMPTS ARE BOUNDED TOO (kanban #3598, audit opr a7-3-1): counting only kept runs, one address opened one never-played attempt per
+  // fresh key without end (20,000 rows in 42 s, each read again by ipFull, ipCrowd and the board). A first attempt is also refused once the
+  // address has ipUnplayedShare x its kept-run share of attempts that keep nothing (never sent, timed out, refused with no log): 100 in a daily
+  // round - ten times the kept runs, so a few throw-away attempts never lock a shared address, and the rows of one address stay bounded
+  const KEPT = "(state IN ('scored', 'awaiting') OR (state = 'rejected' AND log IS NOT NULL))";
+  const ipFull = (r, key, { first = false } = {}) => {
+    if (!key) return false;
+    const share = cfg.ipAttemptsShare * r.max_attempts;
+    if (!first) return q("SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state != 'expired'").get(r.id, key).n >= share;
+    const c = q(`SELECT COALESCE(SUM(${KEPT}), 0) AS kept, COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state != 'expired'`).get(r.id, key);
+    return c.kept >= share || c.n - c.kept >= cfg.ipUnplayedShare * share;
+  };
   const IP_FULL = 'this address opened all the attempts it may in this round';
   const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
   const phaseOf = (r, t = now()) => (t >= r.end_ms || ['closed', 'listed'].includes(r.state) ? 'ended' : r.state !== 'ready' ? (r.state === 'posting' ? 'posting' : 'preparing')
