@@ -43293,6 +43293,7 @@ async function checkedGameInfoOfTile(tile, verifyEd25519) {
 // DETERMINISTIC AND WITHOUT A DOM: the same answer, title and viewer give the same rows, so a test and the page agree.
 // The one function that talks to the network, fetchSeason, fetchSeasonSnapshot, is handed its fetch.
 
+
 /** The windows the page offers (protocol season.js takes 1 to 90 whole days; the seat keeps each one 30 s). */
 const SEASON_DAYS_CHOICES = [7, 30, 90];
 /** How often an open season view asks again: the seat keeps a season 30 s (SEASON_KEEP_MS), so sooner reads the same. */
@@ -43442,15 +43443,20 @@ async function fetchSeasonSnapshot({ url, game, days, title = null, viewer = [],
 /** How long the season race waits past its first answer for the seats it asked, to confirm each row's key (kanban #3308). */
 const SEASON_CONFIRM_MS = 1500;
 /** The first view, each row's key the one most answering seats give under its name (kanban #3308); unconfirmed rows marked. */
-function confirmRows(views) {
+// ONE SEAT, ONE CONFIRMATION (kanban #3589, audit client-a7-2-2): the views were counted per answering URL, so two paths of one box
+// (https://liar.example/a and /b) were the "second seat" #3308 waits for, and confirmed the box's own key under the leader's name. `seatOf(view)`
+// names the seat a view came from (fetchSeason: seat-identity.js seatsOf); a seat's views count once, and not at all when they disagree
+function confirmRows(views, seatOf = (v) => v.seat) {
   const first = views[0];
   if (!first || !Array.isArray(first.rows)) return first;
   const rows = first.rows.map((r) => {
-    const count = new Map();
+    const bySeat = new Map();
     for (const v of views) {
       const o = (v.rows || []).find((x) => x && (r.name ? x.name === r.name : x.player === r.player));   // a row with no name: by its key
-      if (o && typeof o.player === 'string') count.set(o.player, (count.get(o.player) || 0) + 1);
+      if (o && typeof o.player === 'string') { const k = seatOf(v); if (!bySeat.has(k)) bySeat.set(k, new Set()); bySeat.get(k).add(o.player); }
     }
+    const count = new Map();
+    for (const said of bySeat.values()) if (said.size === 1) { const p = [...said][0]; count.set(p, (count.get(p) || 0) + 1); }
     const ranked = [...count].sort((a, b) => b[1] - a[1]);
     const top = ranked[0];
     if (top && top[1] >= 2 && (ranked.length === 1 || top[1] > ranked[1][1])) return top[0] === r.player ? r : { ...r, player: top[0] };
@@ -43458,7 +43464,10 @@ function confirmRows(views) {
   });
   return { ...first, rows };
 }
-async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout, race = 1 } = {}) {
+// `keys`: the network's seat keys (hex; or a function answering them, the page's ARENA_CENSUS_KEYS) and `verify` (BIP-340): a host's URLs are
+// separate seats for the confirmation only when each proves one of them (kanban #3589); without them each host is one seat
+async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout, race = 1,
+  keys = null, verify = null } = {}) {
   if (!Number.isInteger(days) || days < 1 || days > 90)
     return { ok: false, why: 'a season is 1 to 90 whole days', tried: [] };
   if (!game) return { ok: false, why: 'a season is asked for by a game', tried: [] };
@@ -43476,9 +43485,25 @@ async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch
   // a fast seat put its own key under "Satoshi" and every zap's e-cash went to it. The race now waits up to SEASON_CONFIRM_MS past the first
   // answer for the others it asked; a row's key is the one most of the answering seats give under its name (two at least), and a row whose key
   // no second seat confirms is marked keyUnconfirmed (the page takes no zap to it)
+  // (kanban #3589) which seat each URL is, found beside the race: the URLs of one host are one seat unless each proves a seat key
+  let grouping = null;
+  const seatOfUrl = async () => {
+    if (!grouping) grouping = (async () => {
+      // the keys are asked for only where a host has several URLs (a census check can take a while; one URL per host needs none)
+      const several = new Set(seats.map(hostOf)).size < seats.length;
+      const ks = !several ? [] : typeof keys === 'function' ? await keys() : keys;
+      const groups = await seatsOf(seats, { keys: Array.isArray(ks) ? ks : [], verify, fetcher: (u, o) => fetch(via(u), o) });
+      const m = new Map(); for (const g of groups) for (const u of g.urls) m.set(u, g.id);
+      return m;
+    })().catch(() => new Map());
+    const m = await grouping;
+    return (v) => m.get(v.seat) || `host:${hostOf(v.seat)}`;
+  };
+  const confirmed = async (views) => confirmRows(views, await seatOfUrl());
+  seatOfUrl().catch(() => {});   // started with the race, so it is ready when the first answers are
   const raced = (batch) => new Promise((resolve, reject) => {
     const views = []; let left = batch.length, timer = null, over = false;
-    const finish = () => { if (over) return; over = true; if (timer) clearTimeout(timer); if (!views.length) reject(new Error('none')); else resolve(confirmRows(views)); };
+    const finish = () => { if (over) return; over = true; if (timer) clearTimeout(timer); if (!views.length) reject(new Error('none')); else confirmed(views).then(resolve, reject); };
     for (const seat of batch) ask(seat).then((v) => { if (over) return; views.push(v); if (!timer) timer = setTimeout(finish, SEASON_CONFIRM_MS); },
       (e) => { tried.push({ seat, why: e && e.message ? e.message : String(e) }); })
       .finally(() => { if (--left === 0) finish(); });
@@ -43493,7 +43518,8 @@ async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch
   const step = race > 1 ? race : 1;
   for (let i = front.length; i < seats.length; i += step) {
     const batch = seats.slice(i, i + step);
-    if (batch.length === 1) { try { return await ask(batch[0]); } catch (e) { tried.push({ seat: batch[0], why: e && e.message ? e.message : String(e) }); } continue; }
+    // A LONE VIEW CONFIRMS NOTHING (kanban #3589): a batch of one seat was returned whole, without confirmRows - every row's key that seat's word
+    if (batch.length === 1) { try { return await confirmed([await ask(batch[0])]); } catch (e) { tried.push({ seat: batch[0], why: e && e.message ? e.message : String(e) }); } continue; }
     try { return await raced(batch); } catch { /* the next ones */ }
   }
   return { ok: false, why: tried.length ? 'no node answered the season just now' : 'no node to ask', tried };
