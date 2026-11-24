@@ -6117,9 +6117,20 @@ function legacyOutpoint(outpoint) {
 }
 
 /** Whether a template-1 bond counts on `network`: everywhere it is read without a cutoff, else a listed outpoint or an early one. */
-function legacyV1Counts(network, confirmationHeight, outpoint) {
+/**
+ * FROM WHICH CENSUS HEIGHT THE #3548 RULE IS READ (kanban #3669). The seats posted Next Block and Up/Down rounds up to 72 h ahead
+ * with census heights 163,017-163,068 before #3548 reached them (the roll of 2026-11-24 ended 22:51Z); those roots count a template-1
+ * bond confirmed at 162,922. A client reading #3548 refused that bond, its census hash differed from the round's, and no paid join was
+ * seated. A census below this height is read as it was written (template 1 counts, as before #3548); from it on, #3548's rule. No
+ * posted round names a census height at or above it, so the seats' censuses from here on and the clients agree.
+ */
+const BOND_V1_RULE_FROM_CENSUS = Object.freeze({ testnet4: 163069 });
+
+function legacyV1Counts(network, confirmationHeight, outpoint, censusHeight) {
   const before = BOND_V1_BEFORE[network];
   if (before === undefined) return { ok: true };
+  const from = BOND_V1_RULE_FROM_CENSUS[network];
+  if (Number.isInteger(from) && Number.isInteger(censusHeight) && censusHeight < from) return { ok: true };   // kanban #3669
   const op = legacyOutpoint(outpoint);
   if (op && network === 'testnet4' && TESTNET4_LEGACY_V1_BONDS.includes(op)) return { ok: true };
   if (Number.isInteger(confirmationHeight) && confirmationHeight < before) return { ok: true };
@@ -6160,8 +6171,8 @@ function bondMaturityOf(advert, { genesisMaturity, network } = {}) {
  * (kanban #3548: on testnet4 only the legacy genesis bonds; `bondMaturityOf` refuses it on mainnet). `outpoint` is
  * { txid, vout }, the txid as internal-order bytes or display hex.
  */
-function maturityStands(advert, confirmationHeight, network, outpoint) {
-  if (advert && advert.bondScriptTemplateVersion === BOND_SCRIPT_TEMPLATE_VERSION) return legacyV1Counts(network, confirmationHeight, outpoint);
+function maturityStands(advert, confirmationHeight, network, outpoint, censusHeight) {
+  if (advert && advert.bondScriptTemplateVersion === BOND_SCRIPT_TEMPLATE_VERSION) return legacyV1Counts(network, confirmationHeight, outpoint, censusHeight);
   if (!advert || advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2) return { ok: true };
   const offset = BOND_MATURITY_OFFSET[network];
   if (!Number.isInteger(offset)) return { ok: false, why: `no bond maturity offset is set for ${network}` };
@@ -10331,7 +10342,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     // view was brought, else the entry's own height. One block short is a bond its node could take back before the
     // network's maturity, and it is excluded by name.
     const confirmed = chainSays ? chainSays.height : e.height;
-    const matures = maturityStands(read.advert, confirmed, network, { txid: e.txid, vout: e.vout });
+    const matures = maturityStands(read.advert, confirmed, network, { txid: e.txid, vout: e.vout }, contract.censusHeight);   // #3669
     if (!matures.ok) { excluded.push({ ...e, why: matures.why }); continue; }
 
     // AND THE AMOUNT IS THE CHAIN'S. This was the entry's own claim, measured:
@@ -34073,7 +34084,7 @@ function readEntryFromEvidence(item, { contract, headers, firstHeight, bond, ver
   const seen = recognizeBond(tx, vout, advert, { network, bond, ...(ancestor ? { ancestor: true } : {}) });
   if (!seen.ok) return { ok: false, why: seen.why };
   bondSats = seen.valueSats;
-  const matures = maturityStands(advert, height, network, { txid: tx.txid, vout });
+  const matures = maturityStands(advert, height, network, { txid: tx.txid, vout }, contract.censusHeight);   // #3669
   if (!matures.ok) return { ok: false, why: matures.why };
   // RESOLVE's filters, on the body the bond committed to
   // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544), asked over the whole census below - as a seat's census asks it.

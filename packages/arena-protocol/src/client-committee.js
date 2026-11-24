@@ -123,7 +123,7 @@ function readEntryFromEvidence(item, { contract, headers, firstHeight, bond, ver
   const seen = recognizeBond(tx, vout, advert, { network, bond, ...(ancestor ? { ancestor: true } : {}) });
   if (!seen.ok) return { ok: false, why: seen.why };
   bondSats = seen.valueSats;
-  const matures = maturityStands(advert, height, network, { txid: tx.txid, vout });
+  const matures = maturityStands(advert, height, network, { txid: tx.txid, vout }, contract.censusHeight);   // #3669
   if (!matures.ok) return { ok: false, why: matures.why };
   // RESOLVE's filters, on the body the bond committed to
   // FROM PROTOCOL 19 THE FLOOR IS THE NODE'S SUM (kanban #544), asked over the whole census below - as a seat's census asks it.
