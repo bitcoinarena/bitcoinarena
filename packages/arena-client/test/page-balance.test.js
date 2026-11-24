@@ -15,6 +15,9 @@ const HTML = readFileSync(PAGE, 'utf8');
 const at = HTML.indexOf('    function paintMoney() {');
 const SRC = HTML.slice(at, HTML.indexOf('\n    }\n', at) + '\n    }\n'.length);
 assert.ok(at > 0, 'index.html paints its money in paintMoney');
+// paintMoney reads the backup line and paints the notice through the page's own backupLineNow and paintBackupNotice (kanban #1033)
+const lift = (from, to) => { const a = HTML.indexOf(from); assert.ok(a > 0, `index.html holds ${from.trim().slice(0, 50)}`); return HTML.slice(a, HTML.indexOf(to, a) + to.length); };
+const BACKUP = [lift('    const backupLineNow = () => {', '\n    };\n'), lift('    function paintBackupNotice(', '\n    }\n')];
 
 function paint({ balance, lobby = { showing: true, lobby: true, screen: [430, 932], balance: [56, 468, 318, 34] }, driving = false, canvas = { left: 0, top: 0, width: 430, height: 932 } }) {
   const els = {};
@@ -24,7 +27,7 @@ function paint({ balance, lobby = { showing: true, lobby: true, screen: [430, 93
   const document = { getElementById: (id) => (id === 'canvas' ? { getBoundingClientRect: () => canvas } : id === 'boot' ? null : els[id] || null) };
   const window = { ArenaText, ArenaBits, ARENA_UNITY_LOBBY: lobby, ARENA_WALLET_BALANCE: balance, unityInstance: {} };
   const ARENACLIENT = { backupLine: () => 'This wallet has no backup.', NO_BACKUP_LINE: 'This wallet has no backup.' };
-  pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], SRC, 'return paintMoney();')(
+  pageFunction(PAGE, ['document', 'window', 'ARENACLIENT', 'drivingNow', 'backupStore', 'walletSeed', 'isBackedUp', 'seedBroughtIn'], [...BACKUP, SRC], 'return paintMoney();')(
     document, window, ARENACLIENT, () => driving, () => ({}), () => 'seed', () => false, () => false);
   return els;
 }

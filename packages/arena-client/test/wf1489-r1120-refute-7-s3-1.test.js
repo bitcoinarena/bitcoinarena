@@ -17,8 +17,12 @@ const here = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const trees = [here, ...(process.env.OTHER_TREES ? process.env.OTHER_TREES.split(':')
   : [here + '-main', here + '-20'])];
 
+// a default sibling (<this tree>-main, <this tree>-20: the author's checkouts of origin/main and the 2.0 branch) that this machine does
+// not have is skipped - a ticket worktree has neither; a tree OTHER_TREES names must be there
+const named = !!process.env.OTHER_TREES;
 for (const tree of trees) {
-  test(`#3087 in every copy of the page: ${tree.split('/').pop()}`, () => {
+  const absent = tree !== here && !named && !existsSync(tree + '/src/arena-ui/index.html');
+  test(`#3087 in every copy of the page: ${tree.split('/').pop()}`, { skip: absent && `no sibling tree ${tree} here (OTHER_TREES names the copies to check)` }, () => {
     assert.ok(existsSync(tree + '/src/arena-ui/index.html'), `the tree ${tree} is there`);
     const page = readFileSync(tree + '/src/arena-ui/index.html', 'utf8');
     const bundle = readFileSync(tree + '/src/arena-ui/arena-client.js', 'utf8');

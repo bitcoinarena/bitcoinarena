@@ -96,10 +96,13 @@ test('a node with no key, or a guardian directory without private.json, starts n
 import { readFileSync } from 'node:fs';
 import { guardiansToStart } from '../src/node-start.js';
 
-function standInSeen(dir) {
+// `named`: the stand-in stays a process whose command names fedimintd - a kept guardian is alive only then (guardian.js pidfileUnits
+// isFedimintd, kanban #495: a reused pid is no guardian); `exec sleep` leaves a process ps shows as "sleep 60"
+function standInSeen(dir, { named = false } = {}) {
   const bin = join(dir, 'bin'); mkdirSync(bin);
   const seen = join(dir, 'fedimintd-seen');
-  writeFileSync(join(bin, 'fedimintd'), `#!/bin/sh\necho "$FM_DATA_DIR $FM_BIND_API $FM_BIND_P2P $FM_BIND_METRICS $FM_API_URL" >> ${seen}\nexec sleep 60\n`);
+  const wait = named ? 'sleep 60 & k=$!\ntrap \'kill $k; exit 0\' TERM INT\nwait $k\n' : 'exec sleep 60\n';
+  writeFileSync(join(bin, 'fedimintd'), `#!/bin/sh\necho "$FM_DATA_DIR $FM_BIND_API $FM_BIND_P2P $FM_BIND_METRICS $FM_API_URL" >> ${seen}\n${wait}`);
   chmodSync(join(bin, 'fedimintd'), 0o755);
   const cookie = join(dir, '.cookie'); writeFileSync(cookie, '__cookie__:sekrit');
   return { seen, chain: (extra) => ({ bitcoindUrl: 'http://127.0.0.1:48332', cookiePath: cookie, call: async () => ({ chain: 'regtest' }),
@@ -232,7 +235,7 @@ test('#1177 a setup-mode node whose guardian finished its key generation in this
 
 test('#1177 a setup-mode node with no key files still starts a fresh setup (its old database kept beside it)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'node-start-1177b-'));
-  const { chain } = standInSeen(dir);
+  const { chain } = standInSeen(dir, { named: true });
   try {
     const path = join(dir, 'n.db');
     const p = await port(23711);

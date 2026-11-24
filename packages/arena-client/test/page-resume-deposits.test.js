@@ -14,7 +14,9 @@ const SRC = HTML.slice(at, HTML.indexOf('\n      };\n', at) + 9);
 
 function page() {
   const resumed = [], reads = [];
-  const window = { ARENA_WALLETS: new Map(), ARENA_READ_BALANCE: () => reads.push(1) };
+  // the page's money alert (kanban #883: a stuck deposit says so when it arrives) - stubbed, this test measures the resume
+  const ARENA_MONEY_ALERT = { credited: () => {}, lost: () => {}, settled: () => {} };
+  const window = { ARENA_WALLETS: new Map(), ARENA_READ_BALANCE: () => reads.push(1), ARENA_MONEY_ALERT };
   const ARENACLIENT = { fromHex: (h) => Buffer.from(h, 'hex'),
     resumeDeposits: (o) => { resumed.push(o); return Promise.resolve([]); } };
   new Function('window', 'ARENACLIENT', 'vault', 'paintHistory', SRC)(window, ARENACLIENT, () => 'store', () => {});

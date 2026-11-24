@@ -225,6 +225,8 @@ test('#1342 a screenshot goes up before the report, by its bytes; the report nam
   const faucet = spawn(process.execPath, [fileURLToPath(new URL('../tools/faucet.mjs', import.meta.url))], { stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, FAUCET_PORT: String(port), FAUCET_CHAT_URL: `http://127.0.0.1:${chat.address().port}`, FAUCET_CHAT_CHANNEL: '6', FAUCET_CHAT_TOKEN_FILE: join(dir, 'token'),
       FAUCET_FEEDBACK_DB: join(dir, 'feedback.db'), FAUCET_FEEDBACK_MINE_URLS: MINE, FAUCET_FOUNDING_FILE: join(dir, 'founding.jsonl'), FAUCET_BOOK: join(dir, 'book.json'),
+      // the disk floor for screenshots (20 GB free by default, kanban #1405) is the host's, not this test's: a small /tmp answered 507
+      FAUCET_SHOT_FREE_FLOOR_BYTES: '0',
       FAUCET_ADMIN_SHA256: createHash('sha256').update(CODE).digest('hex') } });
   const base = `http://127.0.0.1:${port}`;
   try {

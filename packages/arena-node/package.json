@@ -5,7 +5,7 @@
   "type": "module",
   "description": "One process, one round: open it, take an entry, store input batches, close it. No verification.",
   "scripts": {
-    "test": "node --experimental-test-module-mocks --test --test-timeout=120000 test/*.test.js",
+    "test": "node ../../tools/test-tmp.mjs --experimental-test-module-mocks --test --test-timeout=120000 test/*.test.js",
     "start": "node src/main.js"
   },
   "dependencies": {

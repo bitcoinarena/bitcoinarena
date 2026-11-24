@@ -37,7 +37,8 @@ function page({ ctx = { ok: true, round: { stakeMsat: 100000n }, roundIdHex: 'ab
   els.withdrawBox = { body, close, shown, home };
   const did = [];
   const document = { getElementById: (id) => els[id] || null, body: { classList: { contains: (c) => c === 'arena-own-client' && ownClient } } };
-  const window = { ArenaText, ArenaBits, ARENA_WALLET_BALANCE: balance, sessionStorage: {}, ARENA_PAINT_SETTINGS: () => did.push('paint settings'),
+  // ARENA_TRACK: the page's Umami events (a90c59bb9, kanban #923), counted nowhere here; ARENA_MONEY_ALERT: room for a deposit (62247f978, kanban #883), always here
+  const window = { ArenaText, ArenaBits, ARENA_TRACK: () => {}, ARENA_MONEY_ALERT: { room: () => true, needRoom: () => {} }, ARENA_WALLET_BALANCE: balance, sessionStorage: {}, ARENA_PAINT_SETTINGS: () => did.push('paint settings'),
     ARENA_LOCK_WASM: async () => ({ default: async () => {}, LockClient: 'LC' }) };
   const ARENACLIENT = { depositDonationMsat: () => 1000n, marketForRound: () => null,
     settingsDepositOffer: async (o) => { if (depositFails) throw new Error(depositFails); did.push(['offer', o.invite, String(o.donationMsat)]); return { offer: 1 }; } };
@@ -124,7 +125,8 @@ test('a game\'s client is handed the page\'s wallet - balance, deposit, withdraw
 test('the way back is in the bar, the balance on the right, the client\'s own back hidden', () => {
   const HTML = readFileSync(PAGE, 'utf8');
   assert.match(HTML, /<span>Bitcoin Arena<\/span><\/a>\s*<button id="arena-wb-back" type="button"[^>]*><span aria-hidden="true">&larr;<\/span><span class="word">Arena<\/span><\/button>\s*<button class="wb-bal" type="button"/);
-  assert.match(HTML, /#arena-wallet-bar \.wb-bal \{ flex: 0 1 auto; min-width: 0; margin-left: auto;/);
+  // the balance never shrinks (ac2330f0f: "the balance never cut"), and is pushed right
+  assert.match(HTML, /#arena-wallet-bar \.wb-bal \{ flex: 0 0 auto; margin-left: auto;/);
   // (2026-10-19: "the button is superfluous and redundant. the bitcoin Arena logo already links back to the homepage"):
   // no "← bitcoinarena.io" on the games screen any more (/#404 added it);: the balance is a button
   assert.doesNotMatch(HTML, /arena-wb-site/);

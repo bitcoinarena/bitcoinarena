@@ -82,16 +82,18 @@ test('every footer says the UI number or the release, never the static build (#7
   assert.match(chrome, /\+ '<a class="asc-feedback"[^\n]+\n\s+\+ '<a class="asc-donate"/);
   // the Arena page: the fixed line, the games row and the loading screen say "UI n"; the static build is nowhere visible
   const page = read('src/arena-ui/index.html');
-  assert.match(page, /<div id="arena-build" aria-hidden="true">UI \{\{\{ UI_VERSION \}\}\}<\/div>/);
-  assert.match(page, /<div class="foot-row"><span class="build-line">UI \{\{\{ UI_VERSION \}\}\}<\/span><span class="arena-social">.*?<\/span><button type="button" class="donate-btn"[^>]*>&hearts; Donate<\/button><\/div>/);
-  assert.match(page, /<div class="build-line" id="boot-build">UI \{\{\{ UI_VERSION \}\}\}<\/div>/);
+  // each "UI n" says what it is on hover since 0ae923862 (kanban #2778)
+  assert.match(page, /<div id="arena-build"><span class="ui-stamp" title="Page version \(UI build\)\. Please name it when you report a bug\.">UI \{\{\{ UI_VERSION \}\}\}<\/span><\/div>/);
+  assert.match(page, /<div class="foot-row"><span class="build-line" title="Page version \(UI build\)\. Please name it when you report a bug\.">UI \{\{\{ UI_VERSION \}\}\}<\/span><span class="arena-social">.*?<\/span><button type="button" class="donate-btn"[^>]*>&hearts; Donate<\/button><\/div>/);
+  assert.match(page, /<div class="build-line" id="boot-build" title="Page version \(UI build\)\. Please name it when you report a bug\.">UI \{\{\{ UI_VERSION \}\}\}<\/div>/);
   // PRODUCT_VERSION only where nobody reads it on screen: #boot's data attribute, the page's config and the order timing's ui
   const uses = [...page.matchAll(/.{0,40}\{\{\{ PRODUCT_VERSION \}\}\}/g)].map((m) => m[0]);
   assert.equal(uses.length, 3, uses.join(' | '));
   assert.ok(uses.some((u) => u.includes('data-build="')) && uses.some((u) => u.includes("productVersion: '")) && uses.some((u) => u.includes("ui: 'build ")), uses.join(' | '));
-  // the fixed line ends 16 px left of the links (their left edge 214 px from the right) wherever it shows
+  // the fixed line ends 16 px left of the links (their left edge 214 px from the right) wherever it shows; over a game's own
+  // client left of all five links since 0af39cc49 (kanban #2763)
   assert.equal((page.match(/padding: 0 230px 0 8px;/g) || []).length, 2);
-  assert.match(page, /html body\.arena-own-client #arena-build \{ height: calc\(30px \+ min\(env\(safe-area-inset-bottom, 0px\), 4px\)\); line-height: 30px; padding-right: 230px; font-size: 10px; \}/);
+  assert.match(page, /html body\.arena-own-client #arena-build \{ height: calc\(30px \+ min\(env\(safe-area-inset-bottom, 0px\), 4px\)\); line-height: 30px; padding-right: 260px; font-size: 10px; \}/);
 });
 
 test('the links stand clear of Donate (#753): 16 px more than the row gap in site-chrome, 14 px in the games row, 20 px left of the fixed Donate', () => {

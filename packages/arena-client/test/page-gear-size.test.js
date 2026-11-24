@@ -12,7 +12,9 @@ const decl = (rule, prop) => { const m = rule.match(new RegExp('(?:^|[;{\\s])' +
 
 test('the wallet bar\'s gear is the size of the strip\'s gear', () => {
   const strip = HTML.match(/\n\s*#arena-settings-go \{([^}]*)\}/)[1];
-  const m = HTML.match(/\n\s*#arena-wallet-bar #arena-wb-gear \{([^}]*)\}/);
-  assert.ok(m, 'the wallet bar\'s gear has its own rule');
-  for (const prop of ['font-size', 'line-height', 'padding']) assert.equal(decl(m[1], prop), decl(strip, prop), prop);
+  // its own rules, in the page's order (ac2330f0f put a `flex: none` rule for it ahead of its size rule): the last that sets a property wins
+  const rules = [...HTML.matchAll(/\n\s*#arena-wallet-bar #arena-wb-gear \{([^}]*)\}/g)].map((m) => m[1]);
+  assert.ok(rules.length, 'the wallet bar\'s gear has its own rule');
+  const own = (prop) => rules.map((r) => decl(r, prop)).filter((v) => v !== null).pop() ?? null;
+  for (const prop of ['font-size', 'line-height', 'padding']) assert.equal(own(prop), decl(strip, prop), prop);
 });

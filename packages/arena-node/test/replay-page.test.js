@@ -41,7 +41,9 @@ test('the replay doors: a page, the run as the node replays it, the round\'s own
 
     const t = await get(A, `/replay/transcript?round=${rid}&entry=${eid}`);
     assert.equal(t.status, 200);
-    const handed = JSON.parse(text(t.body));
+    // the door hands the run plus its clock, the first and last checkpoint times the page plays against (46c7ad466); the run itself is the stored one
+    const { clock, ...handed } = JSON.parse(text(t.body));
+    assert.ok(clock, 'the run comes with its clock');
     assert.deepEqual(handed, JSON.parse(JSON.stringify(readTranscript(w.a.round.db, w.rid, played.eid))), 'the page is handed another run than the node replays');
     assert.equal((await get(A, `/replay/transcript?round=${rid}&entry=${'ab'.repeat(32)}`)).status, 404, 'a run this node does not hold is not a 404 - the page could not ask the others');
 

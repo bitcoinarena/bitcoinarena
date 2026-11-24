@@ -9,7 +9,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const HTML = readFileSync(new URL('../pages/owner.html', import.meta.url), 'utf8');
-const KEEP = HTML.slice(HTML.indexOf('const NODE_PARTS'), HTML.indexOf('\nconst HASH'));
+// the keeping lines only: NODE_PARTS through the end of the `if (ON_SITE)` block. Up to `const HASH` the slice took the boot bar too,
+// whose `setInterval(..., 1000)` (owner.html bootTick) threw on `document` every second, one per load, and the file never exited
+const KEEP_AT = HTML.indexOf('const NODE_PARTS');
+const KEEP = HTML.slice(KEEP_AT, HTML.indexOf('\n}\n', HTML.indexOf("addEventListener('hashchange', keepNode)", KEEP_AT)) + 2);
 const KEY = 'ab'.repeat(32), LOCAL = 'http://127.0.0.1:18770';
 
 // one page load of the site's owner page in a browser tab: the lines run with that tab's address, history and sessionStorage

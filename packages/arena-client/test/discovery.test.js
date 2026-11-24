@@ -697,10 +697,24 @@ test('no file in the client reads an address off the page', () => {
     if (!file.endsWith('.js')) continue;
     const text = readFileSync(dir + file, 'utf8')
       .replace(/\/\/[^\n]*/g, '')                    // comments name it on purpose
-      .replace(/\/\*[\s\S]*?\*\//g, '');
-    for (const bad of [/BLWP_NODE/, /window\s*\./, /globalThis\s*\./, /location\s*\./]) {
-      if (bad.test(text)) guilty.push(`${file}: ${bad}`);
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*import\b[^\n]*$/gm, '');         // a module's file name ('.../window.js') is not the page
+    for (const bad of [/BLWP_NODE/, /ARENA_NODE\b/]) if (bad.test(text)) guilty.push(`${file}: ${bad}`);
+    // THE PAGE'S GLOBALS THE CLIENT DOES READ, NONE OF THEM AN ADDRESS: the platform's crypto, storage, Worker and
+    // navigator, the page's curve (ARENA_CURVE), and page-lock's resolve of a seat's spelling against the page's own
+    // URL the way fetch does (d7b52efac, kanban #2013) - the seat itself still comes from the caller's list.
+    // A local named `window` (client.js's feed window) or a field `.window` (a round's window) is not the page.
+    const localWindow = /\b(const|let|var)\s+window\b/.test(text);
+    const reads = [...text.matchAll(/(?<![\w$.])(window|globalThis)\s*\.\s*([\w$]+)/g)]
+      .filter(([, who]) => !(who === 'window' && localWindow)).map(([, who, what]) => `${who}.${what}`);
+    const ok = new Set(['crypto', 'localStorage', 'Worker', 'navigator', 'ARENA_CURVE']);
+    for (const r of new Set(reads)) {
+      const what = r.split('.')[1];
+      if (ok.has(what)) continue;
+      if (file === 'page-lock.js' && r === 'globalThis.location') continue;
+      guilty.push(`${file}: ${r}`);
     }
+    for (const m of text.matchAll(/(?<![\w$.])location\s*\.\s*([\w$]+)/g)) guilty.push(`${file}: location.${m[1]}`);
   }
   assert.deepEqual(guilty, []);
 });

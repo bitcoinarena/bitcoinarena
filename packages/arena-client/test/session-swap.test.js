@@ -22,13 +22,13 @@ const bundle = readFileSync(root + 'packages/arena-client/dist/arena-client.js',
 
 test('the bridge closes a session whose round is not the one the page has joined', () => {
   // THE COMPARISON: the round the session is bound to against the round the page now names.
-  assert.match(jslib, /Module\.blwpNet\.where && Module\.blwpNet\.where\.roundId/,
+  assert.match(jslib, /Module\.arenaNet\.where && Module\.arenaNet\.where\.roundId/,
     'the bridge does not read which round its session is bound to');
   assert.match(jslib, /ARENACLIENT\.roundId\(window\.ARENA_ROUND\)/,
     'the bridge does not read which round the page has joined');
   // AND THE TEARDOWN, not a wait for a word that never comes.
   assert.match(jslib, /was\.close\(\)/, 'the bridge never closes the old client');
-  assert.match(jslib, /Module\.blwpNet\.client = null/, 'the bridge keeps the old client after closing it');
+  assert.match(jslib, /Module\.arenaNet\.client = null/, 'the bridge keeps the old client after closing it');
   // AND THE SAME ROUND IS STILL LEFT ALONE: a slow session on the round being played is not torn down.
   assert.match(jslib, /if \(!was \|\| !was\.over\) return 1;\s+\/\/ already running, on this same round/,
     'the bridge no longer keeps a live session on the round it is already playing');

@@ -20,6 +20,9 @@ import { toHex } from '../../arena-protocol/src/hash.js';
 
 const START_DEADLINE = 300, BLOCK_TICKS = 600;
 const SPAN_MS = Number(msForTicks(2 * START_DEADLINE + BLOCK_TICKS).ms);
+// THE ENTRY CLOSE LIES 12 s PAST THE TEST'S START (kanban #3071): seven seats boot first, and since #2688 (38abec6c5) each loads its cores itself
+// (about 3 s for seven), so the old 4 s closed the round before the first handout, which is then refused. The skip past the close costs no wall time
+const SEVEN_SEAT_LEAD_MS = 12000;
 const ROUND = { gameId: RPS_GAME_ID, simCoreHash: RPS_CORE_HASH, configHash: RPS_CONFIG_HASH, blockTicks: BLOCK_TICKS, startDeadlineTicks: START_DEADLINE };
 const ROCK = 0, SCISSORS = 2;
 const player = (name, k) => ({ name, key: b32(k), worldSecret: new Uint8Array(32), ticks: 0, words: () => [0, 0, 0, 0, 0] });
@@ -36,7 +39,7 @@ const shutDoor = (d, playerKey) => {
 };
 
 const run = (junk) => async () => {
-  const w = await lockRound({ n: 7, serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + 4000 });
+  const w = await lockRound({ n: 7, serveOpts: { plugins: [NEXTBLOCK, RPS] }, round: ROUND, minScore: 2, endMs: testNow() + SPAN_MS + SEVEN_SEAT_LEAD_MS });
   let stub;
   try {
     skipTo(Number(w.c.committeeTimeMs) + 20);

@@ -10,7 +10,10 @@ import { readFileSync } from 'node:fs';
 const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
 // the page's WHAT (one wording for every row, kanban #564) and its in/out rule, lifted from paintHistory
 const whatAt = HTML.indexOf('      const WHAT = (r, sat) => ');
-const WHAT = new Function('return ' + HTML.slice(whatAt + '      const WHAT = '.length, HTML.indexOf(";\n", whatAt)))();
+// WHAT spans many lines since the refund names stake and fee (kanban #1481), with statements of its own inside - it ends at its own last branch;
+// the page's gameTitleOf and stakeEntered are stubbed (a game is named as itself, no lock record says a stake was entered)
+const WHAT = new Function('gameTitleOf', 'stakeEntered', 'return ' + HTML.slice(whatAt + '      const WHAT = '.length,
+  HTML.indexOf("          : String(r.kind || 'entry');\n", whatAt) + "          : String(r.kind || 'entry')".length))((n) => n, () => false);
 const plusAt = HTML.indexOf('        const plus = r.kind === ');
 const PLUS = new Function('r', HTML.slice(plusAt, HTML.indexOf(';\n', plusAt) + 1) + ' return plus;');
 const row = (r) => ({ plus: PLUS(r), what: WHAT(r, (m) => `${Number(BigInt(m || 0) / 1000n)} sat`) });

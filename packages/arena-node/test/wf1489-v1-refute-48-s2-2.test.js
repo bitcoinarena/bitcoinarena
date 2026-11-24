@@ -10,6 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
@@ -39,7 +40,7 @@ const req = async (port, f) => {
 };
 
 test('#1489-v1-refute-48-s2-2 a migration cut off during its UPDATE: the restarted relay still finds every old event by its tag', async () => {
-  const path = join(mkdtempSync(join(process.cwd(), 'wf48s2m-')), 'r.db');
+  const path = join(mkdtempSync(join(tmpdir(), 'wf48s2m-')), 'r.db');
   const db = oldStore(path, 40);
   // what the cut leaves: both ALTERs committed, the UPDATE rolled back
   db.exec('ALTER TABLE tags ADD COLUMN kind INTEGER; ALTER TABLE tags ADD COLUMN created_at INTEGER;'); db.close();
@@ -53,7 +54,7 @@ test('#1489-v1-refute-48-s2-2 a migration cut off during its UPDATE: the restart
 });
 
 test('#1489-v1-refute-48-s2-2 a migration cut off between its two ALTERs: the relay still starts', async () => {
-  const path = join(mkdtempSync(join(process.cwd(), 'wf48s2m-')), 'r.db');
+  const path = join(mkdtempSync(join(tmpdir(), 'wf48s2m-')), 'r.db');
   const db = oldStore(path, 5);
   db.exec('ALTER TABLE tags ADD COLUMN kind INTEGER;'); db.close();
   let r, err;

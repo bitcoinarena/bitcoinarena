@@ -69,7 +69,9 @@ test('#1489 refute 2 #1485: a head-to-head handout the seat takes must not be fo
   try {
     // the refute's order: a handout taken outside the kept lead, the funding past it (a timely order with the check: arena-client
     // wf1489-v1-refute-64-s2-2; the fixture's 1.5 s window has room for one handout outside the kept lead only)
-    skipTo(Math.max(close - KEPT - 50, Number(w.c.committeeTimeMs) + 20));
+    // 200 ms outside the kept lead, not 50: the handout reaches the seat that much real time after the skip, and at 50 ms it landed inside the lead
+    // and was refused before the refute could run (kanban #3071)
+    skipTo(Math.max(close - KEPT - 200, Number(w.c.committeeTimeMs) + 20));
     const leftAtHandout = close - testNow();
     assert.ok(leftAtHandout > KEPT, `outside the kept lead (${leftAtHandout} ms left)`);
     const late = await order(mk(1), FUNDING_AND_LOCK);

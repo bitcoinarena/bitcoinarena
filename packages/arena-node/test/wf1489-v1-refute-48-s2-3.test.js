@@ -8,6 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
@@ -23,7 +24,7 @@ const req = async (port, f) => {
 };
 
 test('#1489-v1-refute-48-s2-3 a tag backfill cut off part way is finished on the next start', async () => {
-  const path = join(mkdtempSync(join(process.cwd(), 'wf48s2b-')), 'r.db');
+  const path = join(mkdtempSync(join(tmpdir(), 'wf48s2b-')), 'r.db');
   // a pre-#1543 store: events only
   const db = new DatabaseSync(path);
   db.exec('CREATE TABLE events (id TEXT PRIMARY KEY, pubkey TEXT, kind INTEGER, created_at INTEGER, d TEXT, json TEXT)');

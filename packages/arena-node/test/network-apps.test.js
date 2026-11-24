@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -23,13 +23,17 @@ import { gameInfoStands, gameInfoFits, gameTypeOf } from '../../arena-protocol/s
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
 import { ROCK_PAPER_SCISSORS } from '../../rock-paper-scissors/plugin/rock-paper-scissors.js';
 import { UPDOWN_TN4 } from '../../btc-updown/plugin/btc-updown.js';
-import { HELLO_WORLD } from '../../hello-world/plugin/hello-world.js';
+// HELLO WORLD IS AN OPTIONAL APP (apps.lock.json "optional": true): tools/fetch-apps.mjs leaves it out on a machine that cannot clone
+// arena-app-hello-world (kanban #1006). Without its checkout its parts here are skipped; a checkout that does not load still fails.
+const HELLO_DIR = new URL('../../hello-world/', import.meta.url);
+const HELLO_WORLD = existsSync(HELLO_DIR) ? (await import('../../hello-world/plugin/hello-world.js')).HELLO_WORLD : null;
+const NO_HELLO = HELLO_WORLD ? false : 'packages/hello-world is optional and not checked out here (tools/fetch-apps.mjs)';
 
-const HELLO = toHex(HELLO_WORLD.gameId);
+const HELLO = HELLO_WORLD ? toHex(HELLO_WORLD.gameId) : null;
 const stands = (g, info = g.info) => gameInfoStands(info, { gameId: g.gameId, manifest: g.manifest, verify: verifyEd25519 });
 
 test('each game\'s description and website stand under its developer key, and its id is the one the seats advertise', () => {
-  for (const [g, id] of [[NEXTBLOCK, '495516ae'], [ROCK_PAPER_SCISSORS, '1e9ab4b7'], [UPDOWN_TN4, '672415c8'], [HELLO_WORLD, '32ee1aa4']]) {
+  for (const [g, id] of [[NEXTBLOCK, '495516ae'], [ROCK_PAPER_SCISSORS, '1e9ab4b7'], [UPDOWN_TN4, '672415c8'], [HELLO_WORLD, '32ee1aa4']].filter(([g]) => g)) {
     assert.equal(toHex(g.gameId).slice(0, 8), id, `${g.name}: the id did not move`);
     const s = stands(g);
     assert.equal(s.ok, true, `${g.name}: ${s.why}`);
@@ -40,10 +44,10 @@ test('each game\'s description and website stand under its developer key, and it
   assert.match(stands(ROCK_PAPER_SCISSORS, NEXTBLOCK.info).why, /not signed/, 'another game\'s info');
   assert.equal(stands(NEXTBLOCK, null).ok, false, 'none at all: the game is the same, its info is just not shown');
   assert.equal(gameInfoFits({ website: 'http://plain.example' }).ok, false, 'https only');
-  assert.deepEqual([NEXTBLOCK, ROCK_PAPER_SCISSORS, UPDOWN_TN4, HELLO_WORLD].map((g) => gameTypeOf(g.manifest)), ['game', 'head-to-head game', 'market', 'market']);
+  assert.deepEqual([NEXTBLOCK, ROCK_PAPER_SCISSORS, UPDOWN_TN4, HELLO_WORLD].filter(Boolean).map((g) => gameTypeOf(g.manifest)), ['game', 'head-to-head game', 'market', 'market'].slice(0, HELLO_WORLD ? 4 : 3));
 });
 
-test('a seat finds the network\'s games itself, lists name/type/version/info, and installs the one-seat Hello World from the list', async () => {
+test('a seat finds the network\'s games itself, lists name/type/version/info, and installs the one-seat Hello World from the list', { skip: NO_HELLO }, async () => {
   const a = await serve(openStore(), { plugins: [ROCK_PAPER_SCISSORS, HELLO_WORLD], port: 0 });
   // a seat that serves Hello World with a description it rewrote: listed, never as signed
   const liar = createServer(async (req, res) => {

@@ -3,18 +3,25 @@
 // START / STOP / RESTART AND AT BOOT FROM THE OWNER PAGE (kanban #563): on a running seat, set up by hand and installed. The installed
 // node's units are named for an instance no machine runs (ARENA_INSTANCE=t563x, set before anything loads), so the real systemctl this
 // test reaches can only find no such unit - the route is checked to hand the right unit to the installer's control, nothing is touched.
+// The installer's instance is read from the home's arena.conf before ARENA_INSTANCE (arena-installer/src/instance.js): on a machine that
+// runs an installed node (~/.bitcoinarena/arena.conf instance=2) the units were that node's own, arena-gateway--2.service. So the module
+// is loaded with ARENA_HOME at an empty folder; it is put back once everything is loaded.
 process.env.ARENA_INSTANCE = 't563x';
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
 const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import('node:fs');
 const { join } = await import('node:path');
 const { tmpdir } = await import('node:os');
+const homeAtLoad = { was: process.env.ARENA_HOME, empty: mkdtempSync(join(tmpdir(), 'svc-load-home-')) };
+process.env.ARENA_HOME = homeAtLoad.empty;
 const { schnorr } = await import('@noble/curves/secp256k1.js');
 const { ownerSecretFromSeed, signOwnerRequest } = await import('../src/owner.js');
 const { toHex } = await import('../../arena-protocol/src/hash.js');
 const { serve } = await import('../src/server.js');
 const { openStore } = await import('../src/store.js');
 const { unitName } = await import('../../arena-installer/src/service.js');
+if (homeAtLoad.was === undefined) delete process.env.ARENA_HOME; else process.env.ARENA_HOME = homeAtLoad.was;
+rmSync(homeAtLoad.empty, { recursive: true, force: true });
 
 const secret = ownerSecretFromSeed(new Uint8Array(32).fill(7));
 const ownerRec = { pubkey: toHex(schnorr.getPublicKey(secret)), claimedAtMs: 1 };
