@@ -1984,6 +1984,20 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (proofKept.size > 256) proofKept.delete(proofKept.keys().next().value);
     return ok;
   };
+  // the addresses a node key names for itself (kanban #3585): its entry of the newest census this seat reads - the round census
+  // networkSeats() reads, else the chain's newest - its advert endpoint, or its signed address announcement where the book holds one
+  const advertisedAt = (keyHex) => {
+    const at = new Set();
+    const take = (entries) => { for (const e of entries || []) if (e && e.pubkey && toHex(e.pubkey) === keyHex) for (const u of peerEndpointsOf([e], null)) at.add(baseOf(u)); };
+    let rows = [];
+    try { rows = round.db.prepare('SELECT round_id FROM rounds ORDER BY rowid DESC LIMIT 40').all(); } catch { rows = []; }
+    for (const r of rows) {
+      let c; try { c = roster.censusFor(new Uint8Array(r.round_id)); } catch { c = null; }
+      if (c && c.ok && Array.isArray(c.entries) && c.entries.length) { try { take(c.entries); } catch { /* none named */ } break; }
+    }
+    try { take(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : []); } catch { /* none read yet */ }
+    return at;
+  };
   // `read`: this seat's own rounds of the window when the caller holds them already (kanban #3570: the network board's, from seasonReadLocal)
   const seasonAccounts = async (ids, w, { days = w.days, keyed = false, signed = false, read = null } = {}) => {
     const games = new Set(ids);
@@ -2061,14 +2075,27 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // addresses name one key, each is asked to sign a fresh nonce with it (GET /identity?nonce=, provesNodeKey): those that prove it
     // are one seat, counted once (the first in address order); an unproven claim of a key another address proves adds no voice and
     // displaces nobody; where nobody proves it, each address counts under its own URL - as a seat naming its own key would.
+    // A PROOF IS A KEY'S, NOT AN ADDRESS'S (kanban #3585): the signed digest names only the nonce, so a box that passes GET /identity?nonce=
+    // on to an honest seat's address hands back that seat's real signature, and its own address "proves" the key too. Address order
+    // decided between two proven addresses, so a relaying seat whose URL sorts first had its own rounds stand for the honest seat's.
+    // Now no order decides: proven addresses that hand in the same account are one seat, counted once; where they differ, the address
+    // the key's own census advert (or its signed address announcement) names keeps the key, and every other proven address counts as
+    // one voice under its own URL, as any seat naming no key does - so a relay adds at most its own voice and drops nobody's.
     const byKey = new Map();
     for (const a of got) { if (a.node === me) continue; const k = a.node || a.seat; if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(a); }
+    const accountOf = (a) => JSON.stringify(seasonRoundsToJson(a.rounds));
     for (const [k, group] of byKey) {
       if (group.length === 1 || !group[0].node) { for (const a of group) if (!bySeat.has(a.seat)) bySeat.set(group.length === 1 && a.node ? k : a.seat, a.rounds); continue; }
       const proven = await Promise.all(group.map((a) => provenAt(a.seat, k)));
-      const first = group.find((a, i) => proven[i]);
-      if (first) { if (!bySeat.has(k)) bySeat.set(k, first.rounds); continue; }
-      for (const a of group) if (!bySeat.has(a.seat)) bySeat.set(a.seat, a.rounds);
+      const sure = group.filter((a, i) => proven[i]);
+      if (!sure.length) { for (const a of group) if (!bySeat.has(a.seat)) bySeat.set(a.seat, a.rounds); continue; }
+      const one = accountOf(sure[0]);
+      if (sure.every((a) => accountOf(a) === one)) { if (!bySeat.has(k)) bySeat.set(k, sure[0].rounds); continue; }
+      const advertised = advertisedAt(k);
+      const named = sure.filter((a) => advertised.has(a.seat));
+      const keep = named.length === 1 ? named[0] : null;
+      if (keep && !bySeat.has(k)) bySeat.set(k, keep.rounds);
+      for (const a of sure) if (a !== keep && !bySeat.has(a.seat)) bySeat.set(a.seat, a.rounds);
     }
     return { bySeat, asked: seats.length };
   };
