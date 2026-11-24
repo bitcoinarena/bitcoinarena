@@ -23,13 +23,31 @@ test('no deposit asked at the press when another federation of the player holds 
   assert.equal(run([], 100000n), false);
 });
 
-test('the swap source: OPEN as before, or unverified and on the known-good list with an invite', () => {
-  const src = cut("              const known = ARENACLIENT.federationIsKnown", "const mayPay = st ? (st.status === 'OPEN' || (st.status === 'unverified' && known)) : known;");
-  const run = (st, isKnown, remembered) => new Function('ARENACLIENT', 'vault', 'st', 'other', src + '; return { mayPay, fromInvite };')(
-    { federationIsKnown: () => isKnown, rememberedInvite: () => remembered }, () => ({}), st, S);
-  assert.deepEqual(run({ status: 'unverified' }, true, 'fed1remembered'), { mayPay: true, fromInvite: 'fed1remembered' }, '4dc88be7 today');
-  assert.deepEqual(run(undefined, true, 'fed1remembered'), { mayPay: true, fromInvite: 'fed1remembered' }, 'not listed yet');
-  assert.equal(run({ status: 'unverified' }, false, 'x').mayPay, false, 'an unknown federation that is not verified does not pay');
-  assert.deepEqual(run({ status: 'OPEN', invite: 'fed1status' }, false, null), { mayPay: true, fromInvite: 'fed1status' }, 'OPEN as before');
-  assert.equal(run({ status: 'CRITICAL', invite: 'x' }, true, 'x').mayPay, false, 'a CRITICAL one moves by succession, not here');
+// THE LIGHTNING SWAP IS GONE (bf1353a38, kanban #614): the money moves by an e-cash exchange with a seat (ARENA_EXCHANGE_INTO), its source the
+// player's other federation with the most spendable sats - an unverified one too (4dc88be7 read "Not checked yet" pays) - but NEVER A CRITICAL ONE
+// (kanban #3542, the swap's gate kept): its notes move to its successor by succession, and the player is told why
+test('the exchange source: the other federation with the most spendable sats, never a CRITICAL one; none when none holds enough', () => {
+  const src = cut('      const spendable = (p) => ', 'const from = src.federation;');
+  const run = (parts, needMsat, statuses = {}, to = R) => new Function('window', 'needMsat', 'to', src.replace(/\n\s*const from = src\.federation;$/, '') + '; return src.federation;')(
+    { ARENA_WALLET_BALANCE: { parts }, ARENA_FED_LOADS: new Map(Object.entries(statuses).map(([f, status]) => [f, { status }])) }, needMsat, to);
+  const C = 'cd'.repeat(32);
+  assert.equal(run([{ federation: R, sats: 0 }, { federation: S, sats: 200 }], 100000n, { [S]: 'unverified' }), S, '4dc88be7 today: unverified, it pays');
+  assert.equal(run([{ federation: S, sats: 150 }, { federation: C, sats: 400 }], 100000n), C, 'the one holding the most');
+  assert.equal(run([{ federation: S, sats: 200, merging: 150 }], 100000n).ok, false, 'sats still merging do not pay');
+  assert.equal(run([{ federation: R, sats: 900 }, { federation: S, sats: 50 }], 100000n).ok, false, 'not the round\'s own, and 50 sat do not cover 100');
+  // kanban #3542: the CRITICAL one is passed over for one that is not, even when it holds more
+  assert.equal(run([{ federation: S, sats: 150 }, { federation: C, sats: 400 }], 100000n, { [C]: 'CRITICAL', [S]: 'OPEN' }), S, 'not the CRITICAL one');
+  const only = run([{ federation: C, sats: 400 }, { federation: S, sats: 20 }], 100000n, { [C]: 'CRITICAL' });
+  assert.equal(only.ok, false, 'a CRITICAL federation is never the source');
+  assert.equal(only.critical, C);
+  assert.match(only.why, /federation cdcdcdcd, which is CRITICAL/, 'the player is told why');
+  assert.match(only.why, /successor/);
+  // DRAINING and HALTED are not this gate's (DRAINING moves out by itself as well, but is still spendable while it drains)
+  assert.equal(run([{ federation: C, sats: 400 }], 100000n, { [C]: 'DRAINING' }), C);
+});
+
+// THE REASON REACHES THE PLAYER (kanban #3542): the join's line says it, and the deposit offer that follows names it (2.0 has no lobby move, #2909)
+test('a CRITICAL source is said: on the join line and in the deposit offer', () => {
+  assert.match(HTML, /if \(r && r\.critical\) \{ exchangeRefused = r\.why; onStep\(r\.why\); \}/);
+  assert.match(HTML, /message: ARENACLIENT\.DEPOSIT_INSUFFICIENT \+ \(exchangeRefused \?/);
 });
