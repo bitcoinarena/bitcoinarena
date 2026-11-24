@@ -124,6 +124,10 @@ const OPS = {
   decide: ({ moves, config }) => D.decide(moves, config),
 };
 
+/** kanban #3558: read by core-host.js right after the load - a binding the driver's body reaches only when the core's top level finished
+ *  (one awaiting a promise that never settles left the module 'evaluated' and the driver's body never run) */
+export const LOADED = true;
+
 /** THE ONE DOOR IN: an operation's name and its JSON; the answer as JSON. */
 export function call(op, json) {
   const f = OPS[op];
