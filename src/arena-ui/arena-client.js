@@ -6376,6 +6376,47 @@ const BOND_MATURITY_OFFSET = Object.freeze({ mainnet: 4320, testnet4: 144, regte
  */
 const BOND_V1_READABLE = Object.freeze(['regtest', 'testnet4']);
 
+/**
+ * WHICH TEMPLATE-1 BONDS STILL COUNT (kanban #3548, feedback #404). Template 1's recovery leaf carries genesis' maturity
+ * (testnet4: 100), so a template-1 bond is withdrawable the block it confirms: a 50,000-sat one confirmed at 162,909 was
+ * counted at census 162,912 and its recovery leaf spent at 162,920. On testnet4 template 1 is read for the seven legacy
+ * genesis bonds only: by outpoint, or by a confirmation before the block their template-2 re-bonds spent them in (156,038,
+ * read off the chain 2026-11-23). Any other template-1 bond is not stake. Regtest keeps reading template 1 (its fixtures).
+ */
+const BOND_V1_BEFORE = Object.freeze({ testnet4: 156038 });
+
+/** The seven legacy testnet4 genesis bonds (display txid:vout), all spent by their template-2 re-bonds at 156,038. */
+const TESTNET4_LEGACY_V1_BONDS = Object.freeze([
+  '0c82db5990331a62f91f5cd10678a1d51b1dacafeea3ae6adebc2b803689b99d:0',
+  '42a50fb691d2c204f4308710f54cca3742a55e1434ddebaf454511d47e499326:0',
+  '696dff16f0988f6a3427be2332aa18b84edaf206f22c256e8e60aefbac520d94:0',
+  '60924213c3d11edce374c546438d50df2e37638e8555be5efe8a8940b5e29d57:0',
+  '0d0fb9b063769da06a81d500c302432b5ff92901c2ed196a137a7f73f293f842:0',
+  '2a5e6afe08c8e7d55c39b7bcd0d17c41083a0d7eb1d44a12685c4e9fef472de9:0',
+  '565a7ba30d89ba5be935151782ea4a52c23ca653c861314af4fb41ab69f27806:0',
+]);
+
+const legacyTxidHex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+/** A txid as given (internal-order bytes, or display hex) and its vout, in TESTNET4_LEGACY_V1_BONDS' form. */
+function legacyOutpoint(outpoint) {
+  if (!outpoint || !Number.isInteger(outpoint.vout)) return null;
+  const t = outpoint.txid;
+  const display = t instanceof Uint8Array && t.length === 32 ? legacyTxidHex(Uint8Array.from(t).reverse())
+    : typeof t === 'string' && /^[0-9a-f]{64}$/i.test(t) ? t.toLowerCase() : null;
+  return display ? `${display}:${outpoint.vout}` : null;
+}
+
+/** Whether a template-1 bond counts on `network`: everywhere it is read without a cutoff, else a listed outpoint or an early one. */
+function legacyV1Counts(network, confirmationHeight, outpoint) {
+  const before = BOND_V1_BEFORE[network];
+  if (before === undefined) return { ok: true };
+  const op = legacyOutpoint(outpoint);
+  if (op && network === 'testnet4' && TESTNET4_LEGACY_V1_BONDS.includes(op)) return { ok: true };
+  if (Number.isInteger(confirmationHeight) && confirmationHeight < before) return { ok: true };
+  return { ok: false, why: `bond script template 1 is counted on ${network} only for the legacy genesis bonds (confirmed before ${before}): `
+    + `its recovery leaf carries genesis' maturity, so ${Number.isInteger(confirmationHeight) ? `a bond confirmed at ${confirmationHeight}` : 'that bond'} is withdrawable at once` };
+}
+
 /** BIP-65: a CLTV argument at or above this is a time, not a height. */
 const LOCKTIME_THRESHOLD = 500000000;
 
@@ -6405,10 +6446,12 @@ function bondMaturityOf(advert, { genesisMaturity, network } = {}) {
 /**
  * WHETHER A TEMPLATE-2 BOND'S MATURITY IS FAR ENOUGH FROM ITS CONFIRMATION (5A.3B): at least `confirmationHeight` plus
  * this network's offset. A later height is the node's own choice and only keeps its money longer; an earlier one is a
- * bond the node can take back before the network's maturity, and is not counted. Template 1 answers ok where it is
- * still read (`bondMaturityOf` refuses it elsewhere).
+ * bond the node can take back before the network's maturity, and is not counted. Template 1 answers `legacyV1Counts`
+ * (kanban #3548: on testnet4 only the legacy genesis bonds; `bondMaturityOf` refuses it on mainnet). `outpoint` is
+ * { txid, vout }, the txid as internal-order bytes or display hex.
  */
-function maturityStands(advert, confirmationHeight, network) {
+function maturityStands(advert, confirmationHeight, network, outpoint) {
+  if (advert && advert.bondScriptTemplateVersion === BOND_SCRIPT_TEMPLATE_VERSION) return legacyV1Counts(network, confirmationHeight, outpoint);
   if (!advert || (advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2 && advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3)) return { ok: true };
   const offset = BOND_MATURITY_OFFSET[network];
   if (!Number.isInteger(offset)) return { ok: false, why: `no bond maturity offset is set for ${network}` };
@@ -14017,7 +14060,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     // view was brought, else the entry's own height. One block short is a bond its node could take back before the
     // network's maturity, and it is excluded by name.
     const confirmed = chainSays ? chainSays.height : e.height;
-    const matures = maturityStands(read.advert, confirmed, network);
+    const matures = maturityStands(read.advert, confirmed, network, { txid: e.txid, vout: e.vout });
     if (!matures.ok) { excluded.push({ ...e, ...heldOut, why: matures.why }); continue; }
     // A TEMPLATE-3 BOND NAMES A KEY NEWEST WITHIN census_confirmations OF ITS CONFIRMATION (5A.3B, kanban #1031). `bond.standingKeys` is the reader's list.
     const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
@@ -38841,7 +38884,7 @@ function readEntryFromEvidence(item, { contract, headers, firstHeight, bond, ver
   const seen = recognizeBond(tx, vout, advert, { network, bond, ...(ancestor ? { ancestor: true } : {}) });
   if (!seen.ok) return { ok: false, why: seen.why };
   bondSats = seen.valueSats;
-  const matures = maturityStands(advert, height, network);
+  const matures = maturityStands(advert, height, network, { txid: tx.txid, vout });
   if (!matures.ok) return { ok: false, why: matures.why };
   const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
   if (!named.ok) return { ok: false, why: named.why };
@@ -47412,6 +47455,11 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     // AN ORDER THAT MATCHED NOBODY (measured 2026-10-17: two 14:00 orders held 0 shares and 0 cost in their round's
     // book on every seat, and the settlement table - filled positions only - had no row for them, so they stayed "waiting"): the page
     // read its position from the book after the close (`unfilled`); its stake comes back whole
+    // THE BOOK SAID IT MATCHED NOBODY (kanban #3549, feedback #395): two seats' empty positions after the verified outcome - market-page.js keeps
+    // that as a book claim of the whole stake, `unfilled`. The seats' table may still hold a row for the order (beside another unmatched one on the
+    // other side), and the claim's +0 read as "Up won · +0" in Past orders; the stake came back whole, so it is a refund, P&L 0, with or without a row
+    const bookUnfilled = !p.market.scalar && p.order && p.bookClaim && p.bookClaim.unfilled === true && BigInt(p.bookClaim.outMsat) === BigInt(p.stakeMsat);
+    if (bookUnfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
     // WON OR LOST, AND HOW MUCH, IS THE VERIFIED OUTCOME'S, NOT A SEAT'S TABLE (kanban #1615; #2153, #2221, #2299, #2354): `check` is
@@ -47444,6 +47492,10 @@ function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() }) {
     // NOBODY ON THE OTHER SIDE (measured live 2026-10-13: the first paid Up/Down window, one order alone, read "you won
     // 0 sats" while the seats claimed nothing - an order nobody took the other side of fills nothing, and its lock comes back whole)
     else if (!p.market.scalar && won && rebuilt.table.losingPoolMsat === 0n) lines.push({ ...at('refunded', { backMsat: String(mine.stakeMsat) }), text: `${head}: ${signed} · nobody took the other side: your ${sats(mine.stakeMsat)} sats come back whole when the lock expires` });
+    // AN ORDER IS WON OR LOST BY ITS BOOK, NEVER BY THE PARI-MUTUEL TABLE (kanban #3549, feedback #395): with the book not read (no seat answered
+    // it, or not yet) the table's row said "Down won · -99 sats · final" for an order that matched nobody and came back whole. Until the book is
+    // read the order's pay is unverified - not closed, not counted in the totals
+    else if (!p.market.scalar && p.order) lines.push({ ...at('unverified'), text: `${head}: ${signed} · what this order is paid is the book's, and its book is not read yet` });
     // A SCALAR SIDE IS PAID ITS SHARE, not all or nothing: what came back, and the gain or the loss
     else if (p.market.scalar) lines.push({ ...at('settled', { payoutMsat: String(pay), netMsat: String(net) }), text: `${head}: ${signed} · '${label}' gets ${sats(pay)} of your ${sats(net)} sats · ${pay >= net ? `+${sats(pay - net)}` : `-${sats(net - pay)}`}${o.final ? '' : ' (final after the objection window)'}` });
     else if (won) lines.push({ ...at('won', { gainMsat: String(pay - net), payoutMsat: String(pay) }), text: `${head}: ${signed} · you won ${sats(pay - net)} sats${o.final ? '' : ' (final after the objection window)'}` });
