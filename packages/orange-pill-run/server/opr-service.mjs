@@ -163,6 +163,8 @@ export function createOpr(o = {}) {
     CREATE TABLE IF NOT EXISTS x_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS x_checks_by_player ON x_checks (player, at_ms); CREATE INDEX IF NOT EXISTS x_checks_by_time ON x_checks (at_ms);`);
   // FOLLOWS @bitcoinarena_io (kanban #3534): follows 1 / 0 as X last answered (null: not asked yet), follows_ms when, follows_why X's words
   for (const col of ['follows INTEGER', 'follows_ms INTEGER', 'follows_why TEXT']) { try { db.exec(`ALTER TABLE x_links ADD COLUMN ${col}`); } catch { /* there already */ } }
+  // A MOVE KEEPS WHAT X SAID (kanban #3579): follows / follows_ms of the link as it was when it moved away (null: a move from before)
+  for (const col of ['follows INTEGER', 'follows_ms INTEGER']) { try { db.exec(`ALTER TABLE x_link_moves ADD COLUMN ${col}`); } catch { /* there already */ } }
   db.exec('CREATE TABLE IF NOT EXISTS ln_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ln_checks_by_player ON ln_checks (player, at_ms); CREATE INDEX IF NOT EXISTS ln_checks_by_time ON ln_checks (at_ms);');
   // THE CALLER'S ADDRESS OF A CHECK (kanban #3353): the minute caps of #3333 are counted per caller address, not for all callers together
   for (const tb of ['ln_checks', 'x_checks']) { try { db.exec(`ALTER TABLE ${tb} ADD COLUMN ip_key TEXT`); } catch { /* there already */ } db.exec(`CREATE INDEX IF NOT EXISTS ${tb}_by_ip ON ${tb} (ip_key, at_ms)`); }
@@ -649,9 +651,13 @@ export function createOpr(o = {}) {
     if (first == null) return null;
     const last = lastRunOf(r.id, pk);
     const m = q('SELECT * FROM x_link_moves WHERE from_pubkey = ? AND from_linked_ms <= ? AND at_ms > ? ORDER BY at_ms DESC LIMIT 1').get(String(pk), first, last);
-    return m ? { user_id: m.user_id, username: m.username, linked_ms: m.from_linked_ms } : null;
+    if (!m) return null;
+    // kanban #3579 (audit opr a7-1-1): the held link's follows answer is the one it had when it moved - read from the account's current row, a
+    // stranger who moved the winner's account to a throwaway key and linked that key to another account emptied it, and the winner fell off the
+    // waiting bounty list ('not checked yet'). A move from before this column keeps the old read
+    return { user_id: m.user_id, username: m.username, linked_ms: m.from_linked_ms, ...(m.follows == null ? {} : { follows: m.follows, follows_ms: m.follows_ms }) };
   };
-  // kanban #3534: what X last said about the account behind a link (a moved account's: its current row's)
+  // kanban #3534: what X last said about the account behind a link (a moved account's: as it moved, #3579; a move from before: its current row's)
   const followSinceMs = cfg.followSince == null || cfg.followSince === '' ? null : Date.parse(String(cfg.followSince));
   const followRuleOn = (r) => followSinceMs !== null && Number(r.end_ms) > followSinceMs;
   function followsOf(g) {
@@ -722,7 +728,8 @@ export function createOpr(o = {}) {
     db.exec('BEGIN');
     try {
       if (held && held.pubkey !== player) {
-        q('INSERT INTO x_link_moves (user_id, username, from_pubkey, from_linked_ms, to_pubkey, at_ms) VALUES (?, ?, ?, ?, ?, ?)').run(userId, held.username, held.pubkey, held.linked_ms, player, at);
+        q('INSERT INTO x_link_moves (user_id, username, from_pubkey, from_linked_ms, to_pubkey, at_ms, follows, follows_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(userId, held.username, held.pubkey, held.linked_ms, player, at, held.follows ?? null, held.follows_ms ?? null);   // kanban #3579
         q('UPDATE x_links SET user_id = ?, checked_ms = ? WHERE pubkey = ?').run(`released-${at}-${userId}`, at, held.pubkey);
         log(`x @${username} moved from ${held.pubkey.slice(0, 8)} to ${player.slice(0, 8)} (#3382)`);
       }
