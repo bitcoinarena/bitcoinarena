@@ -1001,7 +1001,16 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
       let local = [];
       try {
         local = peerPortsLocal(home);
-        for (const id of local) await restartService(id, { home, platform, env, sh });
+        // ... but not one the owner had stopped (kanban #3672, a hole in #3606): a restart STARTS an inactive unit. Left out: a unit in the
+        // journal's oldStopped, and one systemd answers `inactive` now (a bitcoind the update never moved). Its new conf is written all the
+        // same; it takes it at the owner's next start.
+        const unitOf = (id) => (svc.stopped ? svc.files().find((f) => f.split(/[\\/]/).pop() === unitName(id)) : null);
+        const asked = local.map(unitOf).filter(Boolean);
+        let idle = [];
+        try { idle = asked.length ? await svc.stopped(asked) : []; } catch { idle = []; }
+        const leftStopped = local.filter((id) => { const f = unitOf(id); return f && (oldStopped.includes(f) || idle.includes(f)); });
+        if (leftStopped.length) step(`peer ports made local, not restarted (stopped by the owner): ${leftStopped.join(', ')}`);
+        for (const id of local) if (!leftStopped.includes(id)) await restartService(id, { home, platform, env, sh });
       } catch (e) { local = [`not changed: ${e.message}`]; }
       // AND ON LINUX, LND STARTED ONCE ITS TOR ANSWERS (kanban #720): the two units' lines, then a daemon-reload
       if (platform === 'linux') {
