@@ -22,6 +22,7 @@ import { utf8Encode } from '../../arena-protocol/src/utf8.js';
 export const OWNER_MESSAGE_TAG = 'arena/node-owner/v1';
 export const OWNER_KEY_TAG = 'arena/node-owner/key/v1';
 export const OWNER_WINDOW_MS = 120000;       // a signed request older or newer than this is refused
+export const OWNER_USED_MAX = 10000;         // the replay map's bound: owner requests kept at once (kanban #3583); full, new ones are refused
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /** The owner's secret key from the 32 bytes the 24 words encode. */
@@ -75,17 +76,32 @@ const newCode = () => {
  * The node's side. `store`: { read() -> object|null, write(object), writeCode(code|null), codePath? (the claim file's full path) } (files in main.js, memory in
  * tests). `verify(sig, msg, key)`: BIP-340. `node`: this node's key, hex.
  */
-export function createOwner({ store, verify, node, nowMs = () => Date.now(), log = () => {} }) {
+export function createOwner({ store, verify, node, nowMs = () => Date.now(), log = () => {}, usedMax = OWNER_USED_MAX }) {
   let owner = store.read();                 // { pubkey, claimedAtMs } or null
   let code = null;
-  const used = new Map();                   // sig hex -> atMs, kept for the window
+  // THE REPLAY MAP (kanban #3583): sig hex (or a Nostr request's event id) -> when it was taken. Only a request that admit() lets through (the
+  // owner's key, or the claim's code) and whose signature checks goes in, so a stranger's well-signed requests leave nothing behind. Entries go
+  // in by arrival and a Map keeps that order, so the old ones are dropped from the front, not with a walk over all of it on every request. One
+  // taken at `a` was signed for at most a + OWNER_WINDOW_MS, so after a + 2 * OWNER_WINDOW_MS the clock check refuses it anyway: kept that long,
+  // a replay is never let through. Full (usedMax), it refuses new requests (429) and evicts none.
+  const used = new Map();
+  const prune = () => {
+    const now = nowMs();
+    for (const [s, t] of used) { if (now - t <= 2 * OWNER_WINDOW_MS) break; used.delete(s); }
+  };
+  const replayed = (key) => {
+    prune();
+    if (used.has(key)) return { ok: false, why: 'this request was already sent' };
+    if (used.size >= usedMax) return { ok: false, status: 429, why: 'too many owner requests in the last minutes; try again shortly' };
+    return null;
+  };
   if (!owner) {
     code = newCode();
     store.writeCode(code);
     log(`[owner] this node has no owner yet. Claim it at /Dashboard/owner with the code ${code}${store.codePath ? ` (also in ${store.codePath})` : ''}`);
   }
   // A REQUEST AS A NOSTR EVENT (above): its id, its signature, this node, this action, these arguments, and its time
-  const checkEvent = (req, action) => {
+  const checkEvent = (req, action, admit) => {
     const e = req.nostr;
     if (!e || typeof e !== 'object' || e.kind !== OWNER_EVENT_KIND || !Array.isArray(e.tags)) return { ok: false, why: `a Nostr owner request is a kind ${OWNER_EVENT_KIND} event` };
     if (!/^[0-9a-f]{64}$/.test(String(e.pubkey)) || !/^[0-9a-f]{128}$/.test(String(e.sig)) || !/^[0-9a-f]{64}$/.test(String(e.id))) return { ok: false, why: 'an event names its id, pubkey and sig in hex' };
@@ -94,28 +110,29 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
     if (tag('method') !== action) return { ok: false, why: `this door takes the action "${action}"` };
     if (tag('payload') !== ownerPayloadHash(req.args || {})) return { ok: false, why: 'that event signs other arguments' };
     if (!Number.isInteger(e.created_at) || Math.abs(nowMs() - e.created_at * 1000) > OWNER_WINDOW_MS) return { ok: false, why: 'the request is not from the last two minutes (check the clock)' };
-    for (const [s, t] of used) if (nowMs() - t > 2 * OWNER_WINDOW_MS) used.delete(s);
-    if (used.has(e.id)) return { ok: false, why: 'this request was already sent' };
+    const refused = admit(e.pubkey) || replayed(e.id);
+    if (refused) return refused;
     if (nostrIdOf(e) !== e.id) return { ok: false, why: 'the event\'s id is not its hash' };
     let good = false;
     try { good = verify(fromHex(e.sig), fromHex(e.id), fromHex(e.pubkey)); } catch { good = false; }
     if (!good) return { ok: false, why: 'the signature does not check' };
-    used.set(e.id, e.created_at * 1000);
+    used.set(e.id, nowMs());
     return { ok: true, pubkey: e.pubkey };
   };
-  const check = (req, action) => {
+  // admit(pubkey) -> null, or the refusal ({ ok: false, status, why }): it runs before the replay lookup and the signature check
+  const check = (req, action, admit) => {
     if (!req || typeof req !== 'object') return { ok: false, why: 'an owner request is a JSON object' };
-    if (req.nostr) return checkEvent(req, action);
+    if (req.nostr) return checkEvent(req, action, admit);
     if (req.action !== action) return { ok: false, why: `this door takes the action "${action}"` };
     if (!/^[0-9a-f]{64}$/.test(String(req.pubkey)) || !/^[0-9a-f]{128}$/.test(String(req.sig))) return { ok: false, why: 'a pubkey (32 bytes) and a signature (64 bytes), hex' };
     const at = Number(req.atMs);
     if (!Number.isFinite(at) || Math.abs(nowMs() - at) > OWNER_WINDOW_MS) return { ok: false, why: 'the request is not from the last two minutes (check the clock)' };
-    for (const [s, t] of used) if (nowMs() - t > 2 * OWNER_WINDOW_MS) used.delete(s);
-    if (used.has(req.sig)) return { ok: false, why: 'this request was already sent' };
+    const refused = admit(req.pubkey) || replayed(req.sig);
+    if (refused) return refused;
     let good = false;
     try { good = verify(fromHex(req.sig), ownerMessage({ node, action, args: req.args || {}, atMs: at }), fromHex(req.pubkey)); } catch { good = false; }
     if (!good) return { ok: false, why: 'the signature does not check' };
-    used.set(req.sig, at);
+    used.set(req.sig, nowMs());
     return { ok: true, pubkey: req.pubkey };
   };
   return {
@@ -125,10 +142,9 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
     /** The first owner, with the claim code from the node's log. */
     claim(req) {
       if (owner) return { ok: false, status: 409, why: 'this node already has an owner' };
-      const c = check(req, 'claim');
-      if (!c.ok) return { ...c, status: 401 };
-      const given = String((req.args && req.args.code) || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-      if (!code || given !== code.replace(/-/g, '')) return { ok: false, status: 403, why: 'that is not this node\'s claim code (it is in the node\'s log)' };
+      const given = String((req && req.args && req.args.code) || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const c = check(req, 'claim', () => (!code || given !== code.replace(/-/g, '') ? { ok: false, status: 403, why: 'that is not this node\'s claim code (it is in the node\'s log)' } : null));
+      if (!c.ok) return { status: 401, ...c };
       owner = { pubkey: c.pubkey, claimedAtMs: nowMs(), ...(req.nostr ? { via: 'nostr' } : {}) };
       store.write(owner);
       store.writeCode(null);
@@ -170,9 +186,8 @@ export function createOwner({ store, verify, node, nowMs = () => Date.now(), log
     /** Any owner action: the signature, the time, and that the key is the owner's. */
     authorize(req, action) {
       if (!owner) return { ok: false, status: 409, why: 'this node has no owner yet' };
-      const c = check(req, action);
-      if (!c.ok) return { ...c, status: 401 };
-      if (c.pubkey !== owner.pubkey) return { ok: false, status: 403, why: 'that key is not this node\'s owner' };
+      const c = check(req, action, (pubkey) => (pubkey !== owner.pubkey ? { ok: false, status: 403, why: 'that key is not this node\'s owner' } : null));
+      if (!c.ok) return { status: 401, ...c };
       return { ok: true, pubkey: c.pubkey };
     },
   };
