@@ -475,6 +475,19 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   timing.giftsMs = Date.now() - t;
   if (!donated.ok) return donated;
 
+  // THE FEE GATE IS READ BEFORE THE RE-CHECKS, NOT AFTER THE WRITE (kanban #3608, #1489 sm1-entry-1): it awaits the federation's fee rule
+  // (port.fees). Read between putStakeLock and putStakeSeen, a lower entry of the same player key verified during that await let this
+  // entry's rows go (yieldEntryLocks, kanban #2477), and this entry was then written SEEN with no stake lock beside the lower one - two
+  // counted entries of one key (#1215), one with no lock the settlement could claim. Now no await stands between the last re-check and
+  // the writes.
+  // A PROTOCOL-27 GAME ROUND'S FEE LOCK HOLDS THE WHOLE 10 % (kanban #1486): the gate is sized on it, as the door's and the page's are
+  t = Date.now();
+  const gifted = giftsInFeeLock(contract) && entryGiftsInFee(contract, (() => { const g = round.plugins ? pluginForRound(contract, round.plugins) : null; return g && g.ok ? g.plugin.manifest : null; })());
+  // at the split in force at its census height (round.feesFor, the fee set GET /fees?height= serves), as the door and the settlement read it
+  const giftSplit = gifted ? (typeof round.feesFor === 'function' && round.feesFor(contract) ? roundSplitBps(round.feesFor(contract)) : ROUND_SPLIT_BPS) : undefined;
+  const gate = await roundMintsFees({ contract, port, ...(gifted ? { feeBps: giftsFeeBps(giftSplit), split: giftSplit } : {}) });
+  timing.gateMs = Date.now() - t;
+
   // ONE LOCK IS ONE ENTRY, AGAIN AT THE WRITE (kanban #1214, audit 3 #1210 CONC-1): the check above was read before the federation was
   // asked, and two hand-overs of one lock for two entries at the same moment both passed it - one lock staked two entries. Read again
   // here, with no await between this read and the write below.
@@ -498,14 +511,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   if (donated.rows.length && round.putDonationOutputs) round.putDonationOutputs(donated.rows);
   round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id), atMs });
   // IN A ROUND WHOSE GATE MINTS, THE STAKE COUNTS ONLY WITH ITS FEE LOCK (pick a): kept,
-  // verified, and not seen - no play, no place in the settlement - until the fee lock is.
-  t = Date.now();
-  // A PROTOCOL-27 GAME ROUND'S FEE LOCK HOLDS THE WHOLE 10 % (kanban #1486): the gate is sized on it, as the door's and the page's are
-  const gifted = giftsInFeeLock(contract) && entryGiftsInFee(contract, (() => { const g = round.plugins ? pluginForRound(contract, round.plugins) : null; return g && g.ok ? g.plugin.manifest : null; })());
-  // at the split in force at its census height (round.feesFor, the fee set GET /fees?height= serves), as the door and the settlement read it
-  const giftSplit = gifted ? (typeof round.feesFor === 'function' && round.feesFor(contract) ? roundSplitBps(round.feesFor(contract)) : ROUND_SPLIT_BPS) : undefined;
-  const gate = await roundMintsFees({ contract, port, ...(gifted ? { feeBps: giftsFeeBps(giftSplit), split: giftSplit } : {}) });
-  timing.gateMs = Date.now() - t;
+  // verified, and not seen - no play, no place in the settlement - until the fee lock is. (The gate was read above, before the re-checks.)
   if (gate.mints && !(round.feeLock && round.feeLock(entryIdBytes)))
     return { ok: true, contractId: String(id), paidMsat: fields.amountMsat, height: st.blockCount, waitsForFeeLock: true, doorTimeDropped };
   round.putStakeSeen({ entryId: entryIdBytes, paidMsat: fields.amountMsat, atMs });
