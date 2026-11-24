@@ -2476,5 +2476,5 @@ test('a protocol-27 round: one arenaLockSubmit with stake, fee and donations, no
   // a protocol-26 round keeps the step-0 claim key
   const { LockClient } = lockClient({ feeRule: RULE, both: true, submit: true });
   await assert.rejects(lockStake({ round: { ...round27, protocolVersion: 26 }, roundId: rid27, invite: INVITE, seed, stake: { stakePoint: POINT }, playerPubkey: player,
-    LockClient, storage: tabStorage() }), /no claim key has its signer nodes' attestation/);
+    LockClient, storage: tabStorage() }), /no claim key has its seats' attestation/);
 });
