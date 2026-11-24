@@ -7443,69 +7443,6 @@ function readProtocolVersionName(name) {
   return { ok: true, version: v, known: !!r };
 }
 
-// ---- arena-protocol/src/rules.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
-// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role2026.0.3). Until now these were bound only
-// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
-// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
-// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
-
-
-
-const te = new TextEncoder();
-const RULE_TEXTS = Object.freeze({
-  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
-    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
-    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
-  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
-    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
-    + 'entries ENTRY_VOID.',
-  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
-    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
-  slashing: 'ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
-    + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
-    + 'census nodes, 25 % to the donation set.',
-});
-/** A rule's hash: its text under the rule tag. */
-const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
-const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
-/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
-const DISCONNECT_LAST_MARK = 1;
-const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
-
-/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
-function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
-  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
-    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
-}
-
-/**
- * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
- * one naming them must name this build's four hashes and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
- * role no lower than the round's bond_min.
- */
-function rulesStand(contract) {
-  const r = contract && contract.rules;
-  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
-  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
-  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
-    if (!eq(r[k], RULE_HASHES[k])) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
-  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
-  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
-  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
-    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
-  return { ok: true, why: 'that round names the rules this build settles under' };
-}
-
-/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
-function roleFloorSats(contract, role) {
-  const r = contract && contract.rules;
-  if (!r) return contract.bondMinSats;
-  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
-}
-
 // ---- arena-protocol/src/fee.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -8521,7 +8458,6 @@ function donationKeysFor(network) {
 
 
 
-
 // ONE PARSE PER TRANSACTION (kanban #586/#587, measured 2026-10-23 17:11Z on a test host seat after a restart: 10 min at 100 % CPU,
 // decodeAdvert 23 %, sha256 13 %, parseTransaction 7 %, readSlice 6 % - every census height parsed every transaction of its 2,017
 // blocks again, and decoded every advertisement again, though the blocks themselves are kept, one copy shared by every view): a
@@ -8661,35 +8597,14 @@ function eligibleFor(e, contract, role) {
   return hostsGame(e, contract && contract.gameId);
 }
 
-/**
- * THE FLOOR THE DRAW ADMITS A KEY AT, FOR THAT ROLE (§5A.3 "bond_amount >= bond_min(role)", §6 bond_min per role): the role's own
- * floor where the contract names its rules, its bond_min otherwise; one draw for both roles (a v2 round) takes the higher of the two.
- * selectCommittee admits and weighs at this floor, and meetsCensusMinimum counts at it, so the two cannot answer about different nodes.
- */
-function drawFloorSats(contract, role) {
-  return namesNoDraw(contract)
-    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
-    : roleFloorSats(contract, role);
-}
-
-/** MAY THE DRAW TAKE THIS ENTRY FOR THAT ROLE: eligibleFor the role, and for one draw for both roles (a v2 round) eligible for both. */
-const drawEligible = (e, contract, role) => (namesNoDraw(contract)
-  ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement')
-  : eligibleFor(e, contract, role));
-
 function meetsCensusMinimum(entries, contract, role) {
   const { network, minimum } = censusMinimumFor(contract);
   // DISTINCT NODE KEYS AT OR ABOVE THE ROUND'S FLOOR, NOT ROWS (kanban #2850, #1489 r26-census-1): protocol 19 keeps every bond output as its own
   // row, so one key with several outputs (or a row below bond_min) met census_min_nodes alone and selectCommittee then drew a committee of one key.
-  // The rows are merged by key first - summed under protocol 19, each row on its own before - and only keys at the round's floor count.
-  // AT THE ROLE'S FLOOR, NOT bond_min (kanban #3571): a contract naming its rules names a floor per role (§6), and the draw admits only keys
-  // at it (selectCommittee). Counting at bond_min let a creator name bond_min at the floor in force - every honest node counted - and a role
-  // floor only their own bonds reach: the minimum was met by nodes the draw never takes, and the committee was the creator's keys alone.
-  // The census of a role is the nodes eligible for it (§5A.3 bond_amount >= bond_min(role)), so census_min_nodes is counted there - and
-  // under one draw for both roles, over the keys that draw can take.
-  const floor = contract && typeof contract.bondMinSats === 'bigint' ? drawFloorSats(contract, role) : null;
+  // The rows are merged by key first - summed under protocol 19, each row on its own before - and only keys at the round's bond_min count.
+  const floor = contract && typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null;
   const byKey = new Map();
-  for (const e of (entries || []).filter((x) => x && drawEligible(x, contract, role))) {
+  for (const e of (entries || []).filter((x) => eligibleFor(x, contract, role))) {
     if (!e || !(e.pubkey || (e.advert && e.advert.nodePubkey))) continue;
     const k = nodeKeyOf(e).split('|')[0], b = BigInt(e.bondSats || 0);
     byKey.set(k, sumsBonds(contract) ? (byKey.get(k) || 0n) + b : ((byKey.get(k) || 0n) > b ? byKey.get(k) : b));
@@ -28191,11 +28106,12 @@ const MARK_INPUT_WAIT_MS = 10000;
 const FEED_WINDOW = 32;
 // A SEAT STILL TAKING THE HANDOUT IS ASKED AGAIN (kanban #828, 2026-11-02 04:05:41Z, both players of round a5fc9c2f): postHandout goes on once enough seats
 // took it, the entry goes to one seat, and that seat's handout can still be on its way; its 400 ended the join with the stake already locked. 8 s; any other refusal stands.
-async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500 } = {}) {
+// Answers { status, bytes }; each ask is bounded by ENTRY_ANSWER_MS (kanban #3596), and a seat silent past it throws.
+async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500, answerMs = ENTRY_ANSWER_MS } = {}) {
   for (let n = 0; ; n++) {
-    const r = await fetcher(url, { method: 'POST', body });
+    const r = await entryAnswered(fetcher, url, body, answerMs);
     if (r.status === 201) return r;
-    const said = (await r.text()).trim();
+    const said = entryWords(r.bytes);
     // AND A SEAT WHOSE SEATING CERTIFICATE IS STILL ON ITS WAY (the owner's report 2026-11-10 08:54Z, round 0ff01991: the six seats had signed the seating,
     // the certificate reached them after the entry, which came 9 s before the close; the join ended with the stake locked) - asked again the same 8 s
     if (n + 1 >= tries || !/publish the handout first|that round is not seated yet/.test(said)) throw new Error(`the node refused the entry: ${said}`);
@@ -28254,6 +28170,24 @@ const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSE
 // not yet seen voids the entry anyway; two minutes covers a join held to a round that starts later.
 const LOCK_HAND_MS = 120000;
 const LOCK_ACCEPT_HEAD_MS = 3000;   // the lock client's acceptance first; the seats' own check after it
+
+// ONE SEAT'S ANSWER TO POST /entry, BODY INCLUDED, WITHIN ENTRY_ANSWER_MS OR NOT AT ALL (kanban #3596, audit client a7-3-1): measured, one
+// committee seat that took POST /entry and never answered held Client.join for good - joinOn's fetch had no deadline, join awaited every
+// peer, so the stake lock was handed to no seat and the session never opened. A seat silent past the bound did not take the entry; the
+// feed's 'no such entry' path offers it again. The market's submitPick bounds the same door (ENTRY_WAIT_MS).
+const ENTRY_ANSWER_MS = 15000;
+async function entryAnswered(fetcher, url, body, ms = ENTRY_ANSWER_MS) {
+  let timer;
+  const late = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`no answer to the entry within ${ms} ms`)), ms); });
+  try {
+    return await Promise.race([(async () => {
+      const r = await fetcher(url, { method: 'POST', body, signal: AbortSignal.timeout(ms) });
+      const bytes = typeof r.arrayBuffer === 'function' ? new Uint8Array(await r.arrayBuffer()) : new TextEncoder().encode(String(await r.text()));
+      return { status: r.status, bytes };
+    })(), late]);
+  } finally { clearTimeout(timer); }
+}
+const entryWords = (bytes) => new TextDecoder().decode(bytes.subarray(0, 4096)).trim();
 
 const OPENED_ROUNDS = new Map();
 
@@ -28632,7 +28566,7 @@ class Client {
     // and the chip named it because its frozen run had gone furthest.
     this.playerPubkey = entry.playerPubkey;
 
-    const joined = agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
+    const joined = agrees(mine, r.bytes, 'entry');
     // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS beside it (kanban #1897, #1938): what binds the stake and fee lock to this entry and no copy
     // (not waited on: it never throws, and the join's time is the player's - `lockClaimed` holds each seat's answer to come)
     this.lockClaimed = [];
@@ -28643,7 +28577,11 @@ class Client {
     // A node that will not take it is written down, not thrown: this node took
     // the entry, and the run can still be played.
     this.joinedEntry = entry;
-    this.peerJoins = await Promise.all(this.peers.map((base) => this.joinOn(base)));
+    // NOT WAITED ON PAST WHAT THE ROUND NEEDS (kanban #3596): each peer's answer is bounded (ENTRY_ANSWER_MS), and once the home seat and
+    // the peers that took the entry are the `needed` seats of the round's stake lock, join goes on - a peer still answering lands in
+    // `peerJoins` when it does, and the lock hand-off below asks every seat again until each took the lock. Without a stake lock (no
+    // count to go by) every peer's bounded answer is waited for, as before.
+    await this.#joinPeers(this.stakeLock && Number(this.stakeLock.needed) > 0 ? Number(this.stakeLock.needed) : Infinity);
 
     // AND THE STAKE LOCK GOES TO EVERY SIGNER NODE NOW THAT THE ENTRY IS THERE (§23.1
     // step 5, W1b). A signer node verifies it in the federation and only then counts
@@ -28660,6 +28598,22 @@ class Client {
       this.lockHanding = this.#handLocksUntilTaken(mine);
     }
     return joined;
+  }
+
+  #joinPeers(needed) {
+    const peers = this.peers;
+    const joins = peers.map((base) => ({ base, ok: false, why: 'no answer yet', pending: true }));
+    this.peerJoins = joins;
+    if (!peers.length) return Promise.resolve(joins);
+    return new Promise((done) => {
+      let answered = 0, took = 1;   // the home seat took it
+      peers.forEach((base, i) => this.joinOn(base).then((j) => {
+        joins[i] = j;
+        answered++;
+        if (j.ok) took++;
+        if (answered === peers.length || took >= needed) done(joins);
+      }));
+    });
   }
 
   async #handLocksUntilTaken(mine) {
@@ -28756,11 +28710,11 @@ class Client {
   /** Signer nodes this client's entry on one other committee node. */
   async joinOn(base) {
     try {
-      const p = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(this.joinedEntry) });
+      const p = await entryAnswered((...a) => fetch(...a), `${base}/entry`, encodeEntryContract(this.joinedEntry));   // bounded (kanban #3596)
       // and the player's claim on its locks (kanban #1897, #1938)
       if (p.status === 201 && this.stakeLock && typeof this.stakeLock.claimFor === 'function')
         (this.lockClaimed = this.lockClaimed || []).push(postLockClaim({ node: base, entryId: entryId(this.joinedEntry), claimFor: this.stakeLock.claimFor }));
-      return { base, ok: p.status === 201, why: p.status === 201 ? null : (await p.text()).trim() };
+      return { base, ok: p.status === 201, why: p.status === 201 ? null : entryWords(p.bytes) };
     } catch (e) { return { base, ok: false, why: e.message }; }
   }
 
@@ -32871,10 +32825,74 @@ function seatingBefore(drawnKeys, a, b) {
   return a.every((k, i) => r.has(k) && r.has(b[i]) && r.get(b[i]) <= r.get(k));
 }
 
+// ---- arena-protocol/src/rules.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
+// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role2026.0.3). Until now these were bound only
+// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
+// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
+// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
+
+
+
+const te = new TextEncoder();
+const RULE_TEXTS = Object.freeze({
+  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
+    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
+    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
+  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
+    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
+    + 'entries ENTRY_VOID.',
+  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
+    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
+  slashing: 'ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
+    + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
+    + 'census nodes, 25 % to the donation set.',
+});
+/** A rule's hash: its text under the rule tag. */
+const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
+const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
+/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
+const DISCONNECT_LAST_MARK = 1;
+const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
+
+/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
+function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
+  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
+    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
+}
+
+/**
+ * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
+ * one naming them must name this build's four hashes and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
+ * role no lower than the round's bond_min.
+ */
+function rulesStand(contract) {
+  const r = contract && contract.rules;
+  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
+  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
+    if (!eq(r[k], RULE_HASHES[k])) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
+  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
+  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
+  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
+    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
+  return { ok: true, why: 'that round names the rules this build settles under' };
+}
+
+/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
+function roleFloorSats(contract, role) {
+  const r = contract && contract.rules;
+  if (!r) return contract.bondMinSats;
+  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
+}
+
 // ---- arena-protocol/src/sortition.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Committee selection: bond-weighted, linear, and decided in integers.
+
 
 
 
@@ -32999,8 +33017,9 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
     throw new Error('that round names no positive bond floor to weigh against');
   // A ROLE'S OWN FLOOR, WHERE THE CONTRACT NAMES ITS RULES (§6 bond_min per rolerules.js): the role's floor weighs and
   // admits; one draw for both roles (a v2 round) takes the higher. A contract naming no rules: its bond_min, as before.
-  // census.js drawFloorSats: the floor meetsCensusMinimum counts at below is this one (kanban #3571).
-  const bondMin = drawFloorSats(contract, role);
+  const bondMin = namesNoDraw(contract)
+    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
+    : roleFloorSats(contract, role);
 
   // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
   //
@@ -33032,7 +33051,8 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
   for (const e of entries) {
     // the role, and for game/verify the round's game hosted (census.js eligibleFor)
     // ONE DRAW FOR BOTH ROLES (2026.0.2): a v2 round's node serves both, so it is eligible for both
-    if (!drawEligible(e, contract, role) || out.has(keyOf(e))) continue;
+    if (!(namesNoDraw(contract) ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement') : eligibleFor(e, contract, role))
+      || out.has(keyOf(e))) continue;
     const had = byKey.get(keyOf(e));
     if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
     had.bondSats += e.bondSats;
