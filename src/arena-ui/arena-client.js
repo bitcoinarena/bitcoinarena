@@ -697,7 +697,7 @@ const DISJOINT_RULES_VERSION = 33;
 const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERSION;
 /**
  * 2026.0.34 - §13D COPIED RUN (spec ruling kanban #3615, 2026-11-24; #3612): in a shared-world round an entry that joined later and replays an
- * earlier joiner's inputs (relative to each join tick, at least 32 non-empty input words from its first input) is signed FORFEIT, score 0
+ * earlier joiner's inputs (relative to each join tick, its first 32 input changes the same: #3663) is signed FORFEIT, score 0
  * (copied-run.js). Only a round written at 34 or later with a shared-world config; every round below closes byte for byte as before. An entry
  * into such a round names the rule's hash (contracts.js `copiedRunRule`). The round creators write 34 only once every seat of the network
  * runs a build that lists it, as for 33.
@@ -13647,15 +13647,19 @@ function roleFloorSats(contract, role) {
 // ---- arena-protocol/src/copied-run.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// §13D COPIED RUN (spec ruling kanban #3615, 2026-11-24; #3612, feedback #445).
+// §13D COPIED RUN (spec rulings kanban #3615 and #3663, 2026-11-24; #3612, feedback #445).
 //
 // In a shared world (§12: one world per round) the same inputs relative to the join tick are the same run and the same
-// score, so a player who joins later and replays an earlier joiner's inputs takes a place he did not play for. The rule:
-// the LATER entry (larger joinTick) forfeits - FORFEIT, score 0, the §13B stake path - when its inputs at tick - joinTick
-// equal the earlier entry's, word for word and tick for tick, from its first input, for at least COPIED_RUN_MIN_WORDS
-// non-empty input words. The match is the common prefix: it covers an exact copy, a copy that stops early, a copy that
-// plays on after the earlier run ends, and copy-then-deviate. A tick idle in both (all five words 0) neither counts nor
-// breaks it. Equal join ticks: neither forfeits (neither could have read the other). The earlier entry is never touched.
+// score, so a player who joins later and replays an earlier joiner's inputs takes a place he did not play for.
+//
+// THE MEASURE IS INPUT CHANGES (#3663): each entry's stream is reduced to its change list - (t - joinTick, word) for every
+// tick whose word (the tick's five input values) differs from the word at the tick before; the first tick compares with "no
+// input" (all five 0). A held key is one change when pressed and one when released; idle stretches add nothing; a release is a
+// change like any other. The LATER entry (larger joinTick) forfeits - FORFEIT, score 0, the §13B stake path - when its change
+// list and an earlier joiner's share a common prefix of at least COPIED_RUN_MIN_CHANGES changes: the same relative tick and the
+// same word for each, starting with the first change of both. That covers an exact copy, a copy that stops early, one that plays
+// on after the earlier run ends, and copy-then-deviate; two honest players holding throttle from their join are 1 change each.
+// Equal join ticks: neither forfeits (neither could have read the other). The earlier entry is never touched.
 //
 // ONLY ON A SHARED-WORLD CONFIG, AND ONLY FOR A ROUND WRITTEN AT COPIED_RUN_VERSION OR LATER: under per-player worlds the same
 // inputs play another world, and a round written before the rule closes exactly as it did (the scheme is the round's, never
@@ -13667,13 +13671,14 @@ function roleFloorSats(contract, role) {
 
 
 
-/** The fewest non-empty input words the shared prefix must hold before anything is decided (ruling (2)). */
-const COPIED_RUN_MIN_WORDS = 32;
+/** The fewest shared input changes before anything is decided (#3663). */
+const COPIED_RUN_MIN_CHANGES = 32;
 
-const COPIED_RUN_RULE_TEXT = 'ARENA rule copied-run v1 (§13D, kanban #3615, RULED 2026-11-24): in a shared-world round, an entry whose '
-  + 'inputs at tick - joinTick equal, word for word and tick for tick from its first input, those of an entry that joined at an earlier tick '
-  + `for at least ${COPIED_RUN_MIN_WORDS} non-empty input words (a tick idle in both neither counts nor breaks the match) forfeits (FORFEIT, `
-  + 'score 0, its stake as §13B). Equal join ticks: neither forfeits. The earlier entry is never touched.';
+const COPIED_RUN_RULE_TEXT = 'ARENA rule copied-run v2 (§13D, kanban #3615 and #3663, RULED 2026-11-24): in a shared-world round each '
+  + 'entry\'s inputs are reduced to their change list, (tick - joinTick, word) for every tick whose five input values differ from the tick '
+  + 'before (the first tick compared with no input; a release is a change). An entry whose change list shares a common prefix of at least '
+  + `${COPIED_RUN_MIN_CHANGES} changes (same relative tick, same word, from the first change of both) with that of an entry that joined at an `
+  + 'earlier tick forfeits (FORFEIT, score 0, its stake as §13B). Equal join ticks: neither forfeits. The earlier entry is never touched.';
 /** The hash an entry into a round under §13D names (contracts.js `copiedRunRule`). */
 const COPIED_RUN_RULE_HASH = ruleHash(COPIED_RUN_RULE_TEXT);
 
@@ -13683,43 +13688,42 @@ function copiedRunApplies(contract, sharedWorld) {
   return Number.isInteger(v) && v >= COPIED_RUN_VERSION && worldIsShared(contract, sharedWorld || []);
 }
 
-/** A run's inputs as the rule reads them: `{ joinTick, firstTick, ticks }` - ticks the five-word rows from firstTick on, contiguous. */
-function runInputs(joinTick, flat) {
-  return { joinTick, firstTick: flat.firstTick, ticks: flat.ticks };
-}
-
-const idle = (row) => row.every((v) => v === 0);
-const rowAt = (run, rel) => {
-  const i = run.joinTick + rel - run.firstTick;
-  return i >= 0 && i < run.ticks.length ? run.ticks[i] : undefined;
-};
+const NO_INPUT = [0, 0, 0, 0, 0];
+const sameWord = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);
 
 /**
- * THE COMMON PREFIX OF TWO RUNS, RELATIVE TO EACH JOIN TICK: `{ words, endsAt }` - the non-empty words of the shared
- * prefix (ticks idle in both are skipped, not counted) and the relative tick where it ends (the first differing tick, or where
- * either run has no tick).
+ * A STREAM'S CHANGE LIST: `[[rel, word], ...]` for every tick whose word differs from the tick before, rel = tick - joinTick.
+ * `rows` are the five-word rows from `firstTick` on, contiguous; the tick before the first is "no input".
  */
-function sharedPrefix(a, b) {
-  let words = 0, rel = 0;
-  for (;; rel++) {
-    const x = rowAt(a, rel), y = rowAt(b, rel);
-    if (x === undefined || y === undefined) break;
-    if (x.length !== y.length || x.some((v, i) => v !== y[i])) break;
-    if (idle(x)) continue;
-    for (const v of x) if (v !== 0) words++;
+function changeList(joinTick, firstTick, rows) {
+  const out = [];
+  let prev = NO_INPUT;
+  for (let i = 0; i < rows.length; i++) {
+    if (!sameWord(rows[i], prev)) out.push([firstTick + i - joinTick, rows[i]]);
+    prev = rows[i];
   }
-  return { words, endsAt: rel };
+  return out;
 }
 
-/**
- * DOES `later` COPY `earlier`? `{ copied, words, why }`. Only a later join can copy: equal join ticks, or `later` not later,
- * is never a copy.
- */
+/** A run as the rule reads it: `{ joinTick, changes }`, from a flattened transcript (transcript.js flatten). */
+function runInputs(joinTick, flat) {
+  return { joinTick, changes: changeList(joinTick, flat.firstTick, flat.ticks) };
+}
+
+/** THE COMMON PREFIX OF TWO CHANGE LISTS, in changes: same relative tick and same word, from the first change of both. */
+function sharedChanges(a, b) {
+  const n = Math.min(a.changes.length, b.changes.length);
+  let k = 0;
+  while (k < n && a.changes[k][0] === b.changes[k][0] && sameWord(a.changes[k][1], b.changes[k][1])) k++;
+  return k;
+}
+
+/** DOES `later` COPY `earlier`? `{ copied, changes, why }`. Only a later join can copy. */
 function copiedRun(earlier, later) {
-  if (!(later.joinTick > earlier.joinTick)) return { copied: false, words: 0, why: 'not a later join: neither could have read the other' };
-  const p = sharedPrefix(earlier, later);
-  if (p.words >= COPIED_RUN_MIN_WORDS) return { copied: true, words: p.words, why: `its first ${p.words} non-empty input words (to relative tick ${p.endsAt}) are the earlier run's` };
-  return { copied: false, words: p.words, why: `${p.words} shared non-empty input words, under ${COPIED_RUN_MIN_WORDS}` };
+  if (!(later.joinTick > earlier.joinTick)) return { copied: false, changes: 0, why: 'not a later join: neither could have read the other' };
+  const k = sharedChanges(earlier, later);
+  if (k >= COPIED_RUN_MIN_CHANGES) return { copied: true, changes: k, why: `its first ${k} input changes are the earlier run's, tick for tick` };
+  return { copied: false, changes: k, why: `${k} shared input changes, under ${COPIED_RUN_MIN_CHANGES}` };
 }
 
 /**
@@ -13731,7 +13735,7 @@ function copiedRunOf(run, others) {
     .sort((x, y) => x.run.joinTick - y.run.joinTick || (x.entryId < y.entryId ? -1 : x.entryId > y.entryId ? 1 : 0));
   for (const o of sorted) {
     const c = copiedRun(o.run, run);
-    if (c.copied) return { of: o.entryId, words: c.words, why: c.why };
+    if (c.copied) return { of: o.entryId, changes: c.changes, why: c.why };
   }
   return null;
 }

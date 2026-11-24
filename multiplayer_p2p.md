@@ -3774,15 +3774,22 @@ is the same run and the same score. A player who joins later can read an
 earlier joiner's inputs and replay them, and so take a place he did not
 play for.
 
-- **The rule.** Entry B forfeits when its inputs at `tick - joinTick`
-  equal those of an entry A with a smaller `joinTick`, word for word and
-  tick for tick, from B's first input, for at least **32 non-empty input
-  words**. A word is one of the five signed input values of a tick; a
-  non-empty word is one that is not 0. The match is the common prefix:
-  it covers an exact copy, a copy that stops early, a copy that plays on
-  after A ends, and copy-then-deviate. A tick idle in both runs (all five
-  words 0) neither counts nor breaks the match. Below 32 words nothing is
-  decided, so two idle or trivial runs are never hit.
+- **The measure: input changes** (RULED 2026-11-24, kanban #3663). Each
+  entry's stream is reduced to its change list: `(t - joinTick, word)`
+  for every tick whose word (the tick's five input values) differs from
+  the word at the tick before; the first tick compares with "no input"
+  (all five 0). A held key is one change when pressed and one when
+  released; idle stretches add nothing; a release is a change like any
+  other.
+- **The rule.** Entry B forfeits when its change list and the change
+  list of an entry A with a smaller `joinTick` share a common prefix of
+  at least **32 changes**: the same relative tick and the same word for
+  each, starting with the first change of both. That covers an exact
+  copy, a copy that stops early, a copy that plays on after A ends, and
+  copy-then-deviate. Two honest players holding throttle from their join
+  are one change each; 32 changes at the same ticks do not happen by
+  chance between two humans. (#3615 first counted non-empty words per
+  tick, which a held key matched; #3663 replaced that.)
 - **Equal `joinTick`:** neither forfeits; neither could have read the
   other. **The earlier entry is never touched.**
 - **Where it applies:** only rounds whose contract names protocol version
@@ -3810,7 +3817,8 @@ play for.
   worthless instead.
 
 **AS BUILT (2026-11-24, kanban #3612).** `arena-protocol/src/copied-run.js`
-(the rule, pure), `COPIED_RUN_VERSION = 34` in `constants.js`, the
+(the rule, pure: `changeList`, `sharedChanges`; rule text v2),
+`COPIED_RUN_VERSION = 34` in `constants.js`, the
 Entry Contract field `copiedRunRule` after marker `0xb0` (written only
 when named, so every other entry keeps its bytes and id), the door in
 `round.js`, the close, re-run and objection door through

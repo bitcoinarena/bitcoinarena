@@ -712,7 +712,7 @@ export class Verifier {
       }
     }
     // §13D COPIED RUN (kanban #3615, RULED 2026-11-24; #3612): in a shared-world round of protocol 34 or later, an entry whose inputs at
-    // tick - joinTick are an earlier joiner's, word for word from its first input for at least 32 non-empty words, is signed FORFEIT, score 0,
+    // tick - joinTick share an earlier joiner's first 32 input changes (#3663: same relative tick, same word), is signed FORFEIT, score 0,
     // over its canonical transcript - compared with every earlier-joined entry's canonical transcript this seat holds. Every other round,
     // and the earlier entry, close as before.
     {

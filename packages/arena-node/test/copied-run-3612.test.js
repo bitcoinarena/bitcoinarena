@@ -2,9 +2,10 @@
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // §13D COPIED RUN (kanban #3612, spec ruling #3615 2026-11-24; feedback #445). In a shared-world round a player who joins later
 // and replays an earlier joiner's inputs (relative to each join tick) drives the same run to the same score. Ruled: entry B (later
-// joinTick) forfeits - FORFEIT, score 0 - when its inputs at tick - joinTick equal entry A's word for word from B's first input for
-// at least 32 non-empty input words (common prefix; a tick idle in both neither counts nor breaks); equal joinTick: neither; the
-// earlier entry is never touched; shared-world configs at protocol 34 or later only; bound into the Entry Contract.
+// joinTick) forfeits - FORFEIT, score 0 - when its change list ((tick - joinTick, word) for every tick whose word differs from the
+// tick before; #3663) shares a common prefix of at least 32 changes with entry A's; equal joinTick: neither; the earlier entry is
+// never touched; shared-world configs at protocol 34 or later only; bound into the Entry Contract. Two honest players holding
+// throttle from their join are 1 change each and never match.
 //
 // A two-entry round on a real seat store (Round: the door) and the seat's Verifier (copiedRunOf: the one function the close, the
 // re-run and the objection door ask), the canonical transcripts handed over as the store would (§13C). Before the rule: no
@@ -25,7 +26,7 @@ import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { entryId, encodeEntryContract, decodeEntryContract } from '../../arena-protocol/src/contracts.js';
 import { encodeTranscript, transcriptHash, GENESIS } from '../../arena-protocol/src/transcript.js';
-import { COPIED_RUN_RULE_HASH, COPIED_RUN_MIN_WORDS } from '../../arena-protocol/src/copied-run.js';
+import { COPIED_RUN_RULE_HASH, COPIED_RUN_MIN_CHANGES } from '../../arena-protocol/src/copied-run.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 
 const b32 = (n) => new Uint8Array(32).fill(n);
@@ -49,12 +50,12 @@ const entryOf = (rid, n, joinTick, { rule = true } = {}) => ({
   ...(rule ? { copiedRunRule: COPIED_RUN_RULE_HASH } : {}),
 });
 
-// A's run: 5 idle ticks, then one non-empty word a tick (throttle, never 0), an idle tick every 10th - so a prefix of k
-// non-idle ticks is exactly k non-empty words
+// A's run: 5 idle ticks, then a new word every tick (throttle 1000 + t), a release to idle every 10th - so every tick from 5 on
+// is one change (a release is a change too) and A's first k changes end at relative tick 5 + k
 const IDLE = [0, 0, 0, 0, 0];
 const A_ROWS = Array.from({ length: 200 }, (_, t) => (t < 5 || t % 10 === 0 ? IDLE : [1000 + t, 0, 0, 0, 0]));
-/** The relative tick after which A's prefix holds exactly `k` non-empty words. */
-const afterWords = (k) => { let n = 0; for (let t = 0; t < A_ROWS.length; t++) { if (A_ROWS[t] !== IDLE) n++; if (n === k) return t + 1; } throw new Error('short'); };
+/** The relative tick after A's first `k` changes. */
+const afterChanges = (k) => 5 + k;
 const deviate = (rows, from) => rows.map((r, t) => (t < from ? r : [-(2000 + t), 7, 0, 0, 0]));
 
 /** A seat with a round and its entries, each entry's canonical transcript its rows from its join tick. */
@@ -83,30 +84,43 @@ test('#3612 (a) an exact copy by a later joiner: B forfeits by §13D, naming A; 
   const copy = s.copyOf(s.ids[1]);
   assert.ok(copy, 'the copy was not found');
   assert.equal(copy.of, toHex(s.ids[0]));
-  assert.ok(copy.words >= COPIED_RUN_MIN_WORDS);
+  assert.ok(copy.changes >= COPIED_RUN_MIN_CHANGES);
   assert.equal(s.copyOf(s.ids[0]), null, 'the earlier entry was touched');
 });
 
-test('#3612 (b) a prefix copy (B stops early at 40 words) and a copy that plays on after A ends: both forfeit', () => {
-  const early = twoEntry(A_ROWS.slice(0, afterWords(40)));
-  assert.equal(early.copyOf(early.ids[1])?.words, 40);
+test('#3612 (b) a prefix copy (B stops early after 40 changes) and a copy that plays on after A ends: both forfeit', () => {
+  const early = twoEntry(A_ROWS.slice(0, afterChanges(40)));
+  assert.equal(early.copyOf(early.ids[1])?.changes, 40);
   const longer = twoEntry([...A_ROWS, ...Array.from({ length: 50 }, (_, t) => [9 + t, 1, 0, 0, 0])]);
   assert.ok(longer.copyOf(longer.ids[1]), 'a copy that plays on after A was not found');
 });
 
-test('#3612 (c) copy-then-deviate: 32 shared words forfeit, 31 do not', () => {
-  const at32 = twoEntry(deviate(A_ROWS, afterWords(32)));
-  assert.equal(at32.copyOf(at32.ids[1])?.words, 32);
-  const at31 = twoEntry(deviate(A_ROWS, afterWords(31)));
-  assert.equal(at31.copyOf(at31.ids[1]), null, 'under 32 non-empty words was decided');
+test('#3612 (c) copy-then-deviate: 32 shared changes forfeit, 31 do not', () => {
+  const at32 = twoEntry(deviate(A_ROWS, afterChanges(32)));
+  assert.equal(at32.copyOf(at32.ids[1])?.changes, 32);
+  const at31 = twoEntry(deviate(A_ROWS, afterChanges(31)));
+  assert.equal(at31.copyOf(at31.ids[1]), null, 'under 32 changes was decided');
 });
 
-test('#3612 (d) idle ticks neither count nor break the match; a tick idle in only one run breaks it', () => {
-  // A's idle ticks are in the copy too: they did not break a 40-word match above, and here B's first input differs only by idling
+test('#3612 (d) idle stretches add no change; a first change at another tick breaks the match; two idle runs are never hit', () => {
+  // B presses at relative tick 0, A first at 5: their first changes differ
   const s = twoEntry([[1, 0, 0, 0, 0], ...A_ROWS.slice(1)]);
   assert.equal(s.copyOf(s.ids[1]), null, 'a tick non-idle in one run only did not break the match');
   const idleRuns = seat(contractOf(), [{ n: 1, joinTick: 0, rows: Array(300).fill(IDLE) }, { n: 2, joinTick: 50, rows: Array(300).fill(IDLE) }]);
   assert.equal(idleRuns.copyOf(idleRuns.ids[1]), null, 'two idle runs were hit');
+});
+
+test('#3612 (h) two honest players holding throttle from their join for 300 ticks (1 change each) do NOT match; with a release at the same tick, 2 changes, still not', () => {
+  const HOLD = [65536, 0, 0, 0, 0];
+  const held = seat(contractOf(), [{ n: 1, joinTick: 0, rows: Array(300).fill(HOLD) }, { n: 2, joinTick: 50, rows: Array(300).fill(HOLD) }]);
+  assert.equal(held.copyOf(held.ids[1]), null, 'a held throttle was ruled a copy');
+  const released = (rows) => rows.map((r, t) => (t >= 120 ? IDLE : r));
+  const two = seat(contractOf(), [{ n: 1, joinTick: 0, rows: released(Array(300).fill(HOLD)) }, { n: 2, joinTick: 50, rows: released(Array(300).fill(HOLD)) }]);
+  assert.equal(two.copyOf(two.ids[1]), null);
+  // and a real copy of a driven run (steering every few ticks) still forfeits
+  const driven = Array.from({ length: 400 }, (_, t) => [65536, ((t / 4) | 0) % 3 === 0 ? 0 : (((t / 4) | 0) % 2 ? 20000 : -20000), 0, 0, 0]);
+  const copied = seat(contractOf(), [{ n: 1, joinTick: 0, rows: driven }, { n: 2, joinTick: 50, rows: driven }]);
+  assert.ok(copied.copyOf(copied.ids[1])?.changes >= COPIED_RUN_MIN_CHANGES, 'a copy of a driven run was not found');
 });
 
 test('#3612 (e) equal joinTick: neither forfeits', () => {

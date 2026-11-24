@@ -103,7 +103,7 @@ export const DISJOINT_RULES_VERSION = 33;
 export const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERSION;
 /**
  * 2026.0.34 - §13D COPIED RUN (spec ruling kanban #3615, 2026-11-24; #3612): in a shared-world round an entry that joined later and replays an
- * earlier joiner's inputs (relative to each join tick, at least 32 non-empty input words from its first input) is signed FORFEIT, score 0
+ * earlier joiner's inputs (relative to each join tick, its first 32 input changes the same: #3663) is signed FORFEIT, score 0
  * (copied-run.js). Only a round written at 34 or later with a shared-world config; every round below closes byte for byte as before. An entry
  * into such a round names the rule's hash (contracts.js `copiedRunRule`). The round creators write 34 only once every seat of the network
  * runs a build that lists it, as for 33.
