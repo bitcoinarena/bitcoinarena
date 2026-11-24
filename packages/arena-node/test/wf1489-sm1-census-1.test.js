@@ -63,7 +63,8 @@ function seat({ chain, bound = true, tip, votes = new Map(), during = null }) {
     seenSigner: { pubkey: schnorr.getPublicKey(sk(2)), sign: (m) => schnorr.sign(m, sk(2)) } });
   // the tally's census read: the first one awaits `during` (a POST /proposal or peer pull landing while the pass waits on the chain)
   tally = createBallotTally({ proposals, tipHeight: async () => tip.at, votesAt: async (h) => (votes.get(h) || []).map((v) => ({ ...v, height: h })),
-    censusAt: async () => { if (during.fn) { const f = during.fn; during.fn = null; await f(proposals); } return CENSUS; }, verify, genesisFor: () => GENESIS });
+    censusAt: async () => { if (during.fn) { const f = during.fn; during.fn = null; await f(proposals); } return CENSUS; }, verify, genesisFor: () => GENESIS,
+    decideDepthFor: () => 1, minDecideDepthFor: () => 1 });   // 2.0: regtest decides at depth 1, as the other ballot tests here (kanban #1196 rule)
   return { proposals, tally, liveAt: (h) => toHex(tally.historyAt(toHex(NET), h).at(-1).configHash) };
 }
 const vote = (i, id, choice, seq, txid) => ({ payload: encodeVote({ proposalId: fromHex(id), choice, seq, signature: schnorr.sign(voteMessage(fromHex(id), choice, seq), sk(i)) }), txid });
