@@ -454,9 +454,9 @@ test('the winner\'s page collects its own payout contract from the signer nodes\
   const unsettled = await redeemPayout({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Wallet, nodes: ['http://a'],
     fetcher: async () => ({ ok: true, status: 200, json: async () => ({ state: 'NONE' }), text: async () => '' }) });
   assert.equal(unsettled.ok, false);
-  assert.equal(unsettled.final, false, 'a page gave up on a payout before the signer nodes settled');
-  assert.match(payoutLine(unsettled), /^Payout: waiting for the signer nodes' settlement/);
-  assert.match(unsettled.why, /no signer node holds an accepted settlement/);
+  assert.equal(unsettled.final, false, 'a page gave up on a payout before the seats settled');
+  assert.match(payoutLine(unsettled), /^Payout: waiting for the seats' settlement/);
+  assert.match(unsettled.why, /no seat holds an accepted settlement/);
   assert.equal(asked.length, 0);
 });
 
@@ -502,7 +502,7 @@ test('after the settlement the winner\'s page redeems its own stake by the signe
   assert.equal(back.amountMsat, 980000n);
   assert.equal(joins, 0, 'the page opened a second wallet beside the one its payout is in');
   assert.deepEqual(redeemed, [{ txid: 'cd'.repeat(32), outIdx: 0, sig: SIG, key: toHex(player.secret) }]);
-  assert.equal(stakeBackLine(back), 'Stake returned: 980000 msat back to this tab\'s federation wallet by the signer nodes\' forfeit (balance 973312 → 1950624 msat)');
+  assert.equal(stakeBackLine(back), 'Stake returned: 980000 msat back to this tab\'s federation wallet by the seats\' forfeit (balance 973312 → 1950624 msat)');
   // A RELOAD: answered from the tab's note - signer nodes and wallet asked nothing.
   redeemed.length = 0; asked.length = 0;
   const again = await returnStake({ ...ask, storage, fetcher: signerNodes() });
@@ -550,7 +550,7 @@ test('after the settlement the winner\'s page redeems its own stake by the signe
   asked.length = 0;
   const unsettled = await returnStake({ ...ask, fetcher: signerNodes({ settled: false }) });
   assert.equal(unsettled.final, false);
-  assert.equal(asked.filter((u) => u.includes('/forfeit') || u.includes('/stake-lock')).length, 0, 'a forfeit was asked for before the signer nodes settled');
+  assert.equal(asked.filter((u) => u.includes('/forfeit') || u.includes('/stake-lock')).length, 0, 'a forfeit was asked for before the seats settled');
   assert.equal(joins + redeemed.length, 0);
 });
 
@@ -616,7 +616,7 @@ test('the page looks at what a seed is owed and spends nothing: a winner\'s payo
   assert.equal(unanswered.stake.state, 'waiting', JSON.stringify(unanswered.stake));
   assert.equal(unanswered.final, false, 'a lock nobody answered for closed the round as owed nothing');
   assert.deepEqual([unanswered.lockAnswers.asked, unanswered.lockAnswers.answered], [1, 0]);
-  assert.match(unanswered.stake.why, /no signer node answered where this seed's lock is \(a\.test tunnel dropped\)/);
+  assert.match(unanswered.stake.why, /no seat answered where this seed's lock is \(a\.test tunnel dropped\)/);
   const noLock = await lookOwed({ ...ask, fetcher: signerNodes({ payout: false, known: false }), client: wallet(0) });
   assert.equal(noLock.stake.state, 'none');
   assert.equal(noLock.final, true);
@@ -1323,7 +1323,7 @@ test('the refund from the seed alone: the signer nodes are asked by the seed\'s 
   }
   const got = await refundStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Fake,
     nodes: ['http://a.test', 'http://b.test'], fetcher });
-  assert.equal(asked.length, 2, 'not every signer node was asked');
+  assert.equal(asked.length, 2, 'not every seat was asked');
   assert.ok(asked.every((u) => u.includes(`round=${toHex(rid)}`) && u.includes(`refund=${refund}`)));
   const r = refunded.find((x) => x.refund).refund;
   assert.deepEqual([r.txid, r.outIdx, r.key], ['ab'.repeat(32), 0, toHex(player.secret)]);
@@ -1332,7 +1332,7 @@ test('the refund from the seed alone: the signer nodes are asked by the seed\'s 
   assert.deepEqual(got.refunds.map((x) => x.accepted), [true]);
   // AND ANOTHER SEED FINDS NOTHING TO REFUND.
   await assert.rejects(() => refundStake({ round, roundId: rid, invite: INVITE, seed: b32(0x53), curve: pageCurve, LockClient: Fake,
-    nodes: ['http://a.test'], fetcher }), /no signer node knows a stake lock that refunds to this seed's key/);
+    nodes: ['http://a.test'], fetcher }), /no seat knows a stake lock that refunds to this seed's key/);
 });
 
 test('the redeem from the seed alone: the signer nodes\' forfeit and the player\'s key go to the lock client; a lock no signer node forfeits is not redeemed', async () => {
@@ -1362,8 +1362,8 @@ test('the redeem from the seed alone: the signer nodes\' forfeit and the player\
   // A LOSER'S: every signer node refuses the forfeit, and nothing reaches the lock client.
   calls.length = 0;
   await assert.rejects(() => redeemStake({ round, roundId: rid, invite: INVITE, seed, curve: pageCurve, LockClient: Fake,
-    nodes: ['http://a.test', 'http://b.test'], fetcher: signerNodesSay(409) }), /no signer node gave a forfeit of this lock: .*not a qualifier/);
-  assert.equal(calls.length, 0, 'a lock no signer node forfeited was sent to the federation');
+    nodes: ['http://a.test', 'http://b.test'], fetcher: signerNodesSay(409) }), /no seat gave a forfeit of this lock: .*not a qualifier/);
+  assert.equal(calls.length, 0, 'a lock no seat forfeited was sent to the federation');
 });
 
 test('the join link carries the federation\'s invite, and refuses one that is not an invite code', () => {
@@ -1990,7 +1990,7 @@ test('a kept lock for a round the signer nodes refuse is handed to them, owed ba
   // REFUSED BY THE SEATS: handed over, owed back now
   const look = await lookOwed({ ...ask, fetcher: seats(), client: wallet, kept });
   console.log(`  refused round: stake ${JSON.stringify({ state: look.stake.state, how: look.stake.how, refused: look.stake.refused, msat: String(look.stake.msat) })}, handed to ${handed.length}`);
-  assert.equal(handed.length, 4, 'the stake and its fee lock were not handed to every signer node of the round');
+  assert.equal(handed.length, 4, 'the stake and its fee lock were not handed to every seat of the round');
   assert.deepEqual(handed.map((h) => h.body.outpoint).sort(), [`${'d8'.repeat(32)}:0`, `${'d8'.repeat(32)}:0`, `${'d8'.repeat(32)}:1`, `${'d8'.repeat(32)}:1`]);
   assert.equal(look.stake.state, 'owed');
   assert.equal(look.stake.how, 'forfeit');

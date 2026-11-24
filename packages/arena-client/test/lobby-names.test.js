@@ -99,7 +99,7 @@ test('the other page shows a name only from a record its player signed for this 
   await assert.rejects(() => namesOf({ roundId: ROUND.id, nodes: ['http://a'], fetcher }), /no verify/);
   // NO SIGNER NODE ANSWERING IS NOT AN EMPTY ROUND: the page keeps what it had.
   await assert.rejects(() => namesOf({ roundId: ROUND.id, nodes: ['http://down', 'http://gone'], fetcher, verify }),
-    /no signer node answered for the names: http:\/\/down: 404; http:\/\/gone: 404/);
+    /no seat answered for the names: http:\/\/down: 404; http:\/\/gone: 404/);
   const slow = async () => { const e = new Error('timed out'); e.name = 'TimeoutError'; throw e; };
   await assert.rejects(() => namesOf({ roundId: ROUND.id, nodes: ['http://a'], fetcher: slow, verify }), /http:\/\/a: no answer in time/);
 });

@@ -73,7 +73,7 @@ test('no reserve key from five nodes: refused at "reserves", and nothing is paid
   const before = paid.length;
   const { fetch, posted } = seatsWith({ naming: 4 });
   const r = await buyItem({ manifest: V4, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: FED, player, seats: SEATS, fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex) });
-  assert.deepEqual([r.ok, r.step], [false, 'reserves']); assert.match(r.why, /only 4 of the round's signer nodes name reserve key/);
+  assert.deepEqual([r.ok, r.step], [false, 'reserves']); assert.match(r.why, /only 4 of the round's seats name reserve key/);
   assert.equal(paid.length, before, 'no payment'); assert.equal(posted.length, 0);
   const odd = await buyItem({ manifest: V4, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: FED, player, seats: SEATS, fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex), devsPct: 50 });
   assert.deepEqual([odd.ok, odd.step], [false, 'share']);

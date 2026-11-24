@@ -131,12 +131,12 @@ test('a signer node that serves its own key is refused: asked alone it does not 
   const f = await federationRound({ signerNodes: 7, keyOf: (i) => (i === 0 ? ROGUE : CLAIM) });
   try {
     const alone = await f.ask([f.nodes[0]]);
-    assert.equal(alone.ok, false, 'one signer node\'s own key was accepted');
+    assert.equal(alone.ok, false, 'one seat\'s own key was accepted');
     assert.match(alone.why, /1 of 7 signer nodes attest this claim key, and this round needs 5/);
     assert.throws(() => entryWith(f, { claimKey: alone }), /must refuse to lock to a key without it/);
     const all = await f.ask();
     assert.equal(all.ok, true, all.why);
-    assert.equal(toHex(all.claimPk), toHex(CLAIM), 'the rogue signer node\'s key was taken');
+    assert.equal(toHex(all.claimPk), toHex(CLAIM), 'the rogue seat\'s key was taken');
     // answered once its attestation stands (kanban #606): at the round's needed count, not after every seat
     assert.ok(all.attested >= all.needed && all.attested <= 6, `attested ${all.attested} of needed ${all.needed}`);
   } finally { await f.close(); }
@@ -184,7 +184,7 @@ test('a stranger\'s signed claim key counts for nothing, and a node not assigned
 test('a round whose stake goes into a lock gets no entry without an attested key; a paying round naming no federation gets no entry at all', async () => {
   const f = await federationRound();
   try {
-    assert.throws(() => entryWith(f), /no claim key has its signer nodes' attestation: a client must refuse to lock to a key without it/);
+    assert.throws(() => entryWith(f), /no claim key has its seats' attestation: a client must refuse to lock to a key without it/);
     const unnamed = { ...f.round, federationId: new Uint8Array(32) };
     assert.equal(roundLocks(unnamed), false);
     assert.throws(() => entryFor(unnamed, { seed: b32(0x51), curve: pageCurve, random: (n) => new Uint8Array(n).fill(7) }),

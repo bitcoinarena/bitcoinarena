@@ -37,9 +37,9 @@ test('the reserve key: five agreeing signer nodes make it; four, or a split, do 
   const five = await fetchReserveKey({ federationId: FED, nodes, fetcher: serve({ 1: k, 2: k, 3: k, 4: k, 5: k, 6: other }) });
   assert.equal(five.ok, true, five.why); assert.equal(toHex(five.key), k); assert.equal(five.agreeing, 5);
   const four = await fetchReserveKey({ federationId: FED, nodes, fetcher: serve({ 1: k, 2: k, 3: k, 4: k, 5: other, 6: other }) });
-  assert.equal(four.ok, false); assert.match(four.why, /only 4 of the round's signer nodes/);
+  assert.equal(four.ok, false); assert.match(four.why, /only 4 of the round's seats/);
   const none = await fetchReserveKey({ federationId: FED, nodes, fetcher: serve({}) });
-  assert.match(none.why, /none of the round's 7 signer nodes names a reserve key/);
+  assert.match(none.why, /none of the round's 7 seats names a reserve key/);
 });
 
 // kanban #1391 (measured 2026-11-09 12:3xZ on live testnet4): an RPS table's committee of 6 held 4 of federation A's guardian seats - each of the other
@@ -53,5 +53,5 @@ test('the reserve key: a signer node outside the federation counts with the key 
   const mixed = await fetchReserveKey({ federationId: FED, nodes, fetcher: serve({ 1: member, 2: member, 3: member, 4: member, 5: outside, 6: outside }) });
   assert.equal(mixed.ok, true, mixed.why); assert.equal(toHex(mixed.key), k); assert.ok(mixed.agreeing >= 5);
   const lying = await fetchReserveKey({ federationId: FED, nodes, fetcher: serve({ 1: member, 2: member, 3: member, 4: member, 5: { key: null, reserveKey: other }, 6: { key: null, reserveKey: other } }) });
-  assert.equal(lying.ok, false, 'two outside seats naming another key do not make five'); assert.match(lying.why, /only 4 of the round's signer nodes/);
+  assert.equal(lying.ok, false, 'two outside seats naming another key do not make five'); assert.match(lying.why, /only 4 of the round's seats/);
 });
