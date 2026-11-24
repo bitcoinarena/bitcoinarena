@@ -27,8 +27,14 @@ const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 
 // for the socket's life - 12.9 MB of heap per idle socket, nothing bounding the total. Each kept subscription is charged its values (ids,
 // authors, kinds and tag values); a socket holds at most SUB_VALUES_PER_SOCKET, the relay at most SUB_VALUES_TOTAL; past either a REQ is CLOSED.
 const SUB_VALUES_PER_SOCKET = 4000, SUB_VALUES_TOTAL = 400000;
+// A LONG VALUE IS CHARGED ITS LENGTH (kanban #3599, audit nostr a7-3-1): the charge counted values, not bytes, so one #<letter> value of
+// ~128 KB was charged 1 and 40 idle sockets of 20 such REQs kept 102 MB. A tag value is now charged one value per started SUB_VALUE_CHARS
+// characters: the game's d/p/e/a values (and ids, authors: hex, at most 64) still cost 1 each, and a socket's values hold at most about
+// SUB_VALUES_PER_SOCKET x SUB_VALUE_CHARS characters (~512 KB), the relay's about SUB_VALUES_TOTAL x SUB_VALUE_CHARS.
+const SUB_VALUE_CHARS = 128;
+const tagCharge = (vals) => { let n = 0; for (const x of vals) n += Math.max(1, Math.ceil(x.length / SUB_VALUE_CHARS)); return n; };
 const valuesOf = (compiled) => compiled.reduce((t, c) => t + (c.ids ? c.ids.size : 0) + (c.authors ? c.authors.size : 0) + (c.kinds ? c.kinds.size : 0)
-  + c.tags.reduce((u, [, v]) => u + v.size, 0) + 1, 0);
+  + c.tags.reduce((u, [, v]) => u + tagCharge(v), 0) + 1, 0);
 // THE RELAY IS NOT ANYBODY'S DISK (kanban #1513, #1489 r1-nostr-3): the only limit was 60 messages per 10 s per socket, and sockets
 // are free, so one fresh key kept any number of events (kind 8, 9735, or 30078/30762/30009 under new `d`s, up to 64 KB each). Now:
 //   - per author at most AUTHOR_EVENTS events and AUTHOR_BYTES bytes; a new one past that pushes out that author's OWN oldest
