@@ -544,7 +544,7 @@ test('a signer node missing, a signer node serving another set, a forged set, or
   const one404 = await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({ 1: honest }) });
   assert.equal(one404.ok, true, one404.why);
   assert.deepEqual(one404.dissent.map((d) => d.node), ['http://127.0.0.1:2']);
-  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({}) })).why, /not every signer node/);
+  assert.match((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: serving({}) })).why, /not every seat/);
   // A READ THE CONNECTION DROPPED (kanban #803, "Load failed" on a phone) is a node that did not answer, not a refusal - and half must still serve
   const dropping = (ports, f) => async (url) => { if (ports.includes(new URL(url).port)) throw new TypeError('Load failed'); return f(url); };
   assert.equal((await fetchDonationSet({ round, nodes, verifyEd25519, fetcher: dropping(['2'], serving({ 1: honest })) })).ok, true);
@@ -590,7 +590,7 @@ test('no donation leaves the wallet before the signer nodes hold the stake: unco
     const earlyMsat = wallet.asked.map((pr) => decodeBolt11(pr).amountMsat);
     console.log(`  stake not committed: wallet asked ${earlyMsat.length} time(s) for ${earlyMsat.reduce((t, a) => t + a, 0n)} msat, `
       + `recipients invoiced ${endpoints.issued.length}, spent ${log.totalMsat} msat - ${early.why || 'paid'}`);
-    assert.deepEqual([earlyMsat.length, endpoints.issued.length, log.totalMsat], [0, 0, 0n], 'a donation left the wallet before the signer nodes held the stake');
+    assert.deepEqual([earlyMsat.length, endpoints.issued.length, log.totalMsat], [0, 0, 0n], 'a donation left the wallet before the seats held the stake');
     assert.equal(early.ok, false);
     assert.match(early.why, /stake/);
 
@@ -608,7 +608,7 @@ test('the page asks for the donation only once the signer nodes hold the stake',
   const at = page.indexOf('c.payDonation(c.joinedEntry');
   assert.ok(at > 0, 'the page no longer pays the donation through its Client');
   const guard = page.slice(page.lastIndexOf('if (c && c.joinedEntry', at), at);
-  assert.match(guard, /c\.stakeCommitted/, `the page asks for the donation before the signer nodes hold the stake: ${guard.replace(/\s+/g, ' ').slice(0, 200)}`);
+  assert.match(guard, /c\.stakeCommitted/, `the page asks for the donation before the seats hold the stake: ${guard.replace(/\s+/g, ' ').slice(0, 200)}`);
 });
 
 test('a node that does not answer holds no join, and a set fetched and checked is not fetched again for the next round', async () => {
