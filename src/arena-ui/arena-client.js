@@ -20138,7 +20138,12 @@ let seatedLookup = null;
 const federationOfClient = new WeakMap();
 /** The page's lookup of a federation's seated gateways (null: none). */
 const SEATED_AGREE = 2;   // kanban #3183: seat answers that must name a gateway seated
-function useSeatedGateways(lookup) { seatedLookup = typeof lookup === 'function' ? lookup : null; }
+// `keys` (the network's seat keys, hex, or a function answering them: the page's ARENA_CENSUS_KEYS), `verify` (BIP-340) and `fetcher`: how the
+// answers' seats are told apart (kanban #3588, seat-identity.js seatsOf)
+let seatedProofs = {};
+function useSeatedGateways(lookup, { keys = null, verify = null, fetcher = null } = {}) {
+  seatedLookup = typeof lookup === 'function' ? lookup : null; seatedProofs = { keys, verify, fetcher };
+}
 /** Which federation a lock client is a wallet of (openPlayerWallet notes it). */
 function noteClientFederation(client, federationHex) { if (client && typeof client === 'object' && federationHex) federationOfClient.set(client, String(federationHex).toLowerCase()); }
 /**
@@ -20160,7 +20165,30 @@ async function seatedGatewaysOf(client) {
   // guardian's, so a guardian seat added a gateway of its own there and, answering first, named it seated - it led every deposit and the swap's
   // receive leg. The lookup now hands each seat's answer ({ answers: [[url, ...], ...] }); a gateway is seated only when at least
   // SEATED_AGREE answers name it, in the order the first of them gives. A bare list is one seat's word: nothing seated from it.
-  const answers = got && Array.isArray(got.answers) ? got.answers.filter(Array.isArray) : [];
+  // ONE SEAT, ONE ANSWER (kanban #3588, audit client-a7-2-1, the gap in #3183): the answers carried no seat, so one guardian seat named in a link
+  // under two paths of its box (https://evil.example/a, /b) was the two seats SEATED_AGREE asks for, and its own gateway led the deposit and the
+  // swap legs again. The lookup hands each answer with the address it came from ({ seat, urls }); the addresses are grouped into seats as
+  // seat-identity.js seatsOf does (one host is one seat unless each of its URLs proves a distinct key of the network's seats), and a seat's
+  // answers are one answer - none when they disagree. A bare list (an older lookup) is a seat of its own.
+  const raw = got && Array.isArray(got.answers) ? got.answers : [];
+  const tagged = raw.map((a, i) => (Array.isArray(a) ? { seat: `#${i}`, urls: a } : a && Array.isArray(a.urls) ? { seat: String(a.seat || `#${i}`), urls: a.urls } : null)).filter(Boolean);
+  const idOf = new Map();
+  try {
+    const { keys, verify, fetcher } = seatedProofs;
+    const bases = tagged.map((a) => a.seat).filter((x) => /^https?:\/\//.test(x));
+    const several = new Set(bases.map(hostOf)).size < bases.length;
+    const ks = !several ? [] : typeof keys === 'function' ? await keys() : keys;
+    for (const g of await seatsOf(bases, { keys: Array.isArray(ks) ? ks : [], verify, fetcher: fetcher || fetch, ms: 2500 })) for (const u of g.urls) idOf.set(u, g.id);
+  } catch { /* each address then by its host */ }
+  const bySeat = new Map();
+  for (const a of tagged) {
+    const id = idOf.get(a.seat) || (/^https?:\/\//.test(a.seat) ? `host:${hostOf(a.seat)}` : a.seat);
+    if (!bySeat.has(id)) bySeat.set(id, []);
+    bySeat.get(id).push(a.urls);
+  }
+  const answers = [];
+  // a seat's answers agree when they name the same gateways, in any order
+  for (const said of bySeat.values()) { const v = seatVoice(said, (urls) => JSON.stringify([...new Set(urls.filter(Boolean).map((x) => gwKey(x)))].sort())); if (v) answers.push(v); }
   const seen = new Map();
   for (const a of answers) for (const u of new Set(a.filter(Boolean).map((x) => gwKey(x)))) seen.set(u, (seen.get(u) || 0) + 1);
   const l = [];
@@ -34957,8 +34985,6 @@ function paidRecordKeys(storage) {
 
 
 
-// the checked census's node keys (hex), the seat keys a host's URLs prove themselves against (kanban #3575, #3577)
-const censusKeyList = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
 
 
 /**
@@ -35043,17 +35069,8 @@ async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000, 
  * only one is listed): GET /items names a purchase only when two seats do. Answers { keptBy: the first keeping seat in list order or
  * null, kept: how many kept it, last: the last refusal }.
  */
-// TWO SEATS, NOT TWO URLS OF ONE BOX (kanban #3577, audit client-a7-1-4): the 200s were counted per list entry, so a lobby link naming
-// http://liar.test/a and /b (game.nodes keeps both, #3253) was the two keeping seats #2420 asks for - the record was dropped while no honest
-// seat held it, and the paid item never came. The list is grouped into seats (seat-identity.js seatsOf: one host one seat unless each of its
-// URLs proves a distinct key of the checked census - `keys`, default newestCheckedCensus; `verify`, default the page's curve); every URL is
-// still posted to, and a seat keeps the record only when its URLs all said 200 (one that also refused has no vote). `need` counts seats.
-const handVerify = () => { const c = globalThis.ARENA_CURVE; return c && typeof c.verify === 'function' ? (sg, m, k) => { try { return !!c.verify(sg, m, k); } catch { return false; } } : null; };
-async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000, keys = null, verify = null }) {
+async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000 }) {
   const list = (seats || []).slice(0, 64);
-  let groups;
-  try { groups = await seatsOf(list, { keys: keys || censusKeyList(), verify: verify || handVerify(), fetcher: fetch, ms: 15000 }); }
-  catch { groups = list.map((u) => ({ id: u, urls: [u] })); }
   const why = [];
   const kept = await Promise.all(list.map(async (s, i) => {
     try {
@@ -35063,14 +35080,12 @@ async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000, keys =
     } catch (e) { why[i] = `${s}: ${e.message}`; }
     return false;
   }));
-  // (kanban #3577) per seat: kept when every URL of it said 200
-  const keeping = groups.filter((g) => g.urls.every((u) => kept[list.indexOf(u)])).map((g) => g.urls[0]);
-  const n = keeping.length;
-  const need = Math.min(2, groups.length);
+  const n = kept.filter(Boolean).length;
+  const need = Math.min(2, list.length);
   const refusals = why.filter(Boolean);
   const last = !list.length ? 'no seat to hand it to' : refusals.length ? refusals[refusals.length - 1] : 'no seat to hand it to';
-  return { keptBy: list.length && n >= need ? keeping[0] : null, kept: n,
-    last: n && n < need ? `only ${n} of ${groups.length} seats kept it (two must): ${last}` : last };
+  return { keptBy: list.length && n >= need ? list[kept.indexOf(true)] : null, kept: n,
+    last: n && n < need ? `only ${n} of ${list.length} seats kept it (two must): ${last}` : last };
 }
 
 /**
@@ -35204,6 +35219,7 @@ const OWNED_ITEMS_BYTES_MAX = 4 * 1024 * 1024;
 // gave one box the two answers `need` asks for, and its made-up purchase was signed into the entry (every honest seat refused the join). The
 // list is now grouped into seats (seat-identity.js seatsOf: each source once, one host one seat unless each of its URLs proves a distinct key of
 // the checked census - `keys`, default newestCheckedCensus; `verify` BIP-340), and a seat's answers are one answer, none when they disagree
+const censusKeyList = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
 const ownedRecordKey = (it) => JSON.stringify([it.id, String(it.itemId), String(it.gameName)]);
 async function ownedItems({ seats, player, gameName = null, fetch, keys = null, verify = null }) {
   const groups = await seatsOf(seats || [], { keys: keys || censusKeyList(), verify, fetcher: fetch, ms: 15000 });
@@ -42850,6 +42866,13 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
 const H2H_VOID_SLACK_MS = 1000;
 const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
 
+// HOW MANY LISTED ADDRESSES MUST SAY A THING SO THAT `share` OF THE COMMITTEE'S n SEATS ARE AMONG THEM (kanban #3593): at most n of the listed
+// addresses are seats, so the addresses beyond n - names or paths of one box - are added to the share. The per-host count (#3307) stays beside it:
+// paths of one box are one host, names of one box are addresses beyond n. Without a committee: 0 (the per-host count alone, as before)
+const addressesForShare = (listed, committee, share) => {
+  const n = committee && committee.length ? committee.length : 0;
+  return n ? Math.min(listed, Math.max(0, listed - n) + share) : 0;
+};
 /** How long one ask of the lock set waits for the seats still out once a majority answered (kanban #3025). */
 const H2H_STRAGGLER_MS = 500;
 async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_MS, stragglerMs = H2H_STRAGGLER_MS }) {
@@ -42870,7 +42893,12 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
   // BY HOST, NOT BY ADDRESS (kanban #3307, audit h2h-a5-2-1): a join link naming the seats plus nine paths of one box made the box's instant answers a
   // majority of the listed addresses, so every poll ended H2H_STRAGGLER_MS after them and an honest seat slower than that was never heard. The
   // straggler rule starts once a majority of HOSTS answered (each host one vote, as #2709 counts them)
+  // A MAJORITY OF THE COMMITTEE, NOT OF THE NAMES (kanban #3593, audit h2h-a7-3-1, the gap in #3307): a hostname costs nothing, so one box under nine
+  // DNS names was nine hosts, its instant answers a majority of them, and the cut again shut out honest seats answering in 600 ms. With a committee
+  // of n seats the cut also waits until so many addresses answered that a majority of the n is among them (addressesForShare)
   const answeredHosts = new Set(), hostMajority = Math.floor(hosts.length / 2) + 1;
+  const addressMajority = addressesForShare(listed.length, committee, committee && committee.length ? Math.floor(committee.length / 2) + 1 : 0);
+  let answeredAddresses = 0;
   await new Promise((done) => {
     let left = listed.length;
     if (!left) { done(); return; }
@@ -42883,10 +42911,10 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
         });
       } catch { said[i] = null; }
       if (!early) { const st = stands(said[i]); if (st) { early = { entries: st.entries, atMs: st.atMs }; done(); } }
-      answeredHosts.add(hostOf[i]);
+      answeredHosts.add(hostOf[i]); answeredAddresses++;
       if (--left === 0) done();
       // a majority of the seats' hosts answered: the rest get H2H_STRAGGLER_MS more, then this ask ends with what came (the next poll asks all again)
-      else if (!straggle && answeredHosts.size >= hostMajority) straggle = setTimeout(done, stragglerMs);
+      else if (!straggle && answeredHosts.size >= hostMajority && answeredAddresses >= addressMajority) straggle = setTimeout(done, stragglerMs);
     });
   });
   if (straggle) clearTimeout(straggle);
@@ -42917,7 +42945,9 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
   const voidOf = new Map();
   for (const [i, x] of said.entries()) if (x && typeof x === 'object') { if (!voidOf.has(hostOf[i])) voidOf.set(hostOf[i], []); voidOf.get(hostOf[i]).push(x.void === true ? 'void' : 'not'); }
   const voids = [...voidOf.values()].filter((v) => hostWord(v) === 'void').length;
-  return { required: true, certified, void: !certified && voids > 0, voids: certified ? 0 : voids };
+  // kanban #3593: and how many addresses said it, for the committee's share (addressesForShare)
+  const voidAddresses = said.filter((x) => x && typeof x === 'object' && x.void === true).length;
+  return { required: true, certified, void: !certified && voids > 0, voids: certified ? 0 : voids, voidAddresses: certified ? 0 : voidAddresses };
 }
 
 /**
@@ -42931,9 +42961,28 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
   // page gave up at close + 9 s and showed "Not revealed - you lose" while the opponent revealed): a seat's VOID after the window still ends the
   // wait at once; with none, a late certificate opens the reveal up to close + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS
   const giveUpAt = Number(entryCloseMs) + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS;
+  // the reveal to every listed seat (each address once, seatsByHost #2709), posted again every poll to each whose answer is not final, until
+  // each gave a final one or the reveal's deadline passed (#3015, #3154, #3204 below)
+  const revealUntilFinal = async () => {
+    const { listed } = seatsByHost(nodes);
+    let seats = await revealMove({ entryIdHex, move, salt, nodes: listed, identity, fetcher, timeoutMs });
+    const askAgain = (x) => x.status === 0 || x.status === 404 || x.status === 408 || x.status === 425 || x.status === 429 || x.status >= 500
+      || (x.status === 409 && /not certified yet|ask again|try again/i.test(String(x.why || '')));
+    while (now() <= giveUpAt) {
+      const again = seats.filter(askAgain);
+      if (!again.length) break;
+      await sleep(H2H_LOCK_SET_POLL_MS);
+      const more = await revealMove({ entryIdHex, move, salt, nodes: again.map((x) => x.node), identity, fetcher, timeoutMs });
+      seats = seats.map((x) => more.find((m) => m.node === x.node) || x);
+    }
+    return seats;
+  };
   for (;;) {
     const got = await lockSetOfSeats({ roundIdHex, nodes, committee, verify, entryCloseMs, fetcher, timeoutMs });
-    if (got.required === false) return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: null };
+    // "NOT REQUIRED" IS ASKED AGAIN TOO (kanban #3593, audit h2h-a7-3-1 (b)): it is any address's unsigned word, and one box under nine DNS names
+    // saying it made the page post its reveal once and return - the honest seats' "not certified yet - ask again shortly" was never followed up
+    // (FORFEIT). The reveal is now posted to every listed seat until each gave a final answer, as a certified one is (#3015, #3204)
+    if (got.required === false) return { seats: await revealUntilFinal(), certified: null };
     if (got.certified) {
       if (!got.certified.entries.includes(String(entryIdHex))) return { seats: [], notCertified: true, why: 'your entry is not in the round\'s certified lock set: it is not played, its stake comes back' };
       // NOT DONE WHILE THE SEATS ASK AGAIN (kanban #3015, audit h2h r1-1, measured 2026-11-19: a seat one signature ahead served its certificate
@@ -42955,18 +43004,7 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
       // so it is no reason to stop asking a seat whose answer is not final: every listed seat (each address once, seatsByHost #2709) is posted
       // again every poll until each one has given a final answer (a reveal taken, or a refusal that will not change) or the reveal's deadline
       // passes.
-      const { listed } = seatsByHost(nodes);
-      let seats = await revealMove({ entryIdHex, move, salt, nodes: listed, identity, fetcher, timeoutMs });
-      const askAgain = (x) => x.status === 0 || x.status === 404 || x.status === 408 || x.status === 425 || x.status === 429 || x.status >= 500
-        || (x.status === 409 && /not certified yet|ask again|try again/i.test(String(x.why || '')));
-      while (now() <= giveUpAt) {
-        const again = seats.filter(askAgain);
-        if (!again.length) break;
-        await sleep(H2H_LOCK_SET_POLL_MS);
-        const more = await revealMove({ entryIdHex, move, salt, nodes: again.map((x) => x.node), identity, fetcher, timeoutMs });
-        seats = seats.map((x) => more.find((m) => m.node === x.node) || x);
-      }
-      return { seats, certified: got.certified };
+      return { seats: await revealUntilFinal(), certified: got.certified };
     }
     // ONE SEAT'S VOID IS NOT FINAL (kanban #2798, #1489 r21-h2h-1): `void` is any seat's unsigned word, and a seat that said it on the first
     // poll - while the honest seats were still certifying - made the page skip its reveal and forfeit a round the others played. Before the
@@ -42978,9 +43016,12 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
     // point (plus a second of clock slack) and only when more seats said it than a committee's dishonest share can (n - threshold + 1);
     // else the page keeps asking until its own deadline
     const n = committee && committee.length ? committee.length : seatsByHost(nodes).listed.length;
-    const voidsNeeded = Math.max(1, Math.min(seatsByHost(nodes).hosts.length, n - lockSetThreshold(n) + 1));   // kanban #3307: voids are counted per host
+    const { listed, hosts } = seatsByHost(nodes);
+    const voidsNeeded = Math.max(1, Math.min(hosts.length, n - lockSetThreshold(n) + 1));   // kanban #3307: voids are counted per host
+    // kanban #3593: and by address, the addresses beyond the committee's n added - nine DNS names of one box are nine addresses beyond the seats
+    const voidAddressesNeeded = addressesForShare(listed.length, committee, n - lockSetThreshold(n) + 1);
     const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS + H2H_VOID_SLACK_MS;
-    if ((got.void && got.voids >= voidsNeeded && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
+    if ((got.void && got.voids >= voidsNeeded && (got.voidAddresses || 0) >= voidAddressesNeeded && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
     if (onWait) { try { onWait('certifying'); } catch { /* the page's own */ } }
     await sleep(H2H_LOCK_SET_POLL_MS);
   }
@@ -43319,6 +43360,7 @@ async function checkedGameInfoOfTile(tile, verifyEd25519) {
 // DETERMINISTIC AND WITHOUT A DOM: the same answer, title and viewer give the same rows, so a test and the page agree.
 // The one function that talks to the network, fetchSeason, fetchSeasonSnapshot, is handed its fetch.
 
+
 /** The windows the page offers (protocol season.js takes 1 to 90 whole days; the seat keeps each one 30 s). */
 const SEASON_DAYS_CHOICES = [7, 30, 90];
 /** How often an open season view asks again: the seat keeps a season 30 s (SEASON_KEEP_MS), so sooner reads the same. */
@@ -43468,15 +43510,20 @@ async function fetchSeasonSnapshot({ url, game, days, title = null, viewer = [],
 /** How long the season race waits past its first answer for the seats it asked, to confirm each row's key (kanban #3308). */
 const SEASON_CONFIRM_MS = 1500;
 /** The first view, each row's key the one most answering seats give under its name (kanban #3308); unconfirmed rows marked. */
-function confirmRows(views) {
+// ONE SEAT, ONE CONFIRMATION (kanban #3589, audit client-a7-2-2): the views were counted per answering URL, so two paths of one box
+// (https://liar.example/a and /b) were the "second seat" #3308 waits for, and confirmed the box's own key under the leader's name. `seatOf(view)`
+// names the seat a view came from (fetchSeason: seat-identity.js seatsOf); a seat's views count once, and not at all when they disagree
+function confirmRows(views, seatOf = (v) => v.seat) {
   const first = views[0];
   if (!first || !Array.isArray(first.rows)) return first;
   const rows = first.rows.map((r) => {
-    const count = new Map();
+    const bySeat = new Map();
     for (const v of views) {
       const o = (v.rows || []).find((x) => x && (r.name ? x.name === r.name : x.player === r.player));   // a row with no name: by its key
-      if (o && typeof o.player === 'string') count.set(o.player, (count.get(o.player) || 0) + 1);
+      if (o && typeof o.player === 'string') { const k = seatOf(v); if (!bySeat.has(k)) bySeat.set(k, new Set()); bySeat.get(k).add(o.player); }
     }
+    const count = new Map();
+    for (const said of bySeat.values()) if (said.size === 1) { const p = [...said][0]; count.set(p, (count.get(p) || 0) + 1); }
     const ranked = [...count].sort((a, b) => b[1] - a[1]);
     const top = ranked[0];
     if (top && top[1] >= 2 && (ranked.length === 1 || top[1] > ranked[1][1])) return top[0] === r.player ? r : { ...r, player: top[0] };
@@ -43484,7 +43531,10 @@ function confirmRows(views) {
   });
   return { ...first, rows };
 }
-async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout, race = 1 } = {}) {
+// `keys`: the network's seat keys (hex; or a function answering them, the page's ARENA_CENSUS_KEYS) and `verify` (BIP-340): a host's URLs are
+// separate seats for the confirmation only when each proves one of them (kanban #3589); without them each host is one seat
+async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout, race = 1,
+  keys = null, verify = null } = {}) {
   if (!Number.isInteger(days) || days < 1 || days > 90)
     return { ok: false, why: 'a season is 1 to 90 whole days', tried: [] };
   if (!game) return { ok: false, why: 'a season is asked for by a game', tried: [] };
@@ -43502,9 +43552,25 @@ async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch
   // a fast seat put its own key under "Satoshi" and every zap's e-cash went to it. The race now waits up to SEASON_CONFIRM_MS past the first
   // answer for the others it asked; a row's key is the one most of the answering seats give under its name (two at least), and a row whose key
   // no second seat confirms is marked keyUnconfirmed (the page takes no zap to it)
+  // (kanban #3589) which seat each URL is, found beside the race: the URLs of one host are one seat unless each proves a seat key
+  let grouping = null;
+  const seatOfUrl = async () => {
+    if (!grouping) grouping = (async () => {
+      // the keys are asked for only where a host has several URLs (a census check can take a while; one URL per host needs none)
+      const several = new Set(seats.map(hostOf)).size < seats.length;
+      const ks = !several ? [] : typeof keys === 'function' ? await keys() : keys;
+      const groups = await seatsOf(seats, { keys: Array.isArray(ks) ? ks : [], verify, fetcher: (u, o) => fetch(via(u), o) });
+      const m = new Map(); for (const g of groups) for (const u of g.urls) m.set(u, g.id);
+      return m;
+    })().catch(() => new Map());
+    const m = await grouping;
+    return (v) => m.get(v.seat) || `host:${hostOf(v.seat)}`;
+  };
+  const confirmed = async (views) => confirmRows(views, await seatOfUrl());
+  seatOfUrl().catch(() => {});   // started with the race, so it is ready when the first answers are
   const raced = (batch) => new Promise((resolve, reject) => {
     const views = []; let left = batch.length, timer = null, over = false;
-    const finish = () => { if (over) return; over = true; if (timer) clearTimeout(timer); if (!views.length) reject(new Error('none')); else resolve(confirmRows(views)); };
+    const finish = () => { if (over) return; over = true; if (timer) clearTimeout(timer); if (!views.length) reject(new Error('none')); else confirmed(views).then(resolve, reject); };
     for (const seat of batch) ask(seat).then((v) => { if (over) return; views.push(v); if (!timer) timer = setTimeout(finish, SEASON_CONFIRM_MS); },
       (e) => { tried.push({ seat, why: e && e.message ? e.message : String(e) }); })
       .finally(() => { if (--left === 0) finish(); });
@@ -43519,7 +43585,8 @@ async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch
   const step = race > 1 ? race : 1;
   for (let i = front.length; i < seats.length; i += step) {
     const batch = seats.slice(i, i + step);
-    if (batch.length === 1) { try { return await ask(batch[0]); } catch (e) { tried.push({ seat: batch[0], why: e && e.message ? e.message : String(e) }); } continue; }
+    // A LONE VIEW CONFIRMS NOTHING (kanban #3589): a batch of one seat was returned whole, without confirmRows - every row's key that seat's word
+    if (batch.length === 1) { try { return await confirmed([await ask(batch[0])]); } catch (e) { tried.push({ seat: batch[0], why: e && e.message ? e.message : String(e) }); } continue; }
     try { return await raced(batch); } catch { /* the next ones */ }
   }
   return { ok: false, why: tried.length ? 'no node answered the season just now' : 'no node to ask', tried };

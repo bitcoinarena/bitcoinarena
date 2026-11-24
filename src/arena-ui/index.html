@@ -8166,7 +8166,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (keptHere && !answered && !board.children.length) { draw(keptHere); window.ArenaText.say(state, 'Updating from the nodes \u2026'); }
         // EIGHT SEATS AT ONCE, 45 s EACH (kanban #3289, measured on the stage 2026-11-22: a seat builds its network season in 22-50 s, past the 12 s
         // the board gave it, so no node's board ever came; the seat keeps what it built 5 min, so the next ask is quick)
-        const v = await ARENACLIENT.fetchSeason({ nodes: Array.isArray(g.nodes) ? g.nodes : [], game: g.name, days: s.days, title: g.title || g.name,
+        // ONE SEAT, ONE CONFIRMATION OF A ROW'S KEY (kanban #3589): seats behind one host count apart only when each proves a key of the checked census
+        const v = await ARENACLIENT.fetchSeason({ keys: window.ARENA_CENSUS_KEYS, verify: window.ARENA_CURVE && window.ARENA_CURVE.verify ? (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k) : null,
+          nodes: Array.isArray(g.nodes) ? g.nodes : [], game: g.name, days: s.days, title: g.title || g.name,
           viewer: viewer(), fetch: (u, o) => fetch(u, o), via, timeout, race: 8, answerMs: 45000 });
         if (v.ok) { s.kept.set(keptKey, v); if (s.kept.size > 16) s.kept.delete(s.kept.keys().next().value); }
         answered = true;
@@ -10481,13 +10483,15 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               if (!r.ok) return null;
               const v = await r.json();
               if (!v || String(v.federationId || '').toLowerCase() !== k) return null;
-              return ARENACLIENT.gatewayUrlsOfView(v);
+              return { seat: base, urls: ARENACLIENT.gatewayUrlsOfView(v) };   // kanban #3588: with the address it came from
             } catch (e) { return null; }
-          }))).filter(Array.isArray);
+          }))).filter((a) => a && Array.isArray(a.urls));
           const urls = { answers };
           if (answers.length) seatedKept.set(k, { at: Date.now(), urls });
           return urls;
-        });
+        // kanban #3588: the answers' seats told apart by the keys of the checked census they prove (one host is one seat otherwise)
+        }, { keys: typeof window !== 'undefined' ? window.ARENA_CENSUS_KEYS : null, fetcher: fetch,
+          verify: typeof window !== 'undefined' && window.ARENA_CURVE && window.ARENA_CURVE.verify ? (sg, m, kk) => window.ARENA_CURVE.verify(sg, m, kk) : null });
       }
       if (testnet) { findTheRoundsOwed(testnet.named); console.log('[arena] the testnet lobby too: ' + testnet.named.nodes.length + ' node(s)'); }
       if (window.ARENA_ARBITER && !window.ARENA_SLASH_TIMER) { collectSlashPayouts(); window.ARENA_SLASH_TIMER = setInterval(collectSlashPayouts, 600000); }
