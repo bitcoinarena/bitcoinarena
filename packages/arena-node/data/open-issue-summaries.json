@@ -2638,5 +2638,17 @@
  "3665": {
   "text": "Federation: a wallet can keep notes already counted spent, so rounds that pick them void",
   "kind": "bug"
+ },
+ "3666": {
+  "text": "BTC Up/Down game: a refunded past order stays pending for days while the summary counts it closed",
+  "kind": "bug"
+ },
+ "3667": {
+  "text": "BTC Up/Down game: a refund result line shows two different amounts for one returned stake",
+  "kind": "bug"
+ },
+ "3668": {
+  "text": "BTC Up/Down game: past orders of a round still running on the previous app version vanish after a page switch",
+  "kind": "bug"
  }
 }
