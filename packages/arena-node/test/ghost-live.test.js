@@ -61,6 +61,11 @@ const entryFor = (rid, joinTick = 0) => ({
 const wordsAt = (t) => [45875, ((t * 977) % 30000) - 15000, (t % 700) < 40 ? 65536 : 0, 0, 0];
 // One batch per 100 ms, which is what the page actually sends.
 const CHUNK = 6;
+// TEN FRAMES SPREAD OVER A 600-TICK RUN, CHECKED AGAINST A FULL REPLAY (kanban #3545, owner's decision 2026-11-24): a full replay is from
+// tick 0, so checking all 100 frames replayed ~30,000 ticks per test and the file took ~430 s. Now frames 0, 11, 22, .. 99 - the first and the
+// last among them: the warm run steps on from one to the next in one pass (`cold.frameFor`, in order), each checked against a full replay.
+// That the warm run walks every tick once however many frames it makes is the next test's.
+const SAMPLED = new Set(Array.from({ length: 10 }, (_, i) => i * 11));
 
 /** A round with one driver, publishing as the page does. */
 function driving(ticks, { liquidations = [], loads = [], joinTick = 0 } = {}) {
@@ -104,18 +109,22 @@ function watchedWhileDriving(ticks, { joinTick = 0, liquidations = [], loads = [
   return { ...world, seen };
 }
 
-test('the live picture is the same pose a full replay produces, at every tick', () => {
+test('the live picture is the same pose a full replay produces, at ten frames spread over the run', () => {
   // THE PROPERTY THAT MATTERS. A warm run that drifted from a cold replay by
   // one word would put another player's truck somewhere they never were, and
-  // it would do it silently. So the two are compared at every published tick
-  // of a run, not at one.
+  // it would do it silently. So the two are compared at ten published ticks
+  // spread over a run, first and last among them (kanban #3545), not at one.
   const world = driving(600);
   const transcript = world.round.transcript(world.rid, world.eid);
   const batches = decodeTranscript(world.round.handOver(world.rid, world.eid).bytes).batches;
 
   const cold = new Ghosts(world.round, { plugins: HOSTED, randomnessFor: () => BEACON });
   let compared = 0;
-  for (let at = CHUNK - 1; at < 600; at += CHUNK) {
+  let frame = 0;
+  for (let at = CHUNK - 1; at < 600; at += CHUNK, frame++) {
+    if (!SAMPLED.has(frame)) continue;
+    const fast = cold.frameFor(world.rid, world.eid, at);   // the warm run, on from the last sampled frame: one pass
+    assert.equal(fast.ok, true, fast.why);
     const warm = world.ghosts.frameFor && null;   // the live path is `latest`
     void warm;
     const slow = ghostForChecked({ core: TRUCK,
@@ -123,12 +132,11 @@ test('the live picture is the same pose a full replay produces, at every tick', 
       roundId: world.rid, entryId: world.eid, tick: at, roundRandomness: BEACON.hash,
     });
     assert.equal(slow.ok, true, slow.why);
-    const fast = cold.frameFor(world.rid, world.eid, at);
-    assert.equal(fast.ok, true, fast.why);
     assert.equal(toHex(fast.bytes), toHex(slow.bytes), `tick ${at} differs from a full replay`);
     compared++;
   }
-  assert.equal(compared, 100);
+  assert.equal(compared, 10);
+  assert.equal(frame, 100, 'the run has 100 frames');
 });
 
 test('the warm run walks each tick once, however many frames it makes', () => {
@@ -242,18 +250,21 @@ test('a live picture of a loaded run is the pose a full replay produces', () => 
 
   const cold = new Ghosts(world.round, { plugins: HOSTED, randomnessFor: () => BEACON });
   let compared = 0;
-  for (let at = CHUNK - 1; at < 600; at += CHUNK) {
+  let frame = 0;
+  for (let at = CHUNK - 1; at < 600; at += CHUNK, frame++) {
+    if (!SAMPLED.has(frame)) continue;
+    const fast = cold.frameFor(world.rid, world.eid, at);   // the warm run, on from the last sampled frame: one pass
+    assert.equal(fast.ok, true, fast.why);
     const slow = ghostForChecked({ core: TRUCK,
       transcript, entry: world.entry, batches,
       roundId: world.rid, entryId: world.eid, tick: at, roundRandomness: BEACON.hash,
     });
     assert.equal(slow.ok, true, slow.why);
-    const fast = cold.frameFor(world.rid, world.eid, at);
-    assert.equal(fast.ok, true, fast.why);
     assert.equal(toHex(fast.bytes), toHex(slow.bytes), `tick ${at} differs from a full replay`);
     compared++;
   }
-  assert.equal(compared, 100);
+  assert.equal(compared, 10);
+  assert.equal(frame, 100, 'the run has 100 frames');
 
 });
 
@@ -261,22 +272,26 @@ test('a live picture of a loaded run is the pose a full replay produces', () => 
  * AND THE LOAD IS WHAT MAKES THE PICTURE DIFFERENT, or the agreement above is
  * two runs of the same thing.
  *
- * Nine hundred ticks, because that is how long this drive takes to reach the
- * army: heat widens the range a tank notices the truck at, so an empty bed and
- * a full one are the same drive until the first gun is in reach and part for
- * good after it.
+ * As long as this drive takes to reach the army: heat widens the range a tank
+ * notices the truck at, so an empty bed and a full one are the same drive until
+ * the first gun is in reach and part for good after it. That was 900 ticks; the
+ * world grew east (the app's map.js put the miner at 169 m), and measured on the
+ * current core (kanban #3545) the two runs are the same pose at 300, 600, 899 and
+ * 1500 and 20.5 m apart at 2400 - the core moves the picture with the load, the
+ * test read it before the army was in reach.
  */
+const LOAD_TICKS = 2400;
 test('the load is what moves the picture, and by how much', () => {
-  const loaded = driving(900, { loads: BED });
-  const empty = driving(900);
+  const loaded = driving(LOAD_TICKS, { loads: BED });
+  const empty = driving(LOAD_TICKS);
   const a = new Ghosts(loaded.round, { plugins: HOSTED, randomnessFor: () => BEACON })
-    .frameFor(loaded.rid, loaded.eid, 899);
+    .frameFor(loaded.rid, loaded.eid, LOAD_TICKS - 1);
   const b = new Ghosts(empty.round, { plugins: HOSTED, randomnessFor: () => BEACON })
-    .frameFor(empty.rid, empty.eid, 899);
+    .frameFor(empty.rid, empty.eid, LOAD_TICKS - 1);
   assert.equal(a.ok, true, a.why);
   assert.equal(b.ok, true, b.why);
   const apart = Math.hypot((a.ghost.x - b.ghost.x) / 65536, (a.ghost.z - b.ghost.z) / 65536);
-  console.log(`  at tick 899 the loaded run is drawn ${apart.toFixed(3)} m from the same inputs unloaded`
+  console.log(`  at tick ${LOAD_TICKS - 1} the loaded run is drawn ${apart.toFixed(3)} m from the same inputs unloaded`
     + ` | loaded x ${(a.ghost.x / 65536).toFixed(2)} z ${(a.ghost.z / 65536).toFixed(2)}`
     + ` | empty x ${(b.ghost.x / 65536).toFixed(2)} z ${(b.ghost.z / 65536).toFixed(2)}`);
   assert.ok(apart > 1,
