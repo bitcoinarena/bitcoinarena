@@ -611,15 +611,18 @@ export function createOpr(o = {}) {
   // A ROUND'S BEST RUNS, BUILT ONCE PER STORE STATE (kanban #3581, audit opr a7-1-3): the unsigned GET /replay/<id> rebuilt the whole board per
   // request (boardOf: every scored run parsed, a players read per row) only to ask whether the run is a board row's best - ~41 ms at 1,000
   // players on the one thread. The set of each round's best attempt ids is kept while nothing was written to the store (SQLite total_changes)
+  // ONE BOARD PER ROUND AND STORE STATE FOR THE PUBLIC READS (kanban #3591): publicRound and publicBoard built it once each per answer; they share
+  // this one (read only - never changed by a caller)
   const bestKept = new Map(), BEST_KEPT_MOST = 64;
-  function bestRunsOf(round) {
+  function keptBoard(round) {
     const n = q('SELECT total_changes() AS n').get().n, k = bestKept.get(round);
-    if (k && k.n === n) return k.ids;
-    const ids = new Set(bestPerPlayer(runsOf(round)).map((b) => b.attempt));
+    if (k && k.n === n) return k;
+    const board = boardOf(round), v = { n, board, ids: new Set(board.map((b) => b.attempt)) };
     if (bestKept.size >= BEST_KEPT_MOST) bestKept.clear();
-    bestKept.set(round, { n, ids });
-    return ids;
+    bestKept.set(round, v);
+    return v;
   }
+  const bestRunsOf = (round) => keptBoard(round).ids;
   /**
    * THE BOT LIKELIHOOD OF A ROUND (kanban #3274), admin and lists only: { runs: Map attempt -> { score, reasons, top }, players: Map player ->
    * { score, top, attempt } } - a player's is their most bot-like scored run. Across runs: near-identical inputs of other players and of the
@@ -813,7 +816,7 @@ export function createOpr(o = {}) {
   function publicBoard(round, viewer = null) {
     const r = roundRow(round);
     const used = new Map(q('SELECT player, COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL GROUP BY player').all(round).map((x) => [x.player, x.n]));
-    return boardOf(round).map((b) => ({ rank: b.rank, name: b.name, key: rowKeyOf(b.player), player: b.player, score: b.total, timeS: b.timeS, attempts: used.get(b.player) || 0,
+    return keptBoard(round).board.map((b) => ({ rank: b.rank, name: b.name, key: rowKeyOf(b.player), player: b.player, score: b.total, timeS: b.timeS, attempts: used.get(b.player) || 0,
       placed: xOf(b.player, r).placed, replay: `/replay/${b.attempt}` }));   // #3336: every row's best run is public, during the round too (owner 2026-11-22)
   }
 
@@ -1073,7 +1076,7 @@ export function createOpr(o = {}) {
   const publicKept = new Map(), PUBLIC_KEPT_MOST = 256;
   function publicRound(r, t = now()) {
     if (!r) return null;
-    const board = boardOf(r.id), best = board[0];
+    const board = keptBoard(r.id).board, best = board[0];
     return { id: r.id, number: r.num, test: !!r.test, chartDay: r.chart_day, startMs: r.start_ms, endMs: r.end_ms, phase: phaseOf(r, t), lastCallMs: r.end_ms - cfg.lastCallMs,
       entrySats: r.entry_sats, free: isFree(r), maxAttempts: r.max_attempts, split: [...SPLIT], potSats: potOf(r), bountySats: r.test ? 0 : cfg.bountySats,
       gameVersion: r.game_version, levelHash: r.level_hash, players: board.length,
@@ -1180,7 +1183,12 @@ export function createOpr(o = {}) {
       // requests a second from a stranger stalled every start and submit. The answer is kept and served again while nothing was written to the
       // store (SQLite total_changes) and the service's clock is in the same second; at most PUBLIC_KEPT_MOST answers are held
       if (req.method === 'GET' && (path === '/board' || path === '/round' || path === '/rounds')) {
-        const stamp = `${q('SELECT total_changes() AS n').get().n}|${Math.floor(now() / 1000)}`, k = `${path}?${url.searchParams.toString()}`;
+        // kanban #3591 (audit opr a7-2-2): keyed by the route and the round it answers (the one it names, else the current one; '-' for none) - the
+        // whole query text let a junk parameter that changes per request (/board?z=1, ?z=2, ... or ?round=<junk>) miss the kept answer every time,
+        // rebuild the board as before #3354 and push the honest answers out of the kept map
+        const arg = path === '/board' ? url.searchParams.get('round') : path === '/round' ? url.searchParams.get('id') : null;
+        const rr = path === '/rounds' ? null : arg ? roundRow(arg) : currentRound();
+        const stamp = `${q('SELECT total_changes() AS n').get().n}|${Math.floor(now() / 1000)}`, k = `${path}|${rr ? rr.id : '-'}`;
         const kept = publicKept.get(k);
         if (kept && kept.stamp === stamp) { res.writeHead(kept.code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(kept.body); return; }
         const sendKept = (code, body) => { const b = JSON.stringify(body); if (publicKept.size >= PUBLIC_KEPT_MOST) publicKept.clear(); publicKept.set(k, { stamp, code, body: b }); res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(b); };
