@@ -2169,3 +2169,5 @@ State machine audit round 9 (#1489, base f64efd1bb). Each machine as it stands a
   standing (standing.js). The Void stays as history; ENTRY_VOID is read only when no such record or pair is held. So a seat
   with the Void and a seat without it list the same entry the same way, and the equivocator's lock is claimed like a
   walk-away's (ruling 2026-10-04 (b)), never left to return to him at expiry.
+#### Node services' run state across an update (update.js moveNode / rollBack / resumeUpdate, kanban #3606, sm1-node-1)
+- The update restores the run state it found. Before anything stops, the units of `moving` and their PartOf companions that systemd answers `inactive` are written to the journal (`oldStopped`). The move's start, the stop-failed restart, the rollback and the resume after a crash start every unit except those; the seat always starts (the update verifies it). A liquidity provider, gateway or LND the owner stopped on the owner page stays stopped after an auto update; its unit file still names the new release. Where no run state can be read (launchd, Windows) the list is empty and everything starts as before.
