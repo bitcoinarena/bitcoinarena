@@ -313,11 +313,14 @@ test('the page joins a named round and still invents none', () => {
   // THE FIELDS ONLY A ROUND'S BUILDER WRITES never appear, and nothing encodes a contract: `stakeMsat` is an order's own
   // amount since (a pick record, an order message) and `committeeTimeMs` is read off fetched rounds to sort them - the
   // words alone no longer say a round is invented, so those two are checked as the page uses them: never encoded into a contract
+  // (written as a field, `name:` - the page reads a fetched round's gameVerifySlots to count its seats, kanban #3543)
   for (const field of ['censusRoot', 'simCoreHash', 'gameVerifySlots', 'blockTicks'])
-    assert.ok(!page.includes(field),
+    assert.ok(!new RegExp('\\b' + field + '\\s*:').test(page),
       'the page writes ' + field + ', so it is inventing a round rather than joining one');
+  // (the named round's own contract encoded again for a kept record is not a new round: kanban #3543)
+  const pageNoReencode = page.split('ARENACLIENT.encodeRoundContract(named.round)').join('');
   for (const builder of ['encodeRoundContract', 'openGrid', 'standUpRound', 'roundContractFields'])
-    assert.ok(!page.includes(builder), 'the page calls ' + builder + ', so it is inventing a round rather than joining one');
+    assert.ok(!pageNoReencode.includes(builder), 'the page calls ' + builder + ', so it is inventing a round rather than joining one');
   assert.ok(!/committeeTimeMs\s*:/.test(page), 'the page sets a committee time, so it is inventing a round rather than joining one');
 
   // THE SESSION KEY IS PER TAB. localStorage would make two tabs one player,
