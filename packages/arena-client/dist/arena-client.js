@@ -19775,6 +19775,11 @@ const FRESH_SPENDS = new Set(['sendEcash', 'sendAllEcash', 'withdraw', 'lock', '
 const REFUSED_BEHIND = new Set(['lockAccepted']);
 const RETRY_SPENDS = new Set(['sendEcash', 'sendAllEcash', 'withdraw', 'lock', 'lockBoth', 'lockHash', 'lockWithDonations']);
 const isAlreadySpent = (e) => /already spent/i.test(String((e && e.message) || e));
+// kanban #3665: a lock refused as already spent is made again from the notes left - this often at most, no later than the close less this lead,
+// the refund of its good notes waited for this long at most
+const RELOCK_TRIES = 4, RELOCK_CLOSE_LEAD_MS = 3000, RELOCK_POLL_MS = 150, RELOCK_WAIT_MS = 5000;
+// how long a submission's answer is waited for before the entry goes out: a refusal came 183 ms after it (#3664), an acceptance takes ~1.9 s
+const EARLY_REFUSAL_MS = 400;
 function freshWallet(client, store, reopen, onStep = () => {}) {
   if (!client || typeof client !== 'object' || !store || typeof store.stale !== 'function') return client;
   let inner = client, st = store, reopening = null, forced = false;
@@ -20965,7 +20970,8 @@ async function lockStake(ask = {}) {
   return ask.keep ? keptLockStake(ask) : lockStakeNow(ask);
 }
 async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
-  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {}, onSubmitted = () => {}, onSubmitting = () => {}, submitTag = '' } = {}) {
+  storage, donationMsat = 0n, donationRecipients = null, onStep = () => {}, onSubmitted = () => {}, onSubmitting = () => {}, submitTag = '',
+  relockUntilMs = undefined } = {}) {
   paysIntoALock(round, invite, LockClient);
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
@@ -21006,27 +21012,30 @@ async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, pla
     // throw here submits nothing), and the 2.0 lock client keeps the submission under `submitTag` in the wallet's operation log
     // (lockSubmittedFor), as sendEcash(msat, key) keeps an e-cash send. An older lock client ignores the extra argument.
     onSubmitting();
-    const submitted = JSON.parse(await client.lockSubmit(toHex(stake.stakePoint), String(amount), image ? toHex(image) : '',
-      String(feeGate.pays ? feeMsat : 0n), toHex(claimKey.claimPk), toHex(refundPk), delta,
-      JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) }))),
-      ...(submitTag ? [submitTag] : [])));
-    onSubmitted(submitted);
-    // WHERE THE LOCK'S TIME WENT, AS THE LOCK CLIENT MEASURED IT (kanban #623: a browser lock 0.3-2.7 s, a bot's 60-160 ms on the same
-    // federation): the block count (kept or read), building the outputs, finalizing and submitting, the mint outputs' wait, the store
-    if (submitted.timing) console.log('[arena] TIMED lock inside: ' + JSON.stringify(submitted.timing));
-    const asBuilt = (o, image) => ({ outpoint: { txid: fromHex(submitted.txid), outIdx: BigInt(o.out_idx) },
-      fields: { paymentImage: image, amountMsat: BigInt(o.amount_msat), claimPk: claimKey.claimPk, refundPk, expiration: o.computed_expiration },
-      contractId: o.computed_contract_id });
-    const outs = submitted.outputs || [];
-    const stakeOut = outs.find((o) => o.role === 'stake');
-    const feeOut = outs.find((o) => o.role === 'fee');
-    if (!stakeOut || BigInt(stakeOut.amount_msat) !== amount) throw new Error(`the lock client built ${stakeOut ? stakeOut.amount_msat : 'no'} msat of stake, and this entry's net stake is ${amount}`);
-    if (feeGate.pays && (!feeOut || BigInt(feeOut.amount_msat) !== feeMsat)) throw new Error(`the lock client built ${feeOut ? feeOut.amount_msat : 'no'} msat of fee lock, and this entry's fee is ${feeMsat}`);
-    const lock = asBuilt(stakeOut, { kind: 'point', bytes: stake.stakePoint });
-    const feeLock = feeGate.pays ? { ...asBuilt(feeOut, { kind: 'hash', bytes: image }), preimage } : null;
-    const donations = donationOutputsFromClient(outs.filter((o) => o.role === 'donation').map((o) => ({ ...o, txid: submitted.txid, ids_match: true })), donationShares);
-    const accepted = (async () => {
-      const all = JSON.parse(await client.lockAccepted(JSON.stringify(submitted)));
+    // one submission on `c` (the wallet's client), its outputs checked as built: the first one here, a relock (#3665) on the same client after it
+    const submitOn = async (c, tag) => {
+      const submitted = JSON.parse(await c.lockSubmit(toHex(stake.stakePoint), String(amount), image ? toHex(image) : '',
+        String(feeGate.pays ? feeMsat : 0n), toHex(claimKey.claimPk), toHex(refundPk), delta,
+        JSON.stringify(donationShares.map((d) => ({ pk: toHex(d.recipientPk), msat: String(d.amountMsat), image: toHex(playerPubkey) }))),
+        ...(tag ? [tag] : [])));
+      // WHERE THE LOCK'S TIME WENT, AS THE LOCK CLIENT MEASURED IT (kanban #623: a browser lock 0.3-2.7 s, a bot's 60-160 ms on the same
+      // federation): the block count (kept or read), building the outputs, finalizing and submitting, the mint outputs' wait, the store
+      if (submitted.timing) console.log('[arena] TIMED lock inside: ' + JSON.stringify(submitted.timing));
+      const asBuilt = (o, image) => ({ outpoint: { txid: fromHex(submitted.txid), outIdx: BigInt(o.out_idx) },
+        fields: { paymentImage: image, amountMsat: BigInt(o.amount_msat), claimPk: claimKey.claimPk, refundPk, expiration: o.computed_expiration },
+        contractId: o.computed_contract_id });
+      const outs = submitted.outputs || [];
+      const stakeOut = outs.find((o) => o.role === 'stake');
+      const feeOut = outs.find((o) => o.role === 'fee');
+      if (!stakeOut || BigInt(stakeOut.amount_msat) !== amount) throw new Error(`the lock client built ${stakeOut ? stakeOut.amount_msat : 'no'} msat of stake, and this entry's net stake is ${amount}`);
+      if (feeGate.pays && (!feeOut || BigInt(feeOut.amount_msat) !== feeMsat)) throw new Error(`the lock client built ${feeOut ? feeOut.amount_msat : 'no'} msat of fee lock, and this entry's fee is ${feeMsat}`);
+      const lock = asBuilt(stakeOut, { kind: 'point', bytes: stake.stakePoint });
+      const feeLock = feeGate.pays ? { ...asBuilt(feeOut, { kind: 'hash', bytes: image }), preimage } : null;
+      const donations = donationOutputsFromClient(outs.filter((o) => o.role === 'donation').map((o) => ({ ...o, txid: submitted.txid, ids_match: true })), donationShares);
+      return { submitted, lock, feeLock, donations };
+    };
+    const acceptedOn = async (c, { submitted, lock, feeLock }) => {
+      const all = JSON.parse(await c.lockAccepted(JSON.stringify(submitted)));
       const got = lockFromClient(all.stake, { point: stake.stakePoint, claimPk: claimKey.claimPk, refundPk });
       if (got.contractId !== lock.contractId || got.outpoint.outIdx !== lock.outpoint.outIdx)
         throw new Error('the guardians hold the stake lock at another output than the entry names');
@@ -21036,10 +21045,57 @@ async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, pla
           throw new Error('the guardians hold the fee lock at another output than the entry names');
       }
       donationOutputsFromClient(all.donations, donationShares);
-      return { ok: true, walletAfterMsat: BigInt(await client.balanceMsat()) };
-    })();
-    accepted.catch(() => { /* the caller is handed it; unobserved, it must not be an unhandled rejection */ });
-    return { ...lock, client, feeLock, feeGate, donations, accepted, walletBeforeMsat: before, walletAfterMsat: null };
+    };
+    // the client that made the lock (freshWallet's inner one): a refused transaction's refund runs there, and a relock is made there (#3665)
+    const owner = (client && client[FRESH_INNER]) || client;
+    // A WALLET THAT KEPT NOTES THE FEDERATION COUNTS SPENT LOCKS AGAIN BEFORE THE ENTRY GOES OUT (kanban #3665, found in #3664): a browser killed
+    // seconds after a wallet write (localStorage commits late) reopens with notes the federation already counted spent; every lock that picked one
+    // was refused ("The transaction had an invalid input: 2-The note is already spent"), and the entry - which names the lock's outpoint - had
+    // already gone out: the round VOID. Reopening from storage (#3237) reads the same notes. The refusal itself sorts them out: the lock client's
+    // input state machine (fedimint#9497, build-wasm.sh) refunds the refused transaction's notes one by one, a spent one is refused and dropped from
+    // the wallet, the good ones are issued back - a note known spent is never handed in again. And the refusal comes at once (measured #3664,
+    // 3f539d34: 183 ms after the submission; an acceptance takes ~1.9 s, the entry went out 2.1 s after it). So each submission's answer is waited
+    // for EARLY_REFUSAL_MS: refused as already spent, the stake is locked once more from the notes the wallet holds now (a new transaction, the
+    // same stake point, claim key, refund key and amounts; the intent names the new transaction, onSubmitted), up to RELOCK_TRIES, and never past
+    // `relockUntilMs` (default: the entry close less RELOCK_CLOSE_LEAD_MS); the entry names the lock that was not refused. Accepted or still
+    // pending after the wait, it is answered as before, its acceptance behind.
+    const deadline = Number.isFinite(Number(relockUntilMs)) && Number(relockUntilMs) > 0 ? Number(relockUntilMs)
+      : (round && round.entryCloseMs !== undefined ? Number(round.entryCloseMs) - RELOCK_CLOSE_LEAD_MS : 0);
+    let cur = await submitOn(client, submitTag);
+    onSubmitted(cur.submitted);
+    let acc = null, tries = 0;
+    for (;;) {
+      // the first acceptance through the wallet as before (a refusal there marks it for #3237); a relock's on the client that made it
+      acc = acceptedOn(tries ? owner : client, cur);
+      acc.catch(() => { /* raced below, and handed to the caller */ });
+      const early = await Promise.race([acc.then(() => null, (e) => e), new Promise((r) => setTimeout(() => r(null), EARLY_REFUSAL_MS))]);
+      if (!early || !isAlreadySpent(early) || tries >= RELOCK_TRIES || Date.now() >= deadline) break;
+      tries += 1;
+      onStep(`the federation counts a note this wallet kept as spent - the wallet drops it and locks again (${tries} of ${RELOCK_TRIES})`);
+      console.log(`[arena] #3665 lock ${cur.submitted.txid.slice(0, 16)} refused (${String(early.message || early).slice(0, 120)}): relock ${tries}`);
+      // the notes of the refused transaction are out of the balance until the refund issues the good ones back: wait until it holds the locks
+      const waitUntil = Math.min(deadline, Date.now() + RELOCK_WAIT_MS);
+      let held = 0n;
+      for (;;) {
+        try { held = BigInt(await owner.balanceMsat()); } catch { held = 0n; }
+        if (n.need !== null && held >= n.need) break;
+        if (Date.now() + RELOCK_POLL_MS >= waitUntil) break;
+        await new Promise((r) => setTimeout(r, RELOCK_POLL_MS));
+      }
+      if (n.need === null || held < n.need) {
+        acc = Promise.reject(new Error(`${early.message || early} - and after it the player wallet held ${held} msat of the ${n.need} msat this round's locks need`));
+        acc.catch(() => {});
+        break;
+      }
+      cur = await submitOn(owner, submitTag ? `${submitTag}.r${tries}` : '');
+      onSubmitted(cur.submitted);
+    }
+    const made = { ...cur.lock, client, feeLock: cur.feeLock, feeGate, donations: cur.donations, walletBeforeMsat: before, walletAfterMsat: null,
+      ...(tries ? { relocked: tries } : {}) };
+    const by = tries ? owner : client;
+    made.accepted = acc.then(async () => ({ ok: true, walletAfterMsat: BigInt(await by.balanceMsat()) }));
+    made.accepted.catch(() => { /* the caller is handed it; unobserved, it must not be an unhandled rejection */ });
+    return made;
   }
   // THE DONATION IN THE SAME TRANSACTION (2026-10-03, FEDERATION.md "Donations in the federation"): a round whose set
   // pays keys gets one payout contract per share above 0 msat, in the set's order, beside the stake (and the fee lock) -
