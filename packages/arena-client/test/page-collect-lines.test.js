@@ -23,10 +23,26 @@ test('another kept seed\'s record: open, done, held - the plan\'s words', () => 
   assert.deepEqual(collectLines([r], { held: new Set([R1]) }), [{ kind: 'other', text: 'Other kept seed 839b67a6: round 5718b249 held by another tab' }]);
 });
 
-test('a failed collect: the round and the first 60 characters of the error, tried again', () => {
+test('a failed collect: the round and the error, tried again', () => {
   const why = 'the federation did not answer within 20 s, asked at guardian-3 and guardian-5 and more';
   const lines = collectLines([{ ...own, round: R1 }], { failed: new Map([[R1, why]]) });
-  assert.deepEqual(lines, [{ kind: 'failed', text: `Collect failed for round 5718b249: ${why.slice(0, 60)} - tried again` }]);
+  assert.deepEqual(lines, [{ kind: 'failed', text: `Collect failed for round 5718b249: ${why} - tried again` }]);
+});
+
+// kanban #3602 (feedback #435): 'Collect failed for round 51499b55: round 51499b55: no answer in 120 s - looked at again on a la - tried again'
+// - the bound's error (collectWithin) already names the round, and the reason was cut at 60 characters mid-word
+test('#3602: the round is named once and the reason is whole', () => {
+  const R = '51499b55' + '0'.repeat(56);
+  const lines = collectLines([{ ...own, round: R }], { failed: new Map([[R, 'round 51499b55: no answer in 120 s - looked at again on a later pass']]) });
+  assert.deepEqual(lines, [{ kind: 'failed', text: 'Collect failed for round 51499b55: no answer in 120 s - looked at again on a later pass' }]);
+});
+test('#3602: a long reason is cut at a word, never inside one', () => {
+  const why = 'the federation did not answer ' + 'within the time allowed at guardian-3 and guardian-5 '.repeat(6) + 'end';
+  const [line] = collectLines([{ ...own, round: R1 }], { failed: new Map([[R1, why]]) });
+  const said = line.text.replace(/^Collect failed for round 5718b249: /, '').replace(/ - tried again$/, '');
+  assert.ok(said.length < why.length && said.length <= 121, said);
+  assert.match(said, /…$/);
+  assert.ok(why.startsWith(said.slice(0, -1)) && /[ ,;]/.test(why[said.length - 1]), `cut inside a word: ${said}`);
 });
 
 test('an uncollectable record: its round and seed, and why', () => {

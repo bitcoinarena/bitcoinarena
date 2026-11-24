@@ -3195,6 +3195,7 @@ export function recordsToCollect(storage, { tabSeed = null } = {}) {
  * collect, an uncollectable record. `records` as the page keeps them in ARENA_RECORDS ({ round, seed, own, state });
  * `failed` a Map round -> the error; `held` a Set of rounds another tab holds. Each: { text, kind }.
  */
+const COLLECT_WHY_CHARS = 120;
 export function collectLines(records = [], { failed = new Map(), held = new Set() } = {}) {
   const r8 = (x) => String(x || '').slice(0, 8);
   const lines = [];
@@ -3207,8 +3208,12 @@ export function collectLines(records = [], { failed = new Map(), held = new Set(
   }
   const bad = records.filter((r) => failed.has(r.round));
   if (bad.length) {
-    const why = String(failed.get(bad[0].round) || '').slice(0, 60);
-    lines.push({ kind: 'failed', text: `Collect failed for round${bad.length > 1 ? 's' : ''} ${bad.map((r) => r8(r.round)).join(', ')}: ${why} - tried again` });
+    // THE REASON WHOLE, THE ROUND ONCE (kanban #3602, feedback #435): the bound's error (collectWithin) starts with 'round <id>: ', which this
+    // line names already, and a cut at 60 characters ended it mid-word ('looked at again on a la'); a long reason is now cut at a word
+    let why = String(failed.get(bad[0].round) || '').replace(/^round [0-9a-f]{8,64}: /i, '');
+    if (why.length > COLLECT_WHY_CHARS) why = why.slice(0, COLLECT_WHY_CHARS + 1).replace(/\s+\S*$/, '').replace(/[\s,;:\u2013-]+$/, '') + '…';
+    const again = /looked at again/.test(why) ? '' : ' - tried again';
+    lines.push({ kind: 'failed', text: `Collect failed for round${bad.length > 1 ? 's' : ''} ${bad.map((r) => r8(r.round)).join(', ')}: ${why}${again}` });
   }
   const lost = records.filter((r) => r.state === 'uncollectable');
   if (lost.length) {
