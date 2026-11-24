@@ -229,7 +229,7 @@ function seatWarnings(counting, needed) {
 
 export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), verify, verifyMany = null, skewMs = LOBBY_SKEW_MS, answerMs = SIGNER_ANSWER_MS, skipFailed = false, preferGames = null, rereadMs = 0 } = {}) {
   if (!Array.isArray(nodes) || !nodes.length) throw new Error('a lobby asks the nodes it was named, and it was named none');
-  if (typeof verify !== 'function') throw new Error('a lobby checks each signer node\'s signed listing, and no verify was injected');
+  if (typeof verify !== 'function') throw new Error('a lobby checks each seat\'s signed listing, and no verify was injected');
   const refused = [];
   const unanswered = [];                                    // signer nodes that did not answer within answerMs
   const failed = [];                                        // signer nodes whose read failed outright: none answered = none reached
@@ -406,7 +406,7 @@ export async function fetchLobby({ nodes, fetcher = fetch, nowMs = Date.now(), v
     // a paying round's committee is its federation's guardians - seven, 5 of 7 - and two signer nodes cannot be that.
     // Such a round gets no row, however its nodes list it; it is named with the refusals. The free 2-of-2 stays.
     if (pays && contract.nodes.length === 2) {
-      refused.push(`${id.slice(0, 16)}: a paying round on a 2-of-2 committee is not offered - a paying round's signer nodes are its federation's guardians, one node one guardian`);
+      refused.push(`${id.slice(0, 16)}: a paying round on a 2-of-2 committee is not offered - a paying round's seats are its federation's guardians, one node one guardian`);
       continue;
     }
     const phase = now < contract.committeeTimeMs ? 'pending' : 'open';
@@ -726,8 +726,8 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
   const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
   // RESERVE SEATS (§5A.7): who is seated, of how many drawn
   const seat = !row.seating ? '' : row.seating.state === 'named'
-    ? ` · signer nodes: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
-    : row.seating.state === 'equivocated' ? ' · two certificates: the round is void' : ' · signer nodes not named yet';
+    ? ` · seats: ${row.seating.settlement.length}${row.seating.drawn ? ` of ${row.seating.drawn.settlement} drawn` : ''} (${row.seating.settlement.map((k) => k.slice(0, 8)).join(', ')})`
+    : row.seating.state === 'equivocated' ? ' · two certificates: the round is void' : ' · seats not named yet';
   // AND, FOR A PAYING ROW, WHO SETTLES IT (§22A / §5A.13): operators, overlap, an operator playing
   const approval = row.free ? '' : approvalWords(approvalFacts(row, typeof census === 'function' ? census(row.contract) : census),
     typeof tooOld === 'function' ? (row.contract && row.contract.censusRoot ? tooOld(row.contract) : []) : tooOld || []);
@@ -735,7 +735,7 @@ export function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null
   // shows it and refuses nothing (ruling A of the load rule), mainnet refuses a stake over it
   const entries = row.free ? null : (typeof census === 'function' ? census(row.contract) : census);
   const ceiling = !entries || !entries.length || !row.contract ? '' : ceilingWords(stakeWithinCeiling({ entries, stakeSats: row.stakeMsat / 1000n }), row.contract);
-  return `${money} · ${when} · ${agree} · ${counts || 'no signer node counts'}${who}${seat}${approval}${ceiling}`
+  return `${money} · ${when} · ${agree} · ${counts || 'no seat counts'}${who}${seat}${approval}${ceiling}`
     + (row.disagrees.length ? ` · ${row.disagrees.join(', ')} listed it as ${row.free ? 'paying' : 'free'}` : '');
 }
 

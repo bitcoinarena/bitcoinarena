@@ -206,7 +206,7 @@ export async function namesOf({ roundId, nodes, fetcher = fetch, verify } = {}) 
       if (body && Array.isArray(body.names)) items.push(...body.names.slice(0, NAMES_PER_SEAT));   // kanban #1864: one seat's share, bounded
     } catch (e) { refused.push(`${node}: ${e.name === 'TimeoutError' ? 'no answer in time' : e.message}`); }
   }
-  if (!answered) throw new Error(`no signer node answered for the names: ${refused.join('; ') || 'no signer nodes named'}`);
+  if (!answered) throw new Error(`no seat answered for the names: ${refused.join('; ') || 'no seats named'}`);
   return checkedNames(items, id, verify);
 }
 

@@ -282,7 +282,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   if (typeof verifyEd25519 !== 'function') return { ok: false, why: 'checking a donation set needs an Ed25519 verifier, and none was injected' };
   const networkKeys = keys || donationKeysForNetworkId(round.networkId);
   if (!networkKeys) return { ok: false, why: 'this round\'s network has no donation authority this page knows' };
-  if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no signer nodes to ask for its donation set' };
+  if (!Array.isArray(nodes) || !nodes.length) return { ok: false, why: 'the round names no seats to ask for its donation set' };
   const rid = toHex(round.id instanceof Uint8Array && round.id.length === 32 ? round.id : roundId(round));
   // ONE FETCH PER DONATION SET, AND NO NODE HOLDS THE JOIN (measured 2026-10-14 04:26Z on testnet4): every round
   // of a network names the same set, yet each join asked all 14 seats again and waited for the slowest - 30 s, past an
@@ -445,8 +445,8 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
     if (top && top.answers.length * 2 >= nodes.length) { chosen = top.answers; set = top.set; }
     if (!chosen) {
       if (missing.length)
-        return { ok: false, why: `not every signer node of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
-      return { ok: false, why: 'the signer nodes of this round serve different donation sets' };
+        return { ok: false, why: `not every seat of this round serves its donation set: ${missing.map((a) => `${a.node}: ${a.why}`).join('; ')}` };
+      return { ok: false, why: 'the seats of this round serve different donation sets' };
     }
     dissent = answers.filter((a) => !chosen.includes(a)).map((a) => ({ node: a.node, why: a.bytes ? 'serves another donation set' : a.why }));
   }
@@ -476,7 +476,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
         })().then((g) => resolve(g), (e) => { tried.push(`${base}: ${e.message}`); if (--left === 0) resolve(null); });
       }
     });
-    if (!gameSet) return { ok: false, why: `no signer node of this round serves its game's donation set: ${tried.join('; ')}` };
+    if (!gameSet) return { ok: false, why: `no seat of this round serves its game's donation set: ${tried.join('; ')}` };
     GAME_SETS_FETCHED.set(wantGame, gameSet);
   }
   if (keepBySet && !kept) DONATION_SETS_FETCHED.set(setKey, chosen);
@@ -490,7 +490,7 @@ export async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u)
   }
   // A SET THAT VESTS (§27A.4.1) pays its shares at the round's census height, as the seats split it
   return { ok: true, set, gameSet, target: { network: vestedShares(set.recipients, round.censusHeight, shareOf), game: gameSet }, signerNodes: chosen.length, dissent, rotated: inForce.rotated,
-    why: `${chosen.length} signer node(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
+    why: `${chosen.length} seat(s) serve the set this round names, signed by its donation authority, and the game's set its manifest names` };
 }
 
 /**

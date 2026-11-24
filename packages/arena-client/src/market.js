@@ -547,7 +547,7 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
         const deadline = t && t.resolveAfterCloseMs != null && t.deadlineAfterResolveMs != null
           ? Number(p.entryCloseMs) + Number(t.resolveAfterCloseMs) + Number(t.deadlineAfterResolveMs) : null;
         if (deadline === null || nowMs < deadline) {
-          lines.push({ ...at('unverified'), text: `${head}: a signer node says VOID - UNVERIFIED (${deadline === null ? 'this market has no deadline that could void it' : `its deadline is in ${left(deadline - nowMs)}`})` });
+          lines.push({ ...at('unverified'), text: `${head}: a seat says VOID - UNVERIFIED (${deadline === null ? 'this market has no deadline that could void it' : `its deadline is in ${left(deadline - nowMs)}`})` });
           continue;
         }
       }
@@ -564,7 +564,7 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
         const deadline = t && t.resolveAfterCloseMs != null && t.deadlineAfterResolveMs != null
           ? Number(p.entryCloseMs) + Number(t.resolveAfterCloseMs) + Number(t.deadlineAfterResolveMs) : null;
         if (deadline === null || nowMs < deadline) {
-          lines.push({ ...at('unverified'), text: `${head}: a signer node says DISPUTED - UNVERIFIED (${deadline === null ? 'this market has no deadline' : `its deadline is in ${left(deadline - nowMs)}`})` });
+          lines.push({ ...at('unverified'), text: `${head}: a seat says DISPUTED - UNVERIFIED (${deadline === null ? 'this market has no deadline' : `its deadline is in ${left(deadline - nowMs)}`})` });
           continue;
         }
       }
@@ -574,7 +574,7 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     }
     const check = o.check || { verified: false, why: 'not checked yet' };
     if (!check.verified) {
-      lines.push({ ...at('unverified'), text: `${head}: the signer nodes say '${o.label}' - UNVERIFIED (${check.why})` });
+      lines.push({ ...at('unverified'), text: `${head}: the seats say '${o.label}' - UNVERIFIED (${check.why})` });
       continue;
     }
     const row = o.table && o.table.rows ? o.table.rows.find((r) => r.entryId === p.entryIdHex) : null;
@@ -592,7 +592,7 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     const bookUnfilled = !p.market.scalar && p.order && p.bookClaim && p.bookClaim.unfilled === true && BigInt(p.bookClaim.outMsat) === BigInt(p.stakeMsat);
     if (bookUnfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
     if (!row && p.unfilled) { lines.push({ ...at('refunded', { backMsat: String(p.stakeMsat) }), text: `${head}: ${signed} · your order matched nobody: its ${sats(p.stakeMsat)} sats come back whole` }); continue; }
-    if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the signer nodes' table` }); continue; }
+    if (!row) { lines.push({ ...at('unknown'), text: `${head}: ${signed} · your pick is not in the seats' table` }); continue; }
     // WON OR LOST, AND HOW MUCH, IS THE VERIFIED OUTCOME'S, NOT A SEAT'S TABLE (kanban #1615; #2153, #2221, #2299, #2354): `check` is
     // what this page verified, `o.table` is one seat's word. The page builds the table again from the table's own rows (each
     // entry's pick, stake, fee and donation) and the outcome - or a scalar market's value - it verified, by the same protocol rule the
@@ -601,7 +601,7 @@ export function marketLines({ picks, outcomes = new Map(), nowMs = Date.now() })
     // scalar share the value does not pay - or that cannot be rebuilt is shown as unverified, never as a result.
     const rebuilt = rebuildTable({ table: o.table, check, market: p.market, entryIdHex: p.entryIdHex, pick: p.pick, stakeMsat: p.stakeMsat, order: !!p.order });
     if (!rebuilt.ok) {
-      lines.push({ ...at('unverified'), text: `${head}: ${signed} · the signer nodes' table contradicts the verified outcome: what this pick is paid is UNVERIFIED (${rebuilt.why})` });
+      lines.push({ ...at('unverified'), text: `${head}: ${signed} · the seats' table contradicts the verified outcome: what this pick is paid is UNVERIFIED (${rebuilt.why})` });
       continue;
     }
     const mine = rebuilt.row;
