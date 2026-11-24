@@ -9,8 +9,28 @@ import { parseRoutes, routed } from './fetch-routes.js';
 // kanban #3134
 import { guardianEndpointRefusal } from './address-book.js';
 
-const sumOf = (list) => (list || []).reduce((t, u) => t + BigInt(u.amount || 0), 0n);
-export const reserveOfSummary = (s) => sumOf(s.spendable_utxos) + sumOf(s.unconfirmed_change_utxos) + sumOf(s.unsigned_change_utxos);
+// A GUARDIAN'S AMOUNT IS WHOLE SATOSHI OR NOTHING (kanban #3594): a non-negative safe integer, or a string of digits; anything else
+// (a junk string, a fraction, a negative, an object) is no amount - BigInt('x') thrown inside the WebSocket 'message' listener was an
+// uncaught exception, and one guardian's answer took down every seat that read its federation's reserve. Answers a BigInt, or null.
+export const satsOf = (v) => (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) || (typeof v === 'string' && /^[0-9]{1,30}$/.test(v)) ? BigInt(v) : null;
+const sumOf = (list) => {
+  if (list === undefined || list === null) return 0n;
+  if (!Array.isArray(list)) return null;
+  let t = 0n;
+  for (const u of list) {
+    if (!u || typeof u !== 'object') return null;
+    const a = u.amount === undefined || u.amount === null ? 0n : satsOf(u.amount);
+    if (a === null) return null;
+    t += a;
+  }
+  return t;
+};
+/** A wallet_summary's reserve in sat, or null when any part of it is not whole satoshi (kanban #3594). */
+export const reserveOfSummary = (s) => {
+  if (!s || typeof s !== 'object') return null;
+  const parts = [sumOf(s.spendable_utxos), sumOf(s.unconfirmed_change_utxos), sumOf(s.unsigned_change_utxos)];
+  return parts.includes(null) ? null : parts.reduce((a, b) => a + b, 0n);
+};
 
 // AND A walletv2 FEDERATION (the fork's regtest federations; measured on the test host's two-federation regtest 2026-10-12,
 //: "0 of 7 guardians named one reserve"): its wallet module keeps the federation's coins in one output and
@@ -64,13 +84,26 @@ async function askOne(endpoint, { timeoutMs, moduleId, WS, localOk = false }) {
     let left = ids.length * 2;
     const ask = (id, method) => ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params: [{ auth: null, params: null }] }));
     ws.addEventListener('open', () => { for (const id of ids) { ask(id, `module_${id}_wallet_summary`); ask(V2 + id, `module_${id}_federation_wallet`); } });
+    // NO GUARDIAN'S ANSWER THROWS OUT OF THIS LISTENER (kanban #3594): a throw in an EventTarget listener is an uncaught exception and
+    // the seat exits. An answer that is not whole satoshi is this guardian's refusal - it counts as no answer, and the threshold of the
+    // others still names the reserve
+    const refuse = (why) => { clearTimeout(timer); finish({ ok: false, why }); };
     ws.addEventListener('message', (e) => {
-      let j; try { j = JSON.parse(String(e.data)); } catch { return; }
-      if (j.result && Array.isArray(j.result.spendable_utxos)) { clearTimeout(timer); finish({ ok: true, moduleId: j.id, reserveSats: reserveOfSummary(j.result) }); return; }
-      if (j.id >= V2 && !j.error && 'result' in j && (j.result === null || (j.result && j.result.value !== undefined))) {
-        clearTimeout(timer); finish({ ok: true, moduleId: j.id - V2, walletV2: true, reserveSats: j.result === null ? 0n : BigInt(j.result.value), outpoint: j.result && j.result.outpoint ? String(j.result.outpoint) : null }); return;
-      }
-      if (--left <= 0) { clearTimeout(timer); finish({ ok: false, why: 'no wallet module answered wallet_summary or federation_wallet' }); }
+      try {
+        let j; try { j = JSON.parse(String(e.data)); } catch { return; }
+        if (!j || typeof j !== 'object') return;
+        if (j.result && Array.isArray(j.result.spendable_utxos)) {
+          const sats = reserveOfSummary(j.result);
+          if (sats === null) { refuse('its wallet_summary names an amount that is not whole satoshi'); return; }
+          clearTimeout(timer); finish({ ok: true, moduleId: j.id, reserveSats: sats }); return;
+        }
+        if (j.id >= V2 && !j.error && 'result' in j && (j.result === null || (j.result && j.result.value !== undefined))) {
+          const sats = j.result === null ? 0n : satsOf(j.result.value);
+          if (sats === null) { refuse('its federation_wallet names a value that is not whole satoshi'); return; }
+          clearTimeout(timer); finish({ ok: true, moduleId: j.id - V2, walletV2: true, reserveSats: sats, outpoint: j.result && j.result.outpoint ? String(j.result.outpoint) : null }); return;
+        }
+        if (--left <= 0) refuse('no wallet module answered wallet_summary or federation_wallet');
+      } catch (err) { refuse(`its answer could not be read: ${err && err.message}`); }
     });
     ws.addEventListener('error', () => { clearTimeout(timer); finish({ ok: false, why: 'the connection failed' }); });
   });
