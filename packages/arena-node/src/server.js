@@ -428,6 +428,10 @@ const BODY_BUDGET = Math.max(BODY_MOST, Number(process.env.ARENA_BODY_BUDGET) > 
 const BODY_IDLE_MS = Number(process.env.ARENA_BODY_IDLE_MS) > 0 ? Number(process.env.ARENA_BODY_IDLE_MS) : 10000;
 const bodies = bodyBudget({ total: BODY_BUDGET, perAddress: Math.max(BODY_MOST, Math.floor(BODY_BUDGET / 2)), idleMs: BODY_IDLE_MS, defaultMax: BODY_MOST });
 const read = async (req, max = BODY_MOST) => new Uint8Array(await bodies.read(req, max));
+// A REFUSED BODY IS ANSWERED AS REFUSED (kanban #3536): a door's catch around read() that answers "not JSON" (400) hid a body past the limit
+// (413) or a full budget (503) - since #1911 the refused socket waits for that answer. Every such catch calls this first; the dispatch's catch
+// answers the refusal by name.
+const refusedBody = (e) => { if (e && (e.tooLarge || e.busy)) throw e; };
 // AND THE UNFINISHED WEBSOCKET MESSAGES (kanban #2075, refute of #1469 / #1724 / #1794 / #1911 / #1953): /guardian-p2p took one message of up to
 // 64 MiB per connection outside the body budget and with no time limit - six connections that never sent a message's last fragment pinned
 // 383 MiB (measured 2026-11-12). Every accepted websocket (/play, /guardian-p2p, /guardian-next-p2p, /guardian-api/...) now counts the bytes it
@@ -8678,7 +8682,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A GRID ANNOUNCED (kanban #560): { line, tx } - its signed series line and its publication transaction, hex. Anyone may post it: the
       // line must be a grid its creator signed, and the transaction must carry that series' publication output; kept until its last close
       if (req.method === 'POST' && url.pathname === '/expected') {
-        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an announcement is JSON { line, tx }'); }
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'an announcement is JSON { line, tx }'); }
         const got = announceGrid(j.line, j.tx);
         return claimJson(got.ok ? 200 : got.code, got);
       }
@@ -8705,7 +8709,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let secret = ''; try { secret = readFileSync(f, 'utf8').trim(); } catch { secret = ''; }
         const said = String(req.headers['x-duty-once'] || '');
         if (secret.length < 32 || said.length !== secret.length || !timingSafeEqual(Buffer.from(said), Buffer.from(secret))) return claimJson(403, { ok: false, why: 'not allowed' });
-        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return claimJson(400, { ok: false, why: 'a JSON body { game, slot, gameId, dry }' }); }
+        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch (e) { refusedBody(e); return claimJson(400, { ok: false, why: 'a JSON body { game, slot, gameId, dry }' }); }
         const dry = b.dry === true, done = `${f}.done`;
         if (!dry && existsSync(done)) return claimJson(409, { ok: false, why: `already sent once: ${readFileSync(done, 'utf8').slice(0, 300)}` });
         if (!/^[0-9a-f]{64}$/.test(String(b.gameId || ''))) return claimJson(400, { ok: false, why: 'name the version: gameId (hex)' });
@@ -8817,7 +8821,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (scope === 'vote') {
           if (req.method !== 'POST') return answer(405, { ok: false, why: 'a vote is POSTed: { proposalId, choice }' });
           let body;
-          try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return answer(400, { ok: false, why: 'that is not JSON' }); }
+          try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch (e) { refusedBody(e); return answer(400, { ok: false, why: 'that is not JSON' }); }
           const id = String(body.proposalId || '').toLowerCase();
           const choice = CHOICE[String(body.choice || '').toUpperCase()];
           if (!/^[0-9a-f]{64}$/.test(id)) return answer(400, { ok: false, why: 'a vote names a proposal id of 64 hex characters' });
@@ -9151,7 +9155,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         if (req.method !== 'POST') return text(res, 404, 'no such owner door');
         let body;
-        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return answer(400, { ok: false, why: 'an owner request is JSON' }); }
+        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return answer(400, { ok: false, why: 'an owner request is JSON' }); }
         if (url.pathname === '/owner/claim') { const r = owner.claim(body); return answer(r.ok ? 200 : r.status, r); }
         // THE OPERATOR UI'S TOKENS (§27A.7.7): minted, listed and revoked by the owner's signature only
         if (url.pathname === '/owner/operator/mint' || url.pathname === '/owner/operator/revoke' || url.pathname === '/owner/operator/list') {
@@ -9926,7 +9930,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify(live));
       }
       if (proposals && url.pathname === '/proposal' && req.method === 'POST') {
-        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return text(res, 400, 'that is not JSON'); }
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch (e) { refusedBody(e); return text(res, 400, 'that is not JSON'); }
         const got = await proposals.add(body);
         res.writeHead(got.status, { 'content-type': 'application/json', ...CORS });
         return res.end(JSON.stringify(got));
@@ -9985,7 +9989,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // A PAYING FEDERATION ROUND NAMING NO FEDERATION IS NO CONTRACT (M3 W7): the decode refuses it.
         let contract;
         try { contract = decodeRoundContract(await read(req)); }
-        catch (e) { return text(res, 400, `that is not a round this signer node opens: ${e.message}`); }
+        catch (e) { refusedBody(e); return text(res, 400, `that is not a round this signer node opens: ${e.message}`); }
         // A FEDERATION THAT OPENS NO NEW ROUNDS (kanban #807): refused by name, nothing stored. A round this seat holds, or of a series it holds, is not new:
         // the page posts those here too (2026-10-16), and they play out where they are.
         if (contract.federationId instanceof Uint8Array && !takesNewRounds(contract.federationId) && !round.get(roundIdOf(contract))
@@ -10157,7 +10161,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const answer = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', ...CORS }); return res.end(JSON.stringify(body)); };
         let got;
         try { got = JSON.parse(Buffer.from(await read(req)).toString('utf8')); }
-        catch { return answer(400, { why: 'a first mark is handed on as JSON' }); }
+        catch (e) { refusedBody(e); return answer(400, { why: 'a first mark is handed on as JSON' }); }
         let bytes;
         let c;
         try { bytes = fromHex(String(got.mark)); c = decodeCheckpoint(splitSigned(bytes).body); }
@@ -10256,7 +10260,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           sig = fromHex(String(got.sig));
           rec = decodeLobbyName(bytes);
           identityProof = got.identitySig === undefined || got.identitySig === null ? null : fromHex(String(got.identitySig));
-        } catch (e) { return answer(400, { why: `that is not a signed name record: ${e.message}` }); }
+        } catch (e) { refusedBody(e); return answer(400, { why: `that is not a signed name record: ${e.message}` }); }
         let signed = false;
         try { signed = sig.length === 64 && schnorr.verify(sig, lobbyNameId(rec), rec.playerPubkey); } catch { signed = false; }
         if (!signed) return answer(400, { why: 'the signature does not verify under the player key the record names' });
@@ -10708,7 +10712,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/series') {
         let t;
         try { t = parseSeriesLine(Buffer.from(await read(req)).toString('utf8')); }
-        catch (e) { return text(res, 400, `that is not a series line: ${e.message}`); }
+        catch (e) { refusedBody(e); return text(res, 400, `that is not a series line: ${e.message}`); }
         let got = takeGridSeries(t);
         // NOT NAMED FUNDED HERE, BUT PUBLISHED ON THIS NODE'S CHAIN (kanban #757): taken as a pulled series is
         if (!got.ok && got.code === 402) { const p = await publishedHere(t); if (p.ok) got = takeGridSeries(t, { published: true }); }
@@ -10727,7 +10731,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // from every seat's FINALs for the record's window (as the buyer's client merged it), then output by output with the
       // federation; kept, it is the buyer's ownership: GET /items?player=<key>[&game=<name>][&dev=<key>]
       if (req.method === 'POST' && url.pathname === '/item-purchase') {
-        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an item purchase is JSON { purchase, signature } in hex'); }
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'an item purchase is JSON { purchase, signature } in hex'); }
         let p; try { p = { ...decodePurchase(fromHex(String(j.purchase || '').toLowerCase())), signature: fromHex(String(j.signature || '').toLowerCase()) }; }
         catch (e) { return text(res, 400, `that is not an item purchase: ${e.message}`); }
         const dev = toHex(p.gameDevPubkey);
@@ -10793,7 +10797,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // in force - and against the federation output by output; kept, its outputs are indexed for GET /donations?key= and the record
       // is handed on to every other seat, each checking it for itself
       if (req.method === 'POST' && url.pathname === '/donation-gift') {
-        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a donation gift is JSON { gift, signature } in hex'); }
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a donation gift is JSON { gift, signature } in hex'); }
         let g; try { g = { ...decodeDonationGift(fromHex(String(j.gift || '').toLowerCase())), signature: fromHex(String(j.signature || '').toLowerCase()) }; }
         catch (e) { return text(res, 400, `that is not a donation gift: ${e.message}`); }
         let recipients = null, networkSet = null, gameSet = null;
@@ -10858,7 +10862,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(nonce);
       }
       if (req.method === 'POST' && url.pathname === '/reach-check') {
-        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a reach check is JSON { port, nonce }'); }
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a reach check is JSON { port, nonce }'); }
         const r = await reachCheck(req, j);
         res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r.body));
@@ -10982,7 +10986,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // explorer: its block at the round's census height must be the explorer's. Upheld, the round takes no new entry here and its row
       // says census_objected; not upheld, refused by name. Nothing a client says is taken on its word.
       if (req.method === 'POST' && url.pathname === '/census-objection') {
-        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a census objection is JSON { round, explorer }'); }
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a census objection is JSON { round, explorer }'); }
         const rh = String(j.round || '').toLowerCase(), explorer = String(j.explorer || '');
         if (!/^[0-9a-f]{64}$/.test(rh) || !/^(https:\/\/[^\s]+|http:\/\/127\.0\.0\.1(:\d+)?(\/[^\s]*)?)$/.test(explorer)) return text(res, 400, 'a census objection names its round (64 hex) and an https explorer');
         // ONLY AN EXPLORER THIS SEAT'S OPERATOR NAMED (kanban #1209): a client's own explorer answered any hash it liked, and every
@@ -11420,7 +11424,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (!/^[0-9a-f]{64}$/.test(idHex)) return text(res, 400, 'POST /tx-timing?id=<transaction id>');
         const raw = round.entry(Buffer.from(idHex, 'hex'));
         if (!raw) return text(res, 404, 'this seat holds no such transaction');
-        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a timing is JSON { timing, sig }'); }
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a timing is JSON { timing, sig }'); }
         const tj = JSON.stringify(body && body.timing ? body.timing : null);
         if (!body || !body.timing || typeof body.sig !== 'string' || !/^[0-9a-f]{128}$/i.test(body.sig)) return text(res, 400, 'a timing is { timing, sig } - sig 64 bytes hex');
         if (!verifyEd25519Kept(fromHex(body.sig), timingMessage(idHex, tj), decodeEntryContract(raw).sessionPubkey)) return text(res, 403, 'that timing is not signed by its order\'s session key');
@@ -11794,7 +11798,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           raw = new Uint8Array(await read(req));
           valued = isValueAttestationBytes(raw);
           a = valued ? decodeValueAttestation(raw) : decodeAttestation(raw);
-        } catch (e) { return text(res, 400, `that is not ${valued ? 'a value' : 'an outcome'} attestation: ${e.message}`); }
+        } catch (e) { refusedBody(e); return text(res, 400, `that is not ${valued ? 'a value' : 'an outcome'} attestation: ${e.message}`); }
         let got = holdOutcome(new Uint8Array(target), raw, a, valued);
         // HANDED ON ACROSS THE DEADLINE (kanban #2423): late by the deadline alone, inside the grace, and a settlement peer took it in time -
         // taken, filed at that peer's time. A stranger's withheld attestation finds no peer holding it and is refused, as before (#1151).
@@ -11843,7 +11847,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const target = Buffer.from(url.searchParams.get('round') || '', 'hex');
         if (target.length !== 32) return text(res, 400, 'POST /game-outcome?round=<the market round\'s id>');
         let body;
-        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { return text(res, 400, `that is not a JSON round result: ${e.message}`); }
+        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, `that is not a JSON round result: ${e.message}`); }
         if (!body || typeof body !== 'object' || !Array.isArray(body.sigs)) return text(res, 400, 'a round result is { openCents, closeCents, front?, sigs: [{ key, signature }] }');
         const got = await markets.hold(new Uint8Array(target), { openCents: body.openCents, closeCents: body.closeCents, front: body.front, sigs: body.sigs.slice(0, 64) });
         if (!got.held) return text(res, got.status || 409, got.why);
@@ -11912,7 +11916,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const ridHex = toHex(id);
         if (req.method === 'POST') {
           let body;
-          try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a presence is JSON: { "key": "<64 hex>", "sig": "<128 hex>" }'); }
+          try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a presence is JSON: { "key": "<64 hex>", "sig": "<128 hex>" }'); }
           const key = /^[0-9a-f]{64}$/.test(String(body && body.key)) ? fromHex(body.key) : null;
           const sig = /^[0-9a-f]{128}$/.test(String(body && body.sig)) ? fromHex(body.sig) : null;
           let good = false;
@@ -11982,7 +11986,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (lockSets.answerDelayMs > 0) await new Promise((ok) => setTimeout(ok, lockSets.answerDelayMs));     // test hook: a slow seat
         if (req.method === 'POST') {
           let body;
-          try { body = JSON.parse(Buffer.from(await read(req, 262144)).toString('utf8')); } catch { return text(res, 400, 'a lock set message is JSON: { views, signatures, certificate }'); }
+          try { body = JSON.parse(Buffer.from(await read(req, 262144)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a lock set message is JSON: { views, signatures, certificate }'); }
           const got = lockSets.take(rid, body);
           if (!got.ok) return text(res, got.status || 409, got.why);
           res.writeHead(200, { 'content-type': 'application/json', ...CORS });
@@ -12016,7 +12020,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           : 'that round\'s lock set is not certified yet: no reveal is taken before it (kanban #2561) - ask again shortly');
         if (certifiedSet && !certifiedSet.entries.includes(toHex(eid))) return text(res, 409, 'that entry is not in the round\'s certified lock set: it is not played, its stake comes back (kanban #2561)');
         let body;
-        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a reveal is JSON: { "move": <integer>, "salt": "<64 hex>" }'); }
+        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a reveal is JSON: { "move": <integer>, "salt": "<64 hex>" }'); }
         const salt = /^[0-9a-f]{64}$/i.test(String(body && body.salt)) ? new Uint8Array(Buffer.from(body.salt, 'hex')) : null;
         if (!salt || !Number.isInteger(body.move)) return text(res, 400, 'a reveal is JSON: { "move": <integer>, "salt": "<64 hex>" }');
         const stands = revealStands({ roundId: entry.roundId, entryKey: entry.sessionPubkey, commit: entry.commit, move: body.move, salt,
@@ -12091,7 +12095,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // POST /price-reading (protocol 5): a committee seat's own signed reading - every seat posts its own, nobody
       // proposes a price, and a sample is the median of the readings (price-feed.js)
       if (req.method === 'POST' && (url.pathname === '/price-sign' || url.pathname === '/price-attested' || url.pathname === '/price-reading')) {
-        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'that body is not JSON'); }
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'that body is not JSON'); }
         const got = url.pathname === '/price-sign' ? prices.sign(body) : url.pathname === '/price-reading' ? prices.reading(body) : prices.hold(body);
         if (!got.ok) return text(res, got.status || 409, got.why);
         res.writeHead(200, { 'content-type': 'application/json', ...CORS });
@@ -12131,7 +12135,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (id.length !== 32) return text(res, 400, `POST ${url.pathname}?round=<id>`);
         const rid = new Uint8Array(id);
         let body = {};
-        try { const raw = Buffer.from(await read(req)).toString('utf8'); body = raw ? JSON.parse(raw) : {}; } catch { return text(res, 400, 'that body is not JSON'); }
+        try { const raw = Buffer.from(await read(req)).toString('utf8'); body = raw ? JSON.parse(raw) : {}; } catch (e) { refusedBody(e); return text(res, 400, 'that body is not JSON'); }
         let got;
         if (url.pathname === '/batch') got = orderBook.accept(rid, body);
         else if (url.pathname === '/batch-certificate') got = orderBook.certify(rid, body);
@@ -12263,7 +12267,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A wrong key, a forged or stale receipt, or another recipient's outpoint deletes nothing.
       if (req.method === 'POST' && url.pathname === '/donations/read') {
         let body;
-        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a read receipt is JSON'); }
+        try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a read receipt is JSON'); }
         const key = String((body && body.key) || '').toLowerCase();
         if (!/^0[23][0-9a-f]{64}$/.test(key)) return text(res, 400, 'a recipient key is 66 hex characters, a compressed secp256k1 point');
         const outpoints = Array.isArray(body.outpoints) ? body.outpoints.map(String).filter((o) => /^[0-9a-f]{64}:\d+$/.test(o)) : [];
@@ -12297,7 +12301,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const feds = String(url.searchParams.get('federations') || '').toLowerCase().split(',').filter((f) => /^[0-9a-f]{64}$/.test(f)).slice(0, 8);
           return send(await ecashExchange.offer(feds));
         }
-        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an exchange is JSON: { from, to, ecash, amountMsat }'); }
+        let body; try { body = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'an exchange is JSON: { from, to, ecash, amountMsat }'); }
         const r = await ecashExchange.exchange(body || {});
         return r.ok ? send(r) : text(res, r.status || 409, r.why);
       }
@@ -12307,7 +12311,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         let fields;
         const lt0 = Date.now(), timing = {};
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
-        catch (e) { return text(res, 400, `that is not a stake lock: ${e.message}`); }
+        catch (e) { refusedBody(e); return text(res, 400, `that is not a stake lock: ${e.message}`); }
         timing.bodyMs = Date.now() - lt0;
         if (!round.entry(eid)) await enterPendingLockless(eid);   // an entry held aside past the lockless cap (kanban #2174)
         const stored = round.entry(eid);
@@ -12343,7 +12347,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         if (eid.length !== 32) return text(res, 400, 'a fee lock is handed over for an entry id');
         let fields;
         try { fields = lockFieldsFromJson(JSON.parse(Buffer.from(await read(req)).toString('utf8'))); }
-        catch (e) { return text(res, 400, `that is not a fee lock: ${e.message}`); }
+        catch (e) { refusedBody(e); return text(res, 400, `that is not a fee lock: ${e.message}`); }
         if (!round.entry(eid)) await enterPendingLockless(eid);   // an entry held aside past the lockless cap (kanban #2174)
         const stored = round.entry(eid);
         if (!stored) return text(res, 404, 'this node holds no such entry');
@@ -12395,7 +12399,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             if (!/^[0-9a-f]{64}$/.test(String(body.federation || ''))) throw new Error('that round takes any federation: name the one the lock is in (federation, 64 hex)');
             lockFed = new Uint8Array(Buffer.from(body.federation, 'hex'));
           }
-        } catch (e) { return text(res, 400, `that is not a lock: ${e.message}`); }
+        } catch (e) { refusedBody(e); return text(res, 400, `that is not a lock: ${e.message}`); }
         if (round.stakeLockAt(outpoint) || (round.feeLockAt && round.feeLockAt(outpoint)))
           return text(res, 409, 'that lock stakes an entry at this signer node: it is settled with its round, never returned as refused');
         // A HELD ENTRY'S OWN LOCK IS NOT RETURNED WHILE THE LOCK DOORS STILL TAKE IT (kanban #2547, state audit 2026-11-12): during a drain
@@ -12876,7 +12880,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // publication on this seat's chain (findSeriesPublication), and its parents must prove its fee (publisher-payout.js). Anyone
       // may post it - every byte proves itself; kept once.
       if (req.method === 'POST' && url.pathname === '/series-publication') {
-        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a series publication is JSON { series, tx, parents }'); }
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a series publication is JSON { series, tx, parents }'); }
         if (!/^[0-9a-f]{64}$/i.test(String(j.series || '')) || !/^[0-9a-f]+$/i.test(String(j.tx || '')) || !Array.isArray(j.parents))
           return text(res, 400, 'a series publication names its series id, the publication and its parents in hex');
         const sid = fromHex(String(j.series).toLowerCase());
@@ -13118,7 +13122,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       // A REFERRAL PROGRAM'S NAME (kanban #675): kept when its site key signed it, and handed on to every seat once
       if (req.method === 'POST' && url.pathname === '/referral-name') {
-        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a referral name is JSON { record, signature } in hex'); }
+        let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a referral name is JSON { record, signature } in hex'); }
         const { keepReferralName } = await import('./referral-names.js');
         const got = keepReferralName(round.db, j, { verify: (sg, m, k) => schnorr.verify(sg, m, k) });
         if (!got.ok) return text(res, got.status, got.why);
@@ -13196,7 +13200,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/funding') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         if (!fundingBook) return ans(501, { ok: false, why: 'this node keeps no funding proposals' });
-        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return ans(400, { ok: false, why: 'a JSON body: { kind, hex }' }); }
+        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch (e) { refusedBody(e); return ans(400, { ok: false, why: 'a JSON body: { kind, hex }' }); }
         const r = await fundingBook.add(b.kind, b.hex);
         // kanban #2431: x-arena-forwarded is anyone's to send - a signer posting a signal "forwarded" to two seats only kept it off the others until the
         // cutoff. A fresh signal or fee approval is handed on whatever the header says (fresh only once per seat, so no loop)
@@ -13206,7 +13210,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/donation-ballot') {
         const ans = (code, body) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS }); return res.end(JSON.stringify(body)); };
         if (!donationBallots) return ans(501, { ok: false, why: 'this node keeps no ballots' });
-        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch { return ans(400, { ok: false, why: 'a JSON body: { kind, hex }' }); }
+        let b; try { b = JSON.parse(Buffer.from(await read(req)).toString('utf8') || '{}'); } catch (e) { refusedBody(e); return ans(400, { ok: false, why: 'a JSON body: { kind, hex }' }); }
         const r = await donationBallots.add(b.kind, b.hex);
         if (r.ok && r.fresh && !req.headers['x-arena-forwarded']) forwardBallot(b.kind, b.hex);
         return ans(r.ok ? 200 : (r.status || 400), r);
@@ -13429,7 +13433,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A FOUNDING (§23A.2): a seated node's signed setup code, and this seat's view of the founding
       // WHERE NODES ARE NOW, OFF CHAIN (address-book.js, kanban #562): a node's signed address announcement in, every one this seat holds out
       if (req.method === 'POST' && url.pathname === '/address-announcement') {
-        let a; try { a = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'an address announcement as JSON { node, endpoint, atMs, sig }'); }
+        let a; try { a = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'an address announcement as JSON { node, endpoint, atMs, sig }'); }
         const r = addressBook.take(a);
         return r.ok ? json(res, 200, r) : text(res, r.status || 400, r.why);
       }
@@ -13440,7 +13444,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'POST' && url.pathname === '/founding') {
         if (!foundingSeat) return text(res, 404, 'this seat runs no founding (ARENA_FOUNDING)');
-        let m; try { m = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a setup code as JSON { id, node, code, signature }'); }
+        let m; try { m = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a setup code as JSON { id, node, code, signature }'); }
         const r = foundingSeat.take(m);
         return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
       }
@@ -13452,7 +13456,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return json(res, 200, { node: toHex(round.pubkey), ...(foundingSeat ? foundingSeat.state() || { none: true } : { off: true }), ...(ready ? { ready } : {}), ...(members ? { members } : {}) });
       }
       if (req.method === 'POST' && url.pathname === '/absence') {
-        let a; try { a = readAbsenceHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `an absence attestation, its encoding and signature in hex: ${e.message}`); }
+        let a; try { a = readAbsenceHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { refusedBody(e); return text(res, 400, `an absence attestation, its encoding and signature in hex: ${e.message}`); }
         const r = absences.offer(a);
         return r.ok ? json(res, r.kept ? 201 : 200, r) : text(res, 422, r.why);
       }
@@ -13465,7 +13469,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // emergency key that signed it, posted at or before the tip) and passed on once to every seat this one knows, so one post reaches
       // the network. What it does - out of the seating, or DEPARTED for a guardian in time - is the record's and the seating's to apply.
       if (req.method === 'POST' && url.pathname === '/emergency-departure') {
-        let d; try { d = readEmergencyHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `a leave request, its encoding and signature in hex: ${e.message}`); }
+        let d; try { d = readEmergencyHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { refusedBody(e); return text(res, 400, `a leave request, its encoding and signature in hex: ${e.message}`); }
         const r = await takeEmergency(d);
         if (!r.ok) return text(res, r.status || 422, r.why);
         return json(res, r.kept ? 201 : 200, { ok: true, kept: r.kept, node: toHex(d.nodePubkey), postedAt: d.postedAt });
@@ -13492,7 +13496,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(readFileSync(new URL('../pages/emergency.html', import.meta.url)));
       }
       if (req.method === 'POST' && url.pathname === '/departure') {
-        let d; try { d = readDepartureHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { return text(res, 400, `a departure notice, its encoding and signature in hex: ${e.message}`); }
+        let d; try { d = readDepartureHex(Buffer.from(await read(req)).toString('utf8').trim()); } catch (e) { refusedBody(e); return text(res, 400, `a departure notice, its encoding and signature in hex: ${e.message}`); }
         // its anchor, if it names one, read on this seat's chain first (kanban #2608): the height is the chain's, not the poster's
         const r = await absences.offerAnchored(d);
         return r.ok ? json(res, r.kept ? 201 : 200, r) : text(res, 422, r.why);
@@ -13555,7 +13559,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'POST' && url.pathname === '/node-facts') {
         if (!nodeFacts) return text(res, 503, 'this seat keeps no records');
-        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a record is JSON'); }
+        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a record is JSON'); }
         const r = nodeFacts.offer(said);
         if (r.ok && r.kept) for (const u of everySeat()) fetch(`${u}/node-facts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(said), signal: AbortSignal.timeout(10000) }).catch(() => null);
         return r.ok ? json(res, 200, r) : text(res, 409, r.why);
@@ -13606,7 +13610,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // A SEAT'S HALT OBSERVATIONS (§23A.5 "How a halt is proven"): a peer's signed one taken, and those held served
       if (req.method === 'POST' && url.pathname === '/halt-observations') {
         if (!halts) return text(res, 503, 'this seat reads no chain, so it keeps no halt observations');
-        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a halt observation is { observation, signature } as hex'); }   // the bytes as text (kanban #326: String() of the bytes was "123,34,..." - no observation was ever taken)
+        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a halt observation is { observation, signature } as hex'); }   // the bytes as text (kanban #326: String() of the bytes was "123,34,..." - no observation was ever taken)
         if (halts.refreshTip) await halts.refreshTip();   // kanban #3046: an observation past this seat's tip is refused
         const r = halts.take(said);
         return r.ok ? json(res, r.status, r) : text(res, r.status, r.why);
@@ -13625,7 +13629,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
       if (req.method === 'POST' && url.pathname === '/liquidations/spent-set') {
         if (!liquidations) return text(res, 503, 'this seat holds no federation records yet');
-        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch { return text(res, 400, 'a spent set is JSON: { spentSet, signature } in hex'); }
+        let said; try { said = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a spent set is JSON: { spentSet, signature } in hex'); }
         const r = liquidations.offer(said || {});
         return r.ok ? json(res, r.kept ? 201 : 200, r) : text(res, 422, r.why);
       }
