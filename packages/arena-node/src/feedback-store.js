@@ -743,11 +743,19 @@ export function openFeedbackStore(path = ':memory:') {
     return `${lines.join('\n')}\n`;
   }
 
-  /** The admin list (slice 4 builds on it): every report, newest first, filtered by state, type, game or key. */
+  /**
+   * The admin list (slice 4 builds on it): every report, newest first, filtered by state, type, game or key.
+   * A REPORT STILL WAITING FOR THE OWNER IS NEVER CUT (kanban #3573): the limit bounds only the decided reports. Every matching report in state
+   * 'new' (not reviewed yet) or 'accepted' (approved, its reward not paid yet) is always on the list, however many later reports arrived: the
+   * admin page reads the list once and filters it in the page, so a waiting report cut here could never be reviewed or paid.
+   */
   function list({ state = null, type = null, game = null, pubkey = null, source = null, limit = 500 } = {}) {
     const where = [], args = [];
     for (const [col, v] of [['state', state], ['type', type], ['game', game], ['pubkey', pubkey], ['source', source]]) if (v) { where.push(`${col} = ?`); args.push(String(v)); }
-    return db.prepare(`SELECT * FROM reports ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY received_ms DESC LIMIT ?`).all(...args, Math.min(Number(limit) || 500, 5000)).map(row);
+    const filtered = where.length ? `${where.join(' AND ')} AND ` : '';
+    return db.prepare(`SELECT * FROM reports WHERE ${filtered}(state IN ('new', 'accepted')
+        OR id IN (SELECT id FROM reports WHERE ${filtered}state NOT IN ('new', 'accepted') ORDER BY received_ms DESC LIMIT ?))
+      ORDER BY received_ms DESC`).all(...args, ...args, Math.min(Number(limit) || 500, 5000)).map(row);
   }
 
   const shotsInUse = () => new Set(db.prepare('SELECT screenshot FROM reports WHERE screenshot IS NOT NULL').all().map((x) => x.screenshot));
