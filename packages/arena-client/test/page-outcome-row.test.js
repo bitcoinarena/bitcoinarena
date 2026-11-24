@@ -19,6 +19,7 @@ const SEATS = {
   'https://s1': answer([], true),                                                              // not in the committee: no rows
   'https://s2': answer([{ entryId: UP, won: true, netMsat: '60390', payoutMsat: '120780' }, { entryId: DOWN, won: false, netMsat: '60390', payoutMsat: '0' }], false),
 };
+SEATS['https://s3'] = SEATS['https://s2'];   // a second seat serving s2's table byte for byte (kanban #3019: kept for good only with two)
 
 function run(picks, outcomes = new Map()) {
   const asked = [];
@@ -41,10 +42,11 @@ test('the answer holding the pick\'s entry is kept, not the first seat\'s empty 
 });
 
 test('a final verified answer without the pick\'s row is asked again; with it, it is kept for good', async () => {
-  const picks = [{ roundIdHex: R, entryIdHex: UP, entryCloseMs: '1', nodes: ['https://s1', 'https://s2'] }];
+  // kanban #3019: an answer is kept for good only when two or more seats serve its table byte for byte - s2 and s3 here
+  const picks = [{ roundIdHex: R, entryIdHex: UP, entryCloseMs: '1', nodes: ['https://s1', 'https://s2', 'https://s3'] }];
   const stale = new Map([[R, { ...answer([], true), check: { verified: true } }]]);
   const a = run(picks, stale); await a.read();
-  assert.equal(a.asked.length, 2, 'the stale one is read again');
+  assert.equal(a.asked.length, 3, 'the stale one is read again');
   assert.equal(a.outcomes.get(R).table.rows.length, 2);
   const b = run(picks, a.outcomes); await b.read();
   assert.equal(b.asked.length, 0, 'held with its row: not asked again');
