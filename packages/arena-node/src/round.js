@@ -1638,15 +1638,39 @@ export class Round {
     // already in hand (§11: sample k is the price of round time). This seat's clock for the run starts at the first mark it holds
     // (its tick, its arrival here); a later mark more than MARK_LAG_TICKS behind that clock is not receipted here, and the receipt
     // threshold decides whether the run stands. Only a live mark of an open round: the held final mark after the close is not asked.
+    //
+    // AND FROM WHEN THE RUN COULD START, NOT ONLY FROM WHEN ITS FIRST MARK CAME (kanban #3568, audit play a7-1-1): the first mark's
+    // arrival is a time the player picks. A client that held its tick-0 first mark back ~15-20 s - inside the tick-only start deadline
+    // and the door's walk-away - had that hold-back added to the 600 ticks. So a staked run is also timed from its start origin: the
+    // moment this seat saw the stake held (never before the round's start) at the tick the run is owed from then (the start window's
+    // origin, §15: max(joinTick, the tick the player had reached)). The stricter of the two clocks decides. An honest client's ticks
+    // run with the round's time from its join (the start window counts on that), so a slow first mark is a later tick, not a lag; an
+    // entry with no stake seen here (a free round) keeps the first-mark clock alone.
     if (round.state === OPEN && head.tick !== null) {
+      const now = BigInt(this.now());
+      const behindSince = (fromMs, fromTick) => {
+        const since = now - BigInt(fromMs);
+        return since > 0n ? Number(ticksForMs(since).ticks) - (c.tick - Number(fromTick)) : null;
+      };
       const first = this.db.prepare('SELECT tick, received_ms FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick ASC LIMIT 1')
         .get(c.roundId, c.entryId);
-      const since = first ? BigInt(this.now()) - BigInt(first.received_ms) : 0n;
-      if (first && since > 0n) {
-        const behind = Number(ticksForMs(since).ticks) - (c.tick - Number(first.tick));
-        if (behind > MARK_LAG_TICKS)
-          throw new Error(`the mark at tick ${c.tick} is ${behind} ticks behind this seat's clock for the run (more than ${MARK_LAG_TICKS}): not receipted here`);
+      const clocks = [];
+      if (first) clocks.push(behindSince(first.received_ms, first.tick));
+      const held = this.db.prepare('SELECT tick, seen_ms FROM stake_seen_tick WHERE entry_id = ?').get(Buffer.from(c.entryId));
+      if (held) {
+        let startMs = null; let joinTick = null;
+        try {
+          startMs = decodeRoundContract(new Uint8Array(round.contract)).startTimeMs;
+          joinTick = decodeEntryContract(new Uint8Array(entry.contract)).joinTick;
+        } catch { startMs = null; }
+        if (startMs !== null) {
+          const originMs = BigInt(held.seen_ms) > startMs ? BigInt(held.seen_ms) : startMs;
+          clocks.push(behindSince(originMs, Math.max(Number(joinTick), Number(held.tick))));
+        }
       }
+      const behind = Math.max(...clocks.filter((b) => b !== null), -Infinity);
+      if (behind > MARK_LAG_TICKS)
+        throw new Error(`the mark at tick ${c.tick} is ${behind} ticks behind this seat's clock for the run (more than ${MARK_LAG_TICKS}): not receipted here`);
     }
 
     this.db.prepare(
