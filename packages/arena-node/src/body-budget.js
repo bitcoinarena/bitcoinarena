@@ -24,15 +24,29 @@ export function bodyBudget({ total, perAddress = Math.floor(total / 2), reserve 
   const mainBy = new Map(); const spareBy = new Map();
   const add = (m, k, n) => { const v = (m.get(k) || 0) + n; if (v > 0) m.set(k, v); else m.delete(k); };
   const addressOf = (req) => { const a = String((req.socket && req.socket.remoteAddress) || ''); return a.startsWith('::ffff:') ? a.slice(7) : a; };
-  const endAfterAnswer = (req) => {
+  // A REFUSED BODY'S ANSWER REACHES THE CLIENT (kanban #3536): the seat answers at once, then reads and drops what the client still sends for at
+  // most LINGER_MS before it closes. Closing with unread bytes in the socket resets it, and a client still writing its body (macOS at once) gets
+  // EPIPE / ECONNRESET and loses the 413 it was already sent. Dropped bytes take no budget; the socket goes at the body's end or after LINGER_MS
+  // Only a body past the door's limit lingers, and only for LINGER_MOST dropped bytes: a refusal of the shared budget (busy, stalled) - the
+  // many-bodies attack of #1469 - still closes at once
+  const LINGER_MS = 2000, LINGER_MOST = 2 * 1024 * 1024;
+  const endAfterAnswer = (req, { linger: lingers = false } = {}) => {
     const res = responseOf.get(req);
     const end = () => { try { req.destroy(); } catch { /* gone */ } };
     if (res) {
-      try { if (!res.headersSent) res.setHeader('connection', 'close'); } catch { /* sent */ }
-      if (res.writableFinished) return end();
-      res.once('finish', end); res.once('close', end);
+      if (!lingers) { try { if (!res.headersSent) res.setHeader('connection', 'close'); } catch { /* sent */ } }
+      const after = () => {
+        if (!lingers || req.readableEnded || req.destroyed) return end();
+        const t = setTimeout(end, LINGER_MS); if (t.unref) t.unref();
+        let dropped = 0;
+        req.on('data', (c) => { dropped += c.length; if (dropped > LINGER_MOST) { clearTimeout(t); end(); } });
+        req.once('end', () => { clearTimeout(t); end(); }); req.once('error', end);
+        try { req.resume(); } catch { end(); }
+      };
+      if (res.writableFinished) return after();
+      res.once('finish', after); res.once('close', () => { if (!res.writableFinished) end(); });
     }
-    setTimeout(end, res ? 5000 : 2000).unref();
+    setTimeout(end, res ? 5000 + LINGER_MS : 2000).unref();
   };
 
   const read = (req, max = defaultMax) => new Promise((resolve, reject) => {
@@ -44,7 +58,7 @@ export function bodyBudget({ total, perAddress = Math.floor(total / 2), reserve 
       main -= inMain; add(mainBy, who, -inMain); spare -= inSpare; add(spareBy, who, -inSpare); inMain = 0; inSpare = 0;
       parts.length = 0; return true;
     };
-    const refuse = (e) => { if (!finish()) return; try { req.pause(); } catch { /* gone */ } reject(e); endAfterAnswer(req); };
+    const refuse = (e) => { if (!finish()) return; try { req.pause(); } catch { /* gone */ } reject(e); endAfterAnswer(req, { linger: !!e.tooLarge }); };
     const tooLarge = () => { const e = new Error(`a body of more than ${max} bytes`); e.tooLarge = true; return e; };
     const busy = () => { const e = new Error('this node holds as many unfinished bodies as it takes; try again'); e.busy = true; return e; };
     const stalled = () => { const e = new Error(`no part of the body came for ${idleMs / 1000} s`); e.busy = true; return e; };
