@@ -9717,7 +9717,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       window.ARENA_COMBINE_IN = (main, fedHex, invite) => combineIn(main, fedHex, invite, { legacy: false });
       // MERGE NOW, FOR A JOIN (kanban #578 playtest 2026-10-22): the federations named (16 or 64 hex) merged into this phrase's wallets, `ms` at
       // most; each wallet opened if it is not yet, its invite the verified record's or the one it was opened with. Answers when done or timed out.
-      window.ARENA_MERGE_NOW = async (feds, ms = 60000, { seed, LockClient, extra = {} } = {}) => {
+      // `force` (kanban #3561): a join that only a merge would pay asks it with the bars lifted - a wallet that did not open in 10 s is opened
+      // again, with MERGE_FORCE_OPEN_MS, instead of waiting out its 2 minutes (and its federation's 5) while the join refuses
+      window.ARENA_MERGE_NOW = async (feds, ms = 60000, { seed, LockClient, extra = {}, force = false } = {}) => {
         const full = (f) => { f = String(f).toLowerCase(); if (f.length === 64) return f;
           return [...(window.ARENA_WALLETS || new Map()).keys(), ...(ARENACLIENT.ledgerFederations ? ARENACLIENT.ledgerFederations(vault()) : []), ...Object.keys(extra)].find((x) => x.startsWith(f)) || null; };
         const one = async (f) => {
@@ -9727,7 +9729,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           let c = window.ARENA_WALLETS.get(fid);
           if (!c && seed && LockClient) c = await ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fid), invite: inv, seed, LockClient, storage: vault() });
           if (!c) { mergeSaid(fid, 'stuck', 'its wallet is not open'); return; }
-          await combineIn(c, fid, inv, { legacy: false });
+          await combineIn(c, fid, inv, { legacy: false, force });
         };
         await Promise.race([Promise.all(feds.map((f) => one(f).catch((e) => mergeSaid(f, 'stuck', e && e.message ? e.message : String(e))))), new Promise((r) => setTimeout(r, ms))]);
         if (window.ARENA_SUM_BALANCES) { try { await window.ARENA_SUM_BALANCES(); } catch { /* read again later */ } }
@@ -9745,8 +9747,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const mergeDeadFeds = new Map();   // federation -> { misses, until }
       // NOTHING SLOW HOLDS THE REST (2026-10-30: "Es darf nicht ewig hängen und es darf auch nicht auf eine eigene langsame Node gewartet werden"): four wallets at
       // a time, and every wait short; what missed its turn is taken at the next merge
-      const MERGE_AT_ONCE = 4, MERGE_OPEN_MS = 10000, MERGE_LOCK_MS = 8000, MERGE_RECEIVE_MS = 20000;
-      function combineIn(main, fedHex, invite, { legacy }) {
+      const MERGE_AT_ONCE = 4, MERGE_OPEN_MS = 10000, MERGE_LOCK_MS = 8000, MERGE_RECEIVE_MS = 20000, MERGE_FORCE_OPEN_MS = 25000;
+      function combineIn(main, fedHex, invite, { legacy, force = false }) {
         fedHex = String(fedHex).toLowerCase();
         if (combiningBy.has(fedHex)) return combiningBy.get(fedHex);
         mergeSaid(fedHex, 'merging');
@@ -9833,7 +9835,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const mergeOne = async (x) => {
             const from = x.hex.slice(0, 8) + (x.ancestor ? ' (BLWP)' : '');
             const noOpenKey = fedHex + '.' + x.hex + (x.ancestor ? '.blwp' : '');
-            if ((mergeNoOpen.get(noOpenKey) || 0) > Date.now() || ((mergeDeadFeds.get(fedHex) || {}).until || 0) > Date.now()) return;
+            if (!force && ((mergeNoOpen.get(noOpenKey) || 0) > Date.now() || ((mergeDeadFeds.get(fedHex) || {}).until || 0) > Date.now())) return;
             const walletAt = performance.now();
             const take = async () => {
               mergeSaid(fedHex, 'merging', 'opening wallet ' + from);
@@ -9841,7 +9843,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               // here in this federation - written on every open, a phrase this merge opened was never opened again once tidyStorage removed its store
               const recovering = !x.ancestor && entriesOf(x.hex, false) === 0;
               const other = await Promise.race([ARENACLIENT.openPlayerWallet({ federationId: ARENACLIENT.fromHex(fedHex), invite, seed: ARENACLIENT.fromHex(x.hex), LockClient: wasm.LockClient, storage: L, ancestor: x.ancestor }),
-                new Promise((_, no) => setTimeout(() => no(new Error('the wallet did not open in ' + MERGE_OPEN_MS / 1000 + ' s')), MERGE_OPEN_MS))]);
+                new Promise((_, no) => { const openMs = force ? MERGE_FORCE_OPEN_MS : MERGE_OPEN_MS; setTimeout(() => no(new Error('the wallet did not open in ' + openMs / 1000 + ' s')), openMs); })]);
+              if (force) { mergeNoOpen.delete(noOpenKey); mergeDeadFeds.delete(fedHex); }   // kanban #3561: it opened - no longer barred
               if (typeof other.sendAllEcash !== 'function') return;
               try { if (recovering) L.setItem(recoverTriedKey(x.hex), String(Date.now())); } catch { /* kanban #3140: tried once */ }
               // WHAT IT HOLDS, REMEMBERED UNTIL IT IS EMPTIED (2026-10-20 19:3xZ: "The total balance should always show the full balance even if
@@ -10892,12 +10895,29 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             return window.ARENA_EXCHANGE_INTO({ to: fedHex, toInvite, needMsat: want > 0n ? want : needMsat / 20n + 1000n, nodes: window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(id) : [],
               seed, LockClient: wasm.LockClient, resumeOnly, onStep: (st) => { if (window.ARENA_JOIN === moving) moving.stage = st; } });
           };
-          while (window.ARENA_JOIN === moving && Date.now() - t0 < JOIN_MOVE_WAIT_MS && hereMsat() < needMsat) {
+          // A PENDING MERGE IS COMPLETED BEFORE THE JOIN REFUSES (kanban #3561, feedback #406, UI 759): 1,205 sat sat in this federation in another
+          // phrase's wallet of this browser whose merge was stuck ("did not open in 10 s", then barred for minutes) - this loop only read the
+          // balance again and refused "move them over". Covered by a merge, the join asks that merge once, forced (MERGE_FORCE_OPEN_MS, the bars
+          // lifted), and waits for it past JOIN_MOVE_WAIT_MS while it runs (ARENA_MERGE_NOW is bounded by JOIN_MERGE_MS)
+          const JOIN_MERGE_MS = 40000;
+          const merge = async () => {
+            const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+            const seed = ARENACLIENT.tabSeed({ storage: window.sessionStorage, random: (n) => crypto.getRandomValues(new Uint8Array(n)) });
+            const toInvite = ARENACLIENT.rememberedInvite ? ARENACLIENT.rememberedInvite(window.ARENA_BROWSER_STORE(), fedHex) : null;
+            await window.ARENA_MERGE_NOW([fedHex], JOIN_MERGE_MS, { seed, LockClient: wasm.LockClient, force: true, extra: toInvite ? { [fedHex]: toInvite } : {} });
+          };
+          while (window.ARENA_JOIN === moving && (Date.now() - t0 < JOIN_MOVE_WAIT_MS || (moving.mergeAsked && !moving.mergeDone)) && hereMsat() < needMsat) {
             const prep = window.ARENA_PREPARE_FUNDS;
             // the plan read again each pass: a merge that lands in another federation (measured: a new wallet merging the old one's 4dc88be7 sats
             // into 4dc88be7 while the round is in 337ae01a) leaves a swap to make
             let mode = plan.coveredBy;
             try { const parts = (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []; if (parts.length && ARENACLIENT.joinFundingPlan) mode = ARENACLIENT.joinFundingPlan({ parts, roundFederation: fedHex, needMsat }).coveredBy; } catch { mode = plan.coveredBy; }
+            if (mode === 'merge' && !moving.mergeAsked && window.ARENA_MERGE_NOW) {
+              moving.mergeAsked = true;
+              const st = (window.ARENA_MERGE_STATE || {})[fedHex.slice(0, 16)];
+              console.log('[arena] join ' + String(id).slice(0, 16) + ': #3561 merging into ' + fedHex.slice(0, 8) + ' first' + (st && st.state === 'stuck' ? ' (it was stuck: ' + st.why + ')' : ''));
+              merge().catch((e) => console.warn('[arena] join #3561 merge: ' + e.message)).finally(() => { moving.mergeDone = true; });
+            }
             if (mode === 'swap' && !(prep && prep.busy) && !window.ARENA_JOIN_MOVING && Date.now() - asked > 3000) {
               asked = Date.now();
               // the first ask sends the exchange; a later one only asks the kept one again (a seat that took the notes and has not answered yet)
