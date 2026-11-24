@@ -56,7 +56,12 @@ test('one seat\'s table without the losers\' rows does not turn a verified winne
   const keys = refundOrderKeys();
   console.log('  REFUND-ONLY KEYS:', JSON.stringify([...keys]));
 
-  assert.equal(line.state, 'won', `the verified winner (paid 300000 msat by the honest seats) reads '${line.state}': ${line.text}`);
+  // kanban #3549: an order is paid by its book, never by the pari-mutuel table - with its book not read yet its line is 'unverified'
+  // (not closed, not a refund); once read it is the book's 'settled'. Either way one seat's table never makes it a refund
+  assert.equal(line.state, 'unverified', `the verified winner (paid 300000 msat by the honest seats) reads '${line.state}': ${line.text}`);
+  const [booked] = marketLines({ picks: [{ ...pick, market, bookClaim: { outMsat: '300000', unfilled: false } }], outcomes, nowMs: now });
+  assert.equal(booked.state, 'settled', `with its book read the winner reads '${booked.state}': ${booked.text}`);
+  assert.equal(booked.payoutMsat, '300000');
   assert.equal(keys.size, 0, 'the winning order is among the refund-only orders whose record closes with "payout: none" once the stake is credited');
 });
 
