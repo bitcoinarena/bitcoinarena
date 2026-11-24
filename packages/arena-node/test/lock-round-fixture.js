@@ -404,11 +404,14 @@ export async function closeRound(w, { window = true } = {}) {
   return said;
 }
 
-export async function untilSettled(w, ms = 30000) {
+// `every` (kanban #3662): ACCEPTED at every signer node, not only at w.a - the seat that submits the settlement holds it ACCEPTED a moment
+// before the other finds it in the federation, and a forfeit needs both: asked in between, the other refused. w.a's standing is answered.
+export async function untilSettled(w, ms = 30000, { every = false } = {}) {
   let got;
+  const others = every ? (w.nodes || [w.a, w.b]).filter((d) => d !== w.a) : [];
   for (const stop = Date.now() + ms; Date.now() < stop; await wait(250)) {
     got = await standing(w.a, w);
-    if (got.state === 'ACCEPTED') return got;
+    if (got.state === 'ACCEPTED' && (await Promise.all(others.map((d) => standing(d, w)))).every((s) => s.state === 'ACCEPTED')) return got;
   }
   return got;
 }
