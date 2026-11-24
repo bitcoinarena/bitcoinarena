@@ -47,6 +47,9 @@ export const DEFAULTS = Object.freeze({
   verifyGraceMs: 60 * MIN_MS, bountySats: 2500,   // the play bounty in real sats (owner 2026-11-22: 2,500 - 5,000 earlier that day, 10,000 before; it was 2,000) - every round reads it here, none stores its own
   lnChecksPerMinAll: 60, xChecksPerMinAll: 15,   // kanban #3333, #3353: wallet asks and X lookups per minute of all keys of ONE caller address (ipKey)
   lnChecksPerMinNet: 600, xChecksPerMinNet: 150,   // kanban #3353: the whole service's backstop per minute; a key with a run in a round still listing is not held by it
+  // kanban #3597: X lookups waiting or running at once - per caller address and for the whole service (the X client answers one per 3 s); and how
+  // long (wall clock) the tick waits for the list-time follow re-check before it writes the lists with the answers it has
+  xInFlightPerCaller: 1, xInFlightMost: 5, followWaitMs: 5000,
   bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
   entryPayMs: 30000,   // kanban #3603: a paid run's entry settles within this of its start (and before its submit), or the run does not count
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], promoEnd: null, adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
@@ -113,7 +116,17 @@ export function createOpr(o = {}) {
   const { sim, fetchCandles, checkLevel, invoices, chain = null } = o;   // o.s2 (the bounty book) is ignored since #3381
   const ceilingOf = o.ceilingOf || null;   // async (candles, seed, version) -> { total, timeS } (kanban #3332; none: the field measure only)
   const lnCheck = o.lnCheck || ((a) => checkLnAddress(a));
-  const xLookup = o.xLookup || null, botXHandles = o.botXHandles || botListFromEnv;
+  const xLookup0 = o.xLookup || null, botXHandles = o.botXHandles || botListFromEnv;
+  // X LOOKUPS IN FLIGHT ARE BOUNDED (kanban #3597, audit opr a7-3-2, high): the X client (bounty-verify.js xByName) answers one call per 3 s from a
+  // queue without end, and the minute caps let 15 calls a minute per caller address and 150 for all in - one stranger address's 15 POST /x queued
+  // 45 s, every honest POST /x waited behind them, and so did the tick at list time (no list, no round closed or made). Every lookup is counted
+  // while it waits or runs: POST /x is refused (429) while its caller address has xInFlightPerCaller waiting or the service xInFlightMost
+  let xBusy = 0;
+  const xBusyBy = new Map();
+  const xLookup = xLookup0 && (async (name, ck = null) => {
+    xBusy++; if (ck) xBusyBy.set(ck, (xBusyBy.get(ck) || 0) + 1);
+    try { return await xLookup0(name); } finally { xBusy--; if (ck) { const n = xBusyBy.get(ck) - 1; if (n > 0) xBusyBy.set(ck, n); else xBusyBy.delete(ck); } }
+  });
   const db = new DatabaseSync(o.dbPath || ':memory:');
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS rounds (id TEXT PRIMARY KEY, num INTEGER NOT NULL UNIQUE, test INTEGER NOT NULL, day TEXT, chart_day TEXT NOT NULL,
@@ -699,9 +712,10 @@ export function createOpr(o = {}) {
     if (last.n >= X_CHECKS_PER_HOUR) return { ok: false, code: 429, why: 'Too many checks - try again in an hour' };
     const ck = checkKeyOf(player, ip);
     if (checkCapped('x_checks', player, ck, t, cfg.xChecksPerMinAll, cfg.xChecksPerMinNet)) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
+    if ((xBusyBy.get(ck) || 0) >= cfg.xInFlightPerCaller || xBusy >= cfg.xInFlightMost) return { ok: false, code: 429, why: 'X is being asked for others right now - try again in a few seconds' };   // kanban #3597
     q('INSERT INTO x_checks (player, at_ms, ip_key) VALUES (?, ?, ?)').run(player, t, ck);
     let a;
-    try { a = await xLookup(name); } catch (e) { a = { userId: null, why: String(e && e.message || e) }; }
+    try { a = await xLookup(name, ck); } catch (e) { a = { userId: null, why: String(e && e.message || e) }; }
     if (a && !a.userId && /no such X account/i.test(String(a.why || ''))) return { ok: false, code: 404, why: 'no such X account', username: name };
     if (!a || !a.userId) { log(`x check for ${player.slice(0, 8)} not answered: ${a && a.why}`); return { ok: false, code: 503, why: 'X could not be checked right now - try again in a minute' }; }
     const userId = String(a.userId), username = String(a.username || name).replace(/^@/, '');
@@ -967,6 +981,16 @@ export function createOpr(o = {}) {
   }
   let ticking = false, followJob = null;
   const alertedDays = new Set(), followAsked = new Map();
+  // THE TICK NEVER WAITS ON X FOR LONG (kanban #3597): the list-time re-check runs as a job of its own; the tick waits for it followWaitMs (wall
+  // clock) at most, then writes the lists with the follows answers it has - the job goes on, and an answer it changes rebuilds the waiting list
+  function listRecheck(r) {
+    followAsked.set(r.id, now());
+    const job = recheckRound(r).then((res) => { followAsked.set(r.id, now()); if (res.changed.length) refreshLists(r.id); return res; })
+      .catch((e) => log(`follow re-check of ${r.id} failed: ${e.message}`));
+    if (!followJob) followJob = job.finally(() => { followJob = null; });
+    let timer;
+    return Promise.race([job, new Promise((ok) => { timer = setTimeout(ok, cfg.followWaitMs); })]).finally(() => clearTimeout(timer));
+  }
   async function tick() {
     if (ticking) return; ticking = true;
     try {
@@ -990,7 +1014,7 @@ export function createOpr(o = {}) {
       for (const r of q("SELECT * FROM rounds WHERE ceiling IS NULL AND seed IS NOT NULL AND state IN ('posting', 'ready', 'closed', 'listed') AND end_ms > ? ORDER BY start_ms DESC LIMIT 3").all(now() - 8 * DAY_MS)) ensureCeiling(r);
       for (const r of q("SELECT * FROM rounds WHERE state = 'closed' AND end_ms + ? <= ?").all(cfg.verifyGraceMs, now())) {
         await ensureCeiling(r);
-        if (followRuleOn(r)) { await recheckRound(r); followAsked.set(r.id, now()); }   // kanban #3534: a fresh X answer for the list
+        if (followRuleOn(r)) await listRecheck(r);   // kanban #3534: a fresh X answer for the list (#3597: waited for followWaitMs at most)
         makeLists(roundRow(r.id), now());
       }
       // kanban #3534: while a list waits for sign-off its best keys are asked again every followEveryMs (in the background; an unfollow loses the place)
