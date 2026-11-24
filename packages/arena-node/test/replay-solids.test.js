@@ -16,9 +16,9 @@
 // apart without a red test.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { init, step, setSolids, HALF_X, HALF_Z } from '../../nextblock/src/sim.js';
-import { mapSolids, MAP_BOXES } from '../../nextblock/src/rules/map.js';
+import { mapSolids, MAP_BOXES, MINER_X } from '../../nextblock/src/rules/map.js';
 import { BOX_WORDS } from '../../nextblock/src/rules/solids.js';
 import { O_TRUCK, T_X, T_Z } from '../../nextblock/src/state.js';
 
@@ -101,12 +101,18 @@ test('the core builds the map Unity draws, box for box', () => {
   has(-118.4, 82.875, 4, 1.275, 'EndRight');
   has(-118.4, 0, 4, 84.15, 'Lintel');
 
-  // The miner, whose shell faces the player so its own axes run the other way.
-  has(112.4, -62.2, 4, 22.2, 'FacadeRight');
-  has(112.4, 62.2, 4, 22.2, 'FacadeLeft');
-  has(112.4, 0, 4, 40, 'FacadeLintel');
-  has(125.4, -42, 14, 2, 'TunnelRight');
-  has(125.4, 42, 14, 2, 'TunnelLeft');
+  // The miner, whose shell faces the player so its own axes run the other way. AT x 169 m (kanban #3546): the app's map.js moved the
+  // miner's origin from 114.4 to 169 m (MINER_X, "the world grew east") - the facade stands at MINER_X - 2, the tunnel's sides at
+  // MINER_X + 11, extents unchanged. map.js is what ships, so it is the source; Unity's own inventory is checked against the core below
+  // whenever its export is at hand.
+  assert.equal(MINER_X / ONE, 169, 'the miner\'s origin');
+  has(167, -62.2, 4, 22.2, 'FacadeRight');
+  has(167, 62.2, 4, 22.2, 'FacadeLeft');
+  has(167, 0, 4, 40, 'FacadeLintel');
+  has(180, -42, 14, 2, 'TunnelRight');
+  has(180, 42, 14, 2, 'TunnelLeft');
+  // and nothing of the miner is left at its old place
+  for (const x of [112.4, 125.4]) assert.ok(!Array.from({ length: s.n }, (_, i) => at(i)).some((b) => Math.abs(b.cx - x) < 0.001), `a box still at the old miner's x ${x}`);
   console.log(`  the core builds all ${s.n} boxes a running player gathered, centre and extents to a millimetre`);
 
   // AND THE HEIGHTS FOLLOW THE ROUND, because a shell rests on the relief
@@ -120,6 +126,31 @@ test('the core builds the map Unity draws, box for box', () => {
   }
   assert.equal(sameXZ, s.n, 'the map moved between two rounds');
   console.log(`  two rounds: all ${sameXZ} boxes stand in the same place, ${sameY} of ${s.n} at the same height`);
+});
+
+/**
+ * AND UNITY'S OWN INVENTORY AGREES, WHENEVER IT IS AT HAND (kanban #3546). `SolidsInventoryTests.TheCollisionWorldIsTheseBoxes`
+ * prints one line per box a running `Bootstrap` world gathered - `<name> centre (x, z) extents (hx, hz) y ..  path ...`. Saved to a
+ * file (its PlayMode output, or the test results XML holding it) and named by ARENA_SOLIDS_INVENTORY, every box in it must be one
+ * the core builds, centre and extents to its printed millimetre. No export, no check: landing the core's numbers needs no Unity run.
+ */
+export function inventoryBoxes(text) {
+  const re = /^\s*(\S+)\s+centre \(\s*(-?[\d.]+),\s*(-?[\d.]+)\) extents \(\s*(-?[\d.]+),\s*(-?[\d.]+)\)/gm;
+  return [...String(text).matchAll(re)].map((m) => ({ name: m[1], cx: +m[2], cz: +m[3], hx: +m[4], hz: +m[5] }));
+}
+test('Unity\'s SolidsInventory export, when present, names only boxes the core builds', (t) => {
+  const sample = '  FacadeRight                  centre (  167.000,   -62.200) extents (   4.000,   22.200) y  -20.000..133.200  path Miner/FacadeRight';
+  assert.deepEqual(inventoryBoxes(sample), [{ name: 'FacadeRight', cx: 167, cz: -62.2, hx: 4, hz: 22.2 }], 'the line is read');
+  const file = process.env.ARENA_SOLIDS_INVENTORY;
+  if (!file || !existsSync(file)) { t.skip('no SolidsInventory export (ARENA_SOLIDS_INVENTORY): the core\'s numbers above stand alone'); return; }
+  const boxes = inventoryBoxes(readFileSync(file, 'utf8'));
+  assert.ok(boxes.length > 0, `${file} holds no inventory lines`);
+  const s = mapSolids(init(0x028b8279).ground, HALF_X, HALF_Z);
+  const core = Array.from({ length: s.n }, (_, i) => { const b = i * BOX_WORDS; return { cx: s.box[b] / ONE, cz: s.box[b + 1] / ONE, hx: s.box[b + 2] / ONE, hz: s.box[b + 3] / ONE }; });
+  const near = (a, b) => Math.abs(a - b) < 0.002;
+  const missing = boxes.filter((u) => !core.some((c) => near(c.cx, u.cx) && near(c.cz, u.cz) && near(c.hx, u.hx) && near(c.hz, u.hz)));
+  assert.deepEqual(missing.map((u) => `${u.name} (${u.cx}, ${u.cz}) ext (${u.hx}, ${u.hz})`), [], 'Unity gathers boxes the core does not build');
+  console.log(`  Unity's inventory: ${boxes.length} boxes, every one among the core's ${s.n}`);
 });
 
 /**
