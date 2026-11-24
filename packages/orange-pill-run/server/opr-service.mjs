@@ -519,9 +519,13 @@ export function createOpr(o = {}) {
     const logHash = sha(JSON.stringify(body.log.presses));
     const flags = runSignals(body.log, JC(JSON.stringify(body.client ?? null), null));
     const same = q("SELECT id, player FROM attempts WHERE round = ? AND log_hash = ? AND player != ? AND state = 'scored'").all(a.round, logHash, player);
+    // THE LATER COPY IS FLAGGED, NEVER THE ORIGINAL (kanban #3580, audit opr a7-1-2): every board row's best run is a public replay during the round
+    // (#3336), so a stranger submitted the leader's presses from a fresh key - and the leader's EARLIER run was flagged sameLog and put under review:
+    // the waiting bounty row went to the next player. Only the run sent later is flagged and reviewed; the earlier one only counts its copies
+    // (copied, shown to the admin) and keeps its review
     if (same.length) {
       flags.sameLog = true;
-      for (const s of same) { const f = J(q('SELECT flags FROM attempts WHERE id = ?').get(s.id).flags, {}); f.sameLog = true; q("UPDATE attempts SET flags = ?, review = CASE review WHEN 'cleared' THEN 'cleared' ELSE 'pending' END WHERE id = ?").run(JSON.stringify(f), s.id); }
+      for (const s of same) { const f = J(q('SELECT flags FROM attempts WHERE id = ?').get(s.id).flags, {}); f.copied = (Number(f.copied) || 0) + 1; q('UPDATE attempts SET flags = ? WHERE id = ?').run(JSON.stringify(f), s.id); }
     }
     if (ip) {
       const n = q('SELECT COUNT(DISTINCT player) AS n FROM attempts WHERE round = ? AND ip = ?').get(a.round, ip).n;
@@ -651,7 +655,8 @@ export function createOpr(o = {}) {
       if (feat && feat.gridK === undefined) { const lg = J(q('SELECT log FROM attempts WHERE id = ?').get(a.id).log); Object.assign(feat, gridOf(lg && lg.presses)); }   // stored before #3332
       if (!feat && rr) { try { feat = runFeatures(sim, levelOf(rr), J(q('SELECT log FROM attempts WHERE id = ?').get(a.id).log)); q('UPDATE attempts SET bot_feat = ? WHERE id = ? AND bot_feat IS NULL').run(JSON.stringify(feat), a.id); } catch { feat = {}; } }
       const g = groups.get(a.near_rep || a.id);
-      const othersN = g.size - (g.has(a.player) ? 1 : 0), repeatOwn = (g.get(a.player) || 0) >= 2;
+      // kanban #3580: a near group's first run (its own rep) is the original - near copies sent after it do not count against it
+      const othersN = (a.near_rep || a.id) === a.id ? 0 : g.size - (g.has(a.player) ? 1 : 0), repeatOwn = (g.get(a.player) || 0) >= 2;
       const f0 = firsts.get(a.player);
       let near = 0;   // new players together from one address
       if (a.ip && f0 != null) for (const p of ipPlayers.get(a.ip) || []) { const m = firsts.get(p); if (p !== a.player && m != null && Math.abs(m - f0) <= 10 * MIN_MS) near++; }
