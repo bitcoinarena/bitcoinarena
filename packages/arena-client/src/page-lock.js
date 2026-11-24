@@ -31,6 +31,7 @@ import { decodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { lockFromClient } from './lock-result.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { roundLocks, playerFor, sharesNeededFor, sourceKey } from './join.js';
+import { seatsOf, seatVoice, hostOf } from './seat-identity.js';
 import { encodeRoundContract, decodeRoundContract, roundId, custodyFieldsAreValid, entryId } from '../../arena-protocol/src/contracts.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
@@ -904,7 +905,12 @@ let seatedLookup = null;
 const federationOfClient = new WeakMap();
 /** The page's lookup of a federation's seated gateways (null: none). */
 export const SEATED_AGREE = 2;   // kanban #3183: seat answers that must name a gateway seated
-export function useSeatedGateways(lookup) { seatedLookup = typeof lookup === 'function' ? lookup : null; }
+// `keys` (the network's seat keys, hex, or a function answering them: the page's ARENA_CENSUS_KEYS), `verify` (BIP-340) and `fetcher`: how the
+// answers' seats are told apart (kanban #3588, seat-identity.js seatsOf)
+let seatedProofs = {};
+export function useSeatedGateways(lookup, { keys = null, verify = null, fetcher = null } = {}) {
+  seatedLookup = typeof lookup === 'function' ? lookup : null; seatedProofs = { keys, verify, fetcher };
+}
 /** Which federation a lock client is a wallet of (openPlayerWallet notes it). */
 export function noteClientFederation(client, federationHex) { if (client && typeof client === 'object' && federationHex) federationOfClient.set(client, String(federationHex).toLowerCase()); }
 /**
@@ -926,7 +932,30 @@ export async function seatedGatewaysOf(client) {
   // guardian's, so a guardian seat added a gateway of its own there and, answering first, named it seated - it led every deposit and the swap's
   // receive leg. The lookup now hands each seat's answer ({ answers: [[url, ...], ...] }); a gateway is seated only when at least
   // SEATED_AGREE answers name it, in the order the first of them gives. A bare list is one seat's word: nothing seated from it.
-  const answers = got && Array.isArray(got.answers) ? got.answers.filter(Array.isArray) : [];
+  // ONE SEAT, ONE ANSWER (kanban #3588, audit client-a7-2-1, the gap in #3183): the answers carried no seat, so one guardian seat named in a link
+  // under two paths of its box (https://evil.example/a, /b) was the two seats SEATED_AGREE asks for, and its own gateway led the deposit and the
+  // swap legs again. The lookup hands each answer with the address it came from ({ seat, urls }); the addresses are grouped into seats as
+  // seat-identity.js seatsOf does (one host is one seat unless each of its URLs proves a distinct key of the network's seats), and a seat's
+  // answers are one answer - none when they disagree. A bare list (an older lookup) is a seat of its own.
+  const raw = got && Array.isArray(got.answers) ? got.answers : [];
+  const tagged = raw.map((a, i) => (Array.isArray(a) ? { seat: `#${i}`, urls: a } : a && Array.isArray(a.urls) ? { seat: String(a.seat || `#${i}`), urls: a.urls } : null)).filter(Boolean);
+  const idOf = new Map();
+  try {
+    const { keys, verify, fetcher } = seatedProofs;
+    const bases = tagged.map((a) => a.seat).filter((x) => /^https?:\/\//.test(x));
+    const several = new Set(bases.map(hostOf)).size < bases.length;
+    const ks = !several ? [] : typeof keys === 'function' ? await keys() : keys;
+    for (const g of await seatsOf(bases, { keys: Array.isArray(ks) ? ks : [], verify, fetcher: fetcher || fetch, ms: 2500 })) for (const u of g.urls) idOf.set(u, g.id);
+  } catch { /* each address then by its host */ }
+  const bySeat = new Map();
+  for (const a of tagged) {
+    const id = idOf.get(a.seat) || (/^https?:\/\//.test(a.seat) ? `host:${hostOf(a.seat)}` : a.seat);
+    if (!bySeat.has(id)) bySeat.set(id, []);
+    bySeat.get(id).push(a.urls);
+  }
+  const answers = [];
+  // a seat's answers agree when they name the same gateways, in any order
+  for (const said of bySeat.values()) { const v = seatVoice(said, (urls) => JSON.stringify([...new Set(urls.filter(Boolean).map((x) => gwKey(x)))].sort())); if (v) answers.push(v); }
   const seen = new Map();
   for (const a of answers) for (const u of new Set(a.filter(Boolean).map((x) => gwKey(x)))) seen.set(u, (seen.get(u) || 0) + 1);
   const l = [];
@@ -2648,9 +2677,16 @@ export const distinctSeats = (nodes) => {
   for (const n of nodes || []) { const k = sourceKey(String(n)) || String(n).replace(/\/+$/, ''); if (!seen.has(k)) { seen.add(k); out.push(n); } }
   return out;
 };
-export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
+// ONE VOTE PER SEAT, NOT PER URL (kanban #3574, audit client-a7-1-1, the gap in #3350): http://liar.test/a, /b and /c of one box were still
+// three seats (distinctSeats keeps path-distinct URLs, as the live seats differ by path) and their unsigned ACCEPTED settlement outvoted the
+// round's two. Now the URLs of one host are one seat unless each proves a distinct node key of the round (`keys`: round.nodes; `verify`: the
+// page's curve.verify) at GET /identity?nonce= (seat-identity.js seatsOf); a seat with several URLs is asked at each and counts once, and
+// not at all when they disagree. The threshold is capped by those seats, not by URLs.
+export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null } = {}) {
+  const seats = await seatsOf(nodes, { keys, verify, fetcher });
   // EVERY SIGNER NODE AT ONCE (kanban #593)
-  const answers = await Promise.all(distinctSeats(nodes).map(async (node) => {
+  const asked = seats.flatMap((seat) => seat.urls.map((node) => ({ seat, node })));
+  const answers = await Promise.all(asked.map(async ({ node }) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
@@ -2670,25 +2706,38 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1
       return { said: `${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}` };
     } catch (e) { return { said: `${node}: ${e.message}` }; }
   }));
-  const accepted = answers.filter((a) => a.ok);
+  // (kanban #3574) one answer per seat: the one its URLs agree on, none when they disagree
+  const bySeat = new Map(seats.map((seat) => [seat, []]));
+  asked.forEach((q, i) => bySeat.get(q.seat).push(answers[i]));
+  const accepted = [];
+  for (const [seat, said] of bySeat) {
+    const v = seatVoice(said, (a) => (a.ok ? a.key : null));
+    if (v) accepted.push({ ...v, urls: said.filter((a) => a.ok).map((a) => a.from) });
+    else if (said.some((a) => a.ok)) answers.push({ said: `${seat.urls[0]}: its URLs disagree on the settlement - no vote` });
+  }
   // the same settlement: its txid and its payouts in their order (an output's index is its place in the list)
   // (kanban #1671) each answer's key was built in its own seat's try
   const groups = new Map();
   for (const a of accepted) { const k = a.key; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
   const ranked = [...groups.values()].sort((x, y) => y.length - x.length);
-  const need = Math.max(1, Number(needed) || 1);
+  // the caller's threshold was capped by the URLs asked (settlementAgreement); where those URLs are fewer seats, by the seats (kanban #3574)
+  const urls = distinctSeats(nodes).length;
+  const need = Math.max(1, seats.length < urls ? Math.min(Number(needed) || 1, seats.length) : Number(needed) || 1);
   const pays = (a) => !!payee && a.moved.payouts.some((p) => isQualifierTo(p, payee));
   const agreed = ranked.find((g) => g.length >= need) || null;
   // `seats`: the seats that answered this settlement (kanban #1355): the round's own, whose word a stake's "none" may rest on
-  const seatsOf = (g) => g.map((a) => String(a.from).replace(/\/+$/, ''));
-  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need, seats: seatsOf(agreed) };
+  const seatsOfGroup = (g) => g.flatMap((a) => a.urls.map((u) => String(u).replace(/\/+$/, '')));
+  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need, seats: seatsOfGroup(agreed) };
   const paying = ranked.find((g) => g.some(pays));
-  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true, seats: seatsOf(paying) };
+  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true, seats: seatsOfGroup(paying) };
   const said = answers.filter((a) => !a.ok).map((a) => a.said);
   if (ranked.length) return { ok: false, agreeing: ranked[0].length, needed: need,
     why: `only ${ranked[0].length} of the ${need} seats needed agree on this round's settlement yet${said.length ? ` (${said.join('; ')})` : ''}` };
   return { ok: false, agreeing: 0, needed: need, why: `no seat holds an accepted settlement of this round yet (${said.join('; ')})` };
 }
+// WHAT A SEAT PROVES ITSELF AGAINST (kanban #3574): the round's node keys and the page's BIP-340 verify, for settlementOf's seatsOf
+const seatProofs = (round, curve) => ({ keys: Array.isArray(round && round.nodes) ? round.nodes : [],
+  verify: curve && typeof curve.verify === 'function' ? (sig, msg, key) => { try { return !!curve.verify(sig, msg, key); } catch { return false; } } : null });
 /** HOW MANY SEATS MUST AGREE ON A ROUND'S SETTLEMENT (kanban #1163): its settlement threshold, never more than the seats asked. */
 export const settlementAgreement = (round, nodes = []) => {
   let t = 1; try { t = sharesNeededFor(round); } catch { t = 1; }
@@ -2739,7 +2788,7 @@ export async function redeemPayout({ round, roundId, invite, seed, curve, LockCl
     if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
   } catch { /* an unreadable note is no note */ }
   onStep('asking the seats for the round\'s settlement');
-  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
+  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine, ...seatProofs(round, curve) });
   if (!s.ok) return { ok: false, final: false, why: s.why };
   const at = s.moved.payouts.findIndex((p) => isQualifierTo(p, mine));
   if (at < 0) return { ok: false, final: true, txid: s.txid, why: 'the round\'s settlement pays this seed\'s key nothing: no payout to collect' };
@@ -2929,7 +2978,7 @@ export async function returnStake({ round, roundId, invite, seed, curve, LockCli
   // look already found forfeited by the signer nodes (kanban #593, playtest 2026-10-23: round 8464c5fd never settled, its seats
   // had signed the forfeit of the unfilled order's locks, and the collect asked for a settlement first - nothing was redeemed)
   if (!refused && !forfeited) {
-    const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes) });
+    const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), ...seatProofs(round, curve) });
     if (!s.ok) return { ok: false, final: false, why: s.why };
   }
   let got;
@@ -3880,7 +3929,7 @@ export async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = f
   // (an Arena lock is read with its own call: `fields` says which; a payout output is a stock contract)
   const held = async (txid, outIdx, fields = null) => !client || !!JSON.parse(await lockStatusOf(client, fields, txid, Number(outIdx))).stored;
   // THE SETTLEMENT THE ROUND'S THRESHOLD OF SEATS AGREES ON (kanban #1163): "none" only on their word, never one seat's
-  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
+  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine, ...seatProofs(round, curve) });
   const contractIdOf = contractIdVia(LockClient || (client && client.constructor));
   let payout;
   const paidNote = note(noteKeyOf(PAYOUT_NOTE, roundId, mine, order));

@@ -29,6 +29,7 @@ test('audit gossip r1-2: a seat naming an honest seat\'s node key in its /season
     return new Response(JSON.stringify(a), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   const d = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, peers, seasonFetch, ...opts });
+  let d2 = null;
   try {
     const now = Date.now();
     const game = toHex(NEXTBLOCK_GAME_ID);
@@ -42,11 +43,13 @@ test('audit gossip r1-2: a seat naming an honest seat\'s node key in its /season
     // control first: without the attacker the round stands on three seats
     const ctl = await (await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock&scope=network&days=7`)).json();
     assert.ok(ctl.rows.some((x) => x.player === X), `control: three seats agree, the round counts (${JSON.stringify(ctl.seats)})`);
-    // the attacker answers under seat a's key with nothing (a fresh query: days=6, so no kept answer)
+    // the attacker answers under seat a's key with nothing, asked by a fresh seat (kanban #3570: one seat keeps one network account per
+    // game set whatever days= is asked, so another day count no longer builds the board again)
     answers.set(base('0'), of(0xa1, []));
-    const j = await (await fetch(`http://127.0.0.1:${d.port}/season?game=nextblock&scope=network&days=6`)).json();
+    d2 = await serve(openStore(':memory:'), { plugins: HOSTED, port: 0, peers, seasonFetch, ...opts });
+    const j = await (await fetch(`http://127.0.0.1:${d2.port}/season?game=nextblock&scope=network&days=6`)).json();
     console.log(`  FACTS: seats ${JSON.stringify(j.seats)}, rounds ${j.rounds}, rows ${j.rows.length}, leftOut ${j.leftOut}`);
     assert.ok(j.rows.some((x) => x.player === X), 'the honest round three seats agree on left the network board: seat-0, naming seat a\'s node key, took seat a\'s place in the merge');
-  } finally { await d.close(); }
+  } finally { await d.close(); if (d2) await d2.close(); }
 });
 
