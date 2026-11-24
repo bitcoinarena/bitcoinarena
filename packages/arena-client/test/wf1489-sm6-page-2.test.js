@@ -14,7 +14,8 @@ const HTML = readFileSync(new URL('../../../src/arena-ui/index.html', import.met
 const slice = (from, to) => { const a = HTML.indexOf(from); assert.ok(a >= 0, 'slice start'); const b = HTML.indexOf(to, a); assert.ok(b > a, 'slice end'); return HTML.slice(a, b + to.length); };
 const KEEP = slice('    function hiddenFor(roundIdHex)', '    window.ARENA_HIDDEN_MOVES = readHidden;');
 const mem = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), m }; };
-const tab = (localStorage, sessionStorage) => new Function('window', KEEP + '\n return { rememberHidden, readHidden };')({ localStorage, sessionStorage });
+// the browser's store through its one door, window.ARENA_BROWSER_STORE (kanban #3543)
+const tab = (localStorage, sessionStorage) => new Function('window', KEEP + '\n return { rememberHidden, readHidden };')({ localStorage, sessionStorage, ARENA_BROWSER_STORE: () => localStorage });
 
 test('wf1489-sm6-page-2: a hidden move made in this browser can still be revealed from a new tab of the same phrase', () => {
   const PHRASE = '6c'.repeat(32), ROUND = 'cd'.repeat(32);
