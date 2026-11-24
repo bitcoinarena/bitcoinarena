@@ -417,6 +417,13 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         // a count held to the chain names the block it ends on (its anchor); without one nothing is written
         if (typeof blockHashAt === 'function' && !o.readHash) continue;
         if (o.readTo >= p.votingUntil - 1 && tip >= p.votingUntil - 2 + depth) {
+          // THE TWIN SET IS THE ONE HELD AT THE DECISION (kanban #3605): the list above was read before this pass awaited the
+          // chain (its census - minutes when cold - and its phase's blocks); a twin taken by POST /proposal or the peer pull in
+          // that await found the group still COUNTING, so the #2629 undecide did not run. Deciding on the old list left the new
+          // twin's votes out for good (decided once, the group never counted again) while a seat that held the twin before its
+          // decision counted them: two final outcomes for one proposal. A list that moved drops the count; the next pass reads
+          // the phase again with every twin
+          if (twinIdsOf(p).join() !== (o.twins || []).join()) { open.delete(p.id); continue; }
           // ITS ANCHOR: the last voting block's hash - it commits to the publication, the census and every vote below it
           const outcome = { ...tallyJson(o.result), decidedAt: tip, census: o.census.length,
             anchor: o.readHash ? { height: o.readTo, hash: o.readHash } : null };
