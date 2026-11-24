@@ -5,9 +5,8 @@
 import { Writer } from './encode.js';
 import { taggedHash, bytesToBigInt, toHex } from './hash.js';
 import { TAG, roleByte, namesNoDraw } from './constants.js';
-import { compareEntries, meetsCensusMinimum, eligibleFor } from './census.js';
+import { compareEntries, meetsCensusMinimum, drawFloorSats, drawEligible } from './census.js';
 import { poolOfRole, GAME_VERIFY, SETTLEMENT } from './fee.js';
-import { roleFloorSats } from './rules.js';
 
 /**
  * HOW MANY SIGNER NODES THIS ROUND GIVES THE POOL A ROLE SERVES IN.
@@ -126,9 +125,8 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
     throw new Error('that round names no positive bond floor to weigh against');
   // A ROLE'S OWN FLOOR, WHERE THE CONTRACT NAMES ITS RULES (§6 bond_min per rolerules.js): the role's floor weighs and
   // admits; one draw for both roles (a v2 round) takes the higher. A contract naming no rules: its bond_min, as before.
-  const bondMin = namesNoDraw(contract)
-    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
-    : roleFloorSats(contract, role);
+  // census.js drawFloorSats: the floor meetsCensusMinimum counts at below is this one (kanban #3571).
+  const bondMin = drawFloorSats(contract, role);
 
   // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
   //
@@ -160,8 +158,7 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
   for (const e of entries) {
     // the role, and for game/verify the round's game hosted (census.js eligibleFor)
     // ONE DRAW FOR BOTH ROLES (2026.0.2): a v2 round's node serves both, so it is eligible for both
-    if (!(namesNoDraw(contract) ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement') : eligibleFor(e, contract, role))
-      || out.has(keyOf(e))) continue;
+    if (!drawEligible(e, contract, role) || out.has(keyOf(e))) continue;
     const had = byKey.get(keyOf(e));
     if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
     had.bondSats += e.bondSats;
