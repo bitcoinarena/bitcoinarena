@@ -8549,8 +8549,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // times)): every door is counted per caller and the top logged once a minute ([doors]); a GET of DOOR_CACHE's doors with the same query is
       // answered from the answer made at most DOOR_CACHE_MS before (peers poll them; half a second old is what a poll sees anyway)
       doorCount(req, url);
-      if (req.method === 'GET' && DOOR_CACHE.has(url.pathname)) {
-        const k = doorCacheKey(url), hit = doorCache.get(k);
+      const k = req.method === 'GET' && DOOR_CACHE.has(url.pathname) ? doorCacheKey(url) : null;
+      if (k !== null) {
+        const hit = doorCache.get(k);
         if (hit && Date.now() - hit.at < (DOOR_SLOW_CACHE.has(url.pathname) ? DOOR_SLOW_CACHE_MS : DOOR_CACHE_MS)) { doorCacheHits++; res.writeHead(hit.status, hit.headers); return res.end(hit.body); }
         const chunks = [], wh = res.writeHead.bind(res), we = res.end.bind(res); let status = 200, headers = {};
         res.writeHead = (st, h, h2) => { status = st; headers = (typeof h === 'object' && h) || (typeof h2 === 'object' && h2) || {}; return wh(st, h, h2); };
@@ -8599,8 +8600,21 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // 3.79 MB answer with a junk &x=<n> each grew the seat by 1191 MB in ~5 s - a full copy per query text, up to 2048 for 60 s). A cached door's
   // key keeps only the parameters it reads, sorted, a game list in its sorted order; and the cache holds at most DOOR_CACHE_BYTES in all,
   // an answer over DOOR_CACHE_BODY_MOST not at all.
-  const DOOR_CACHE_PARAMS = { '/season-rounds': ['game', 'days', 'after', 'page'], '/census': ['round', 'creator'],
-    '/served': ['from', 'to', 'finals', 'count', 'height', 'label', 'n'], '/canonical': ['round', 'entry'], '/replay/transcript': ['round', 'entry'] };
+  const DOOR_CACHE_PARAMS = { '/season-rounds': ['game', 'days', 'after', 'page'], '/census': ['round'],
+    '/served': ['from', 'to', 'finals', 'count', 'height', 'label', 'n'], '/canonical': ['round', 'entry'], '/replay/transcript': ['round', 'entry'],
+    '/dkg-agreement': ['epoch'], '/seating-batch': ['rounds'], '/lock-namer': ['kind', 'outpoint', 'player'] };
+  // THE KEY IS THE ID'S BYTES, NOT ITS SPELLING (kanban #3584, audit play a7-2-1, gap in #3057: the doors read an id with Buffer.from(x, 'hex'),
+  // which takes either letter case and stops at the first non-hex character, so 40 spellings of one entry id - case toggled, or <64 hex>z<n> -
+  // were 40 keys and 40 rebuilds of one run, 11.3 s of the seat's thread on GET /canonical). An id parameter is kept as its 64 lowercase hex
+  // digits, a lock outpoint as <lowercase txid>:<index as a number>, a list of round ids in lowercase; a value that is not one is never cached
+  // (the doors refuse it, see doorId).
+  const DOOR_CACHE_IDS = new Set(['round', 'entry', 'epoch', 'player']);
+  const doorCacheValue = (name, v) => {
+    if (DOOR_CACHE_IDS.has(name)) { const id = doorId(v); return id ? toHex(id) : null; }
+    if (name === 'rounds') return String(v).toLowerCase().split(',').filter(Boolean).join(',');
+    if (name === 'outpoint') { const m = /^([0-9a-f]{64}):([0-9]{1,10})$/i.exec(String(v)); return m ? `${m[1].toLowerCase()}:${Number(m[2])}` : null; }
+    return String(v);
+  };
   // kanban #3169, #3200: the key counts toward DOOR_CACHE_BYTES, and a key longer than DOOR_CACHE_KEY_MOST is never cached (the longest honest one,
   // GET /seating-batch of BATCH_ROUNDS = 64 round ids, is about 4.2 KB)
   const DOOR_CACHE_BYTES = 64 * 1048576, DOOR_CACHE_BODY_MOST = 16 * 1048576, DOOR_CACHE_KEY_MOST = 8192;
@@ -8611,11 +8625,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const parts = [];
     for (const name of keep) for (const v of url.searchParams.getAll(name).slice(0, 1)) {
       const ids = name === 'game' ? String(v).trim().toLowerCase().split(',').map((x) => x.trim()) : null;
-      const val = ids && ids.length > 1 && ids.every((x) => /^[0-9a-f]{64}$/.test(x)) ? ids.sort().join(',') : String(v);
+      const val = ids && ids.length > 1 && ids.every((x) => /^[0-9a-f]{64}$/.test(x)) ? ids.sort().join(',') : doorCacheValue(name, v);
+      if (val === null) return null;
       parts.push(`${name}=${encodeURIComponent(val)}`);
     }
     return `${url.pathname}?${parts.join('&')}`;
   };
+  // kanban #3584: an id named in a query is exactly 64 hex digits (either case), or it is no id - not the bytes Buffer.from(x, 'hex') reads up to
+  // the first non-hex character. Its bytes, or null.
+  const doorId = (v) => (typeof v === 'string' && /^[0-9a-fA-F]{64}$/.test(v) ? Buffer.from(v, 'hex') : null);
   const doorCounts = new Map();
   const doorCount = (req, url) => {
     let who = String((req.socket && req.socket.remoteAddress) || '').replace(/^::ffff:/, '');
@@ -9969,7 +9987,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return res.end(JSON.stringify({ node: toHex(round.pubkey), censusHeight: now.height, tip: tipNow, nodes }));
       }
       if (req.method === 'GET' && url.pathname === '/census') {
-        const got = roster.censusEvidenceFor(Buffer.from(url.searchParams.get('round') || '', 'hex'));
+        const rid = doorId(url.searchParams.get('round'));   // kanban #3584
+        if (!rid) return text(res, 400, 'name a round: ?round=<64 hex>');
+        const got = roster.censusEvidenceFor(rid);
         if (!got.ok) return text(res, 404, got.why);
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
         return res.end(JSON.stringify(got));
@@ -11433,8 +11453,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // (namersAtPeers) - in any round this seat holds, of that player key; its bytes, so the asker checks what it is told. Entries are public.
       if (req.method === 'GET' && url.pathname === '/lock-namer') {
         const kind = url.searchParams.get('kind'), m = /^([0-9a-f]{64}):([0-9]{1,10})$/i.exec(url.searchParams.get('outpoint') || '');
-        const player = Buffer.from(url.searchParams.get('player') || '', 'hex');
-        if ((kind !== 'stake' && kind !== 'fee') || !m || player.length !== 32) return text(res, 400, 'GET /lock-namer?kind=stake|fee&outpoint=<txid>:<index>&player=<player key>');
+        const player = doorId(url.searchParams.get('player'));   // kanban #3584
+        if ((kind !== 'stake' && kind !== 'fee') || !m || !player) return text(res, 400, 'GET /lock-namer?kind=stake|fee&outpoint=<txid>:<index>&player=<player key>');
         const first = round.firstNamingOfLock(null, kind, { txid: fromHex(m[1].toLowerCase()), outIdx: BigInt(m[2]) }, new Uint8Array(player));
         if (!first) return text(res, 404, 'this seat holds no entry naming that lock');
         // and the player's claims this seat holds for that lock (kanban #1897, #1938): the asker checks each signature itself
@@ -11566,8 +11586,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // where the second was asked for would be handing over marks four
       // members never saw.
       if (req.method === 'GET' && url.pathname === '/canonical') {
-        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
-        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
+        const rid = doorId(url.searchParams.get('round')), eid = doorId(url.searchParams.get('entry'));   // kanban #3584
+        if (!rid || !eid) return text(res, 400, 'name a round and an entry: ?round=<64 hex>&entry=<64 hex>');
         let c;
         try { c = round.canonicalTranscript(rid, eid); }
         catch (e) { return text(res, 409, e.message); }
@@ -11632,9 +11652,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // THE RUN AS THIS NODE REPLAYS IT: the same object replay.js steps (ticks and their five words, liquidations,
       // loads, samples, tapes), as JSON. 404 when this node holds no ticks of it - the page then asks the others.
       if (req.method === 'GET' && url.pathname === '/replay/transcript') {
-        const rid = Buffer.from(url.searchParams.get('round') || '', 'hex');
-        const eid = Buffer.from(url.searchParams.get('entry') || '', 'hex');
-        if (rid.length !== 32 || eid.length !== 32) return text(res, 400, 'a replay names a round and an entry');
+        const rid = doorId(url.searchParams.get('round')), eid = doorId(url.searchParams.get('entry'));   // kanban #3584
+        if (!rid || !eid) return text(res, 400, 'a replay names a round and an entry');
         const t = readTranscript(round.db, rid, eid);
         if (!t.ticks.length) return text(res, 404, 'this node holds no transcript of that run');
         // WHEN THE RUN WAS PLAYED (2026-09-26 14:25: Start and End are absolute timestamps): the first and the last
@@ -14149,8 +14168,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // WHICH CONTRIBUTIONS THIS SIGNER NODE COMBINED, SIGNED. Every signer node asks every other
       // before it keeps a share, and keeps it only if all of them said the same set.
       if (req.method === 'GET' && url.pathname === '/dkg-agreement') {
-        const id = Buffer.from(url.searchParams.get('epoch') || '', 'hex');
-        if (id.length !== 32) return text(res, 400, 'that is not an epoch id');
+        const id = doorId(url.searchParams.get('epoch'));   // kanban #3584
+        if (!id) return text(res, 400, 'that is not an epoch id');
         const said = dkg.agreementBytes(new Uint8Array(id));
         if (!said.ok) return text(res, 409, said.why);
         res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
