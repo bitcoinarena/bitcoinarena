@@ -3216,6 +3216,10 @@ mark it holds (that mark's tick, its arrival there). A later mark more than 600 
 sample periods) behind that clock is not receipted by that node; the receipt threshold decides
 whether the run stands. Batches are not refused on this rule, and a peer's catch-up of an old run
 is not either: only a node's own live receipt is bound to its clock.
+For a staked run the node also starts a clock at the run's start origin *(kanban #3568)*: the moment it saw
+the stake held (never before the round's start), at the tick §15's start window opens from (the join tick, or
+the tick the player had reached by then). The stricter of the two clocks decides, so a first mark held back
+inside the start deadline does not widen the 600 ticks.
 
 It does **not** prove that a human played, that no bot was used, or that no
 local forward simulation was performed. Arena makes no such claim.
