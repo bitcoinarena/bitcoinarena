@@ -8071,6 +8071,80 @@ function readProtocolVersionName(name) {
   return { ok: true, version: v, known: !!r };
 }
 
+// ---- arena-protocol/src/rules.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
+// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role2026.0.3). Until now these were bound only
+// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
+// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
+// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
+
+
+
+
+const te = new TextEncoder();
+const RULE_TEXTS = Object.freeze({
+  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
+    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
+    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
+  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
+    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
+    + 'entries ENTRY_VOID.',
+  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
+    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
+  slashing: 'ARENA rule slashing v2 (§5A.3, §5A.3B, RULED 2026-11-02, kanban #976): the offences of §5A.3 (double result, signing a result the re-run '
+    + 'contradicts, signing for a round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond. Each '
+    + 'affected player gets their real loss, once: F(contract, membership, true results) less what the settlement paid, floored at zero. The rest of '
+    + 'the bond goes to the protocol reserves. Nothing goes to the nodes, to the developers or back to the slashed node, and nothing is burned.',
+});
+/** A rule's hash: its text under the rule tag. */
+const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
+const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
+/**
+ * THE WITHDRAWN SLASHING RULE'S HASH (§5A.3): "A testnet round published under v1's hash keeps that hash until it has settled." Its text is
+ * kept only to give that hash. No contract is built with it, mainnet refuses it, and a slash pays by v2 whichever hash a round names.
+ */
+const SLASHING_V1_HASH = ruleHash('ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
+  + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
+  + 'census nodes, 25 % to the donation set.');
+/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
+const DISCONNECT_LAST_MARK = 1;
+const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
+
+/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
+function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
+  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
+    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
+}
+
+/**
+ * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
+ * one naming them must name this build's four hashes (on a test network, a round published under slashing v1 keeps that hash until it has
+ * settled, SLASHING_V1_HASH) and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
+ * role no lower than the round's bond_min.
+ */
+function rulesStand(contract) {
+  const r = contract && contract.rules;
+  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
+  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+  const onTestnet = [NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4].some((id) => eq(contract.networkId, id));
+  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
+    if (!eq(r[k], RULE_HASHES[k]) && !(k === 'slashing' && onTestnet && eq(r[k], SLASHING_V1_HASH))) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
+  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
+  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
+  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
+    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
+  return { ok: true, why: 'that round names the rules this build settles under' };
+}
+
+/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
+function roleFloorSats(contract, role) {
+  const r = contract && contract.rules;
+  if (!r) return contract.bondMinSats;
+  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
+}
+
 // ---- arena-protocol/src/bond-spend.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -11132,85 +11206,10 @@ function seatingSignedTwice(cert, { node, seated, signature, justification = nul
   return { ok: true, node, roundId, role };
 }
 
-// ---- arena-protocol/src/rules.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
-// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role2026.0.3). Until now these were bound only
-// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
-// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
-// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
-
-
-
-
-const te = new TextEncoder();
-const RULE_TEXTS = Object.freeze({
-  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
-    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
-    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
-  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
-    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
-    + 'entries ENTRY_VOID.',
-  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
-    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
-  slashing: 'ARENA rule slashing v2 (§5A.3, §5A.3B, RULED 2026-11-02, kanban #976): the offences of §5A.3 (double result, signing a result the re-run '
-    + 'contradicts, signing for a round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond. Each '
-    + 'affected player gets their real loss, once: F(contract, membership, true results) less what the settlement paid, floored at zero. The rest of '
-    + 'the bond goes to the protocol reserves. Nothing goes to the nodes, to the developers or back to the slashed node, and nothing is burned.',
-});
-/** A rule's hash: its text under the rule tag. */
-const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
-const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
-/**
- * THE WITHDRAWN SLASHING RULE'S HASH (§5A.3): "A testnet round published under v1's hash keeps that hash until it has settled." Its text is
- * kept only to give that hash. No contract is built with it, mainnet refuses it, and a slash pays by v2 whichever hash a round names.
- */
-const SLASHING_V1_HASH = ruleHash('ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
-  + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
-  + 'census nodes, 25 % to the donation set.');
-/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
-const DISCONNECT_LAST_MARK = 1;
-const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
-
-/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
-function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
-  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
-    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
-}
-
-/**
- * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
- * one naming them must name this build's four hashes (on a test network, a round published under slashing v1 keeps that hash until it has
- * settled, SLASHING_V1_HASH) and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
- * role no lower than the round's bond_min.
- */
-function rulesStand(contract) {
-  const r = contract && contract.rules;
-  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
-  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
-  const onTestnet = [NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4].some((id) => eq(contract.networkId, id));
-  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
-    if (!eq(r[k], RULE_HASHES[k]) && !(k === 'slashing' && onTestnet && eq(r[k], SLASHING_V1_HASH))) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
-  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
-  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
-  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
-    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
-  return { ok: true, why: 'that round names the rules this build settles under' };
-}
-
-/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
-function roleFloorSats(contract, role) {
-  const r = contract && contract.rules;
-  if (!r) return contract.bondMinSats;
-  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
-}
-
 // ---- arena-protocol/src/sortition.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Committee selection: bond-weighted, linear, and decided in integers.
-
 
 
 
@@ -11336,9 +11335,8 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
     throw new Error('that round names no positive bond floor to weigh against');
   // A ROLE'S OWN FLOOR, WHERE THE CONTRACT NAMES ITS RULES (§6 bond_min per rolerules.js): the role's floor weighs and
   // admits; one draw for both roles (a v2 round) takes the higher. A contract naming no rules: its bond_min, as before.
-  const bondMin = namesNoDraw(contract)
-    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
-    : roleFloorSats(contract, role);
+  // census.js drawFloorSats: the floor meetsCensusMinimum counts at below is this one (kanban #3571).
+  const bondMin = drawFloorSats(contract, role);
 
   // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
   //
@@ -11370,8 +11368,7 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
   for (const e of entries) {
     // the role, and for game/verify the round's game hosted (census.js eligibleFor)
     // ONE DRAW FOR BOTH ROLES (2026.0.2): a v2 round's node serves both, so it is eligible for both
-    if (!(namesNoDraw(contract) ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement') : eligibleFor(e, contract, role))
-      || out.has(keyOf(e))) continue;
+    if (!drawEligible(e, contract, role) || out.has(keyOf(e))) continue;
     const had = byKey.get(keyOf(e));
     if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
     had.bondSats += e.bondSats;
@@ -12792,6 +12789,7 @@ function checkAbsenceProof(claims, { census = null, window, certOf, drawOf, veri
 
 
 
+
 // ONE PARSE PER TRANSACTION (kanban #586/#587, measured 2026-10-23 17:11Z on a test host seat after a restart: 10 min at 100 % CPU,
 // decodeAdvert 23 %, sha256 13 %, parseTransaction 7 %, readSlice 6 % - every census height parsed every transaction of its 2,017
 // blocks again, and decoded every advertisement again, though the blocks themselves are kept, one copy shared by every view): a
@@ -12952,14 +12950,35 @@ function eligibleFor(e, contract, role) {
   return hostsGame(e, contract && contract.gameId);
 }
 
+/**
+ * THE FLOOR THE DRAW ADMITS A KEY AT, FOR THAT ROLE (§5A.3 "bond_amount >= bond_min(role)", §6 bond_min per role): the role's own
+ * floor where the contract names its rules, its bond_min otherwise; one draw for both roles (a v2 round) takes the higher of the two.
+ * selectCommittee admits and weighs at this floor, and meetsCensusMinimum counts at it, so the two cannot answer about different nodes.
+ */
+function drawFloorSats(contract, role) {
+  return namesNoDraw(contract)
+    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
+    : roleFloorSats(contract, role);
+}
+
+/** MAY THE DRAW TAKE THIS ENTRY FOR THAT ROLE: eligibleFor the role, and for one draw for both roles (a v2 round) eligible for both. */
+const drawEligible = (e, contract, role) => (namesNoDraw(contract)
+  ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement')
+  : eligibleFor(e, contract, role));
+
 function meetsCensusMinimum(entries, contract, role) {
   const { network, minimum } = censusMinimumFor(contract);
   // DISTINCT NODE KEYS AT OR ABOVE THE ROUND'S FLOOR, NOT ROWS (kanban #2850, #1489 r26-census-1): protocol 19 keeps every bond output as its own
   // row, so one key with several outputs (or a row below bond_min) met census_min_nodes alone and selectCommittee then drew a committee of one key.
-  // The rows are merged by key first - summed under protocol 19, each row on its own before - and only keys at the round's bond_min count.
-  const floor = contract && typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null;
+  // The rows are merged by key first - summed under protocol 19, each row on its own before - and only keys at the round's floor count.
+  // AT THE ROLE'S FLOOR, NOT bond_min (kanban #3571): a contract naming its rules names a floor per role (§6), and the draw admits only keys
+  // at it (selectCommittee). Counting at bond_min let a creator name bond_min at the floor in force - every honest node counted - and a role
+  // floor only their own bonds reach: the minimum was met by nodes the draw never takes, and the committee was the creator's keys alone.
+  // The census of a role is the nodes eligible for it (§5A.3 bond_amount >= bond_min(role)), so census_min_nodes is counted there - and
+  // under one draw for both roles, over the keys that draw can take.
+  const floor = contract && typeof contract.bondMinSats === 'bigint' ? drawFloorSats(contract, role) : null;
   const byKey = new Map();
-  for (const e of (entries || []).filter((x) => eligibleFor(x, contract, role))) {
+  for (const e of (entries || []).filter((x) => x && drawEligible(x, contract, role))) {
     if (!e || !(e.pubkey || (e.advert && e.advert.nodePubkey))) continue;
     const k = nodeKeyOf(e).split('|')[0], b = BigInt(e.bondSats || 0);
     byKey.set(k, sumsBonds(contract) ? (byKey.get(k) || 0n) + b : ((byKey.get(k) || 0n) > b ? byKey.get(k) : b));
@@ -23631,6 +23650,118 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
     stakeShares: payouts.filter((p) => p.kind === 'qualifier').map((p) => ({ pubkey: p.pubkey, msat: p.msat })) };
 }
 
+// ---- arena-client/src/seat-identity.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// ONE SEAT, ONE VOTE, HOWEVER MANY URLS A LINK GIVES IT (kanban #3574, audit client-a7-1-1, the gap in #3350).
+//
+// A join or lobby link's node= list is the link author's: one box named under several paths (http://liar.test/a, /b, /c) was several
+// "seats", and its unsigned answers outvoted the round's real ones. Counting by host alone is wrong the other way: the live seats share one
+// public host and differ by path (https://h/guardian-1 .. /guardian-7), and one vote per host would make seven seats one.
+//
+// So a host's URLs are separate seats only when each of them PROVES a distinct node key of the round's key set: GET /identity?nonce=<fresh>
+// answers the seat's BIP-340 signature over identityProofDigest(nonce) (arena-node server.js, kanban #2982/#3253) - a box cannot sign for a
+// key it does not hold, and the fresh nonce keeps it from replaying another seat's answer. Every URL of a host that proves no key of the set
+// (no answer, a bad signature, a key the round did not draw) is that host's one seat together. A URL alone on its host is a seat by itself,
+// as before (nothing is asked of it). A seat with several URLs is asked at each, and its answers count as one vote - none when they disagree
+// (seatVoice).
+//
+// What this cannot stop: one box under several HOSTNAMES (evil0.example, evil1.example, ...: wildcard DNS) that answer no identity is still
+// one seat per hostname. Where the answers a door counts carry their own signatures (a lock-set certificate, a signed fee proposal) the door
+// checks those instead; where they do not, the most a door can do is keep those seats from outnumbering the round's proven ones.
+
+
+
+/** The digest a seat signs at GET /identity?nonce= (the same as arena-node's identityProofDigest). */
+const identityProofDigest = (nonce) => taggedHash('ARENA/v1/NodeIdentityProof', nonce);
+
+const seatUrlTrimmed = (u) => String(u).replace(/\/+$/, '');
+/** A URL's host as seats are grouped by it: its hostname, lower case, without a trailing dot (ports and paths of one box are one host). */
+const hostOf = (u) => {
+  try { const x = new URL(String(u)); if (x.hostname) return x.hostname.toLowerCase().replace(/\.+$/, ''); } catch { /* not a URL */ }
+  return seatUrlTrimmed(u);
+};
+/** The node list with each source once (origin + first path segment, join.js sourceKey; the first spelling kept) - the #3350 step. */
+const distinctSources = (nodes) => {
+  const seen = new Set(), out = [];
+  for (const n of nodes || []) { const k = sourceKey(String(n)) || seatUrlTrimmed(n); if (!seen.has(k)) { seen.add(k); out.push(n); } }
+  return out;
+};
+const seatKeyHex = (k) => { try { return (typeof k === 'string' ? k : toHex(k)).toLowerCase(); } catch { return ''; } };
+
+// A PROVEN KEY IS KEPT A WHILE (the IDENTITY_KEEP_MS of join.js: a seat's key does not change behind its URL, and a page asks often); only
+// a proof is kept - a URL that proved nothing is asked again the next time
+const PROOF_KEEP_MS = 300000;
+const PROVEN_KEYS = new Map(), PROVEN_KEYS_MAX = 2000;
+const forgetProofs = () => PROVEN_KEYS.clear();
+const proofNonce = () => { const n = new Uint8Array(32); globalThis.crypto.getRandomValues(n); return n; };
+
+/** The node key the seat at `base` proves over a fresh nonce (64 hex, lower case), or null. `verify(sig, msg, key)`: BIP-340. */
+async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, now = Date.now() } = {}) {
+  base = seatUrlTrimmed(base);
+  const kept = PROVEN_KEYS.get(base);
+  if (kept && now - kept.at < PROOF_KEEP_MS) return kept.key;
+  if (typeof verify !== 'function') return null;
+  try {
+    const nonce = proofNonce();
+    const r = await fetcher(`${base}/identity?nonce=${toHex(nonce)}`, { signal: AbortSignal.timeout(ms) });
+    if (!r || !r.ok) return null;
+    const j = JSON.parse(await r.text());
+    const key = j && typeof j.node === 'string' ? j.node.toLowerCase() : '';
+    if (!/^[0-9a-f]{64}$/.test(key) || !/^[0-9a-f]{128}$/i.test(String(j.sig))) return null;
+    if (!verify(fromHex(String(j.sig).toLowerCase()), identityProofDigest(nonce), fromHex(key))) return null;
+    if (PROVEN_KEYS.size >= PROVEN_KEYS_MAX) PROVEN_KEYS.delete(PROVEN_KEYS.keys().next().value);
+    PROVEN_KEYS.set(base, { key, at: now });
+    return key;
+  } catch { return null; }
+}
+
+/**
+ * THE SEATS BEHIND A NODE LIST: [{ id, urls, key }] in the list's order. `keys`: the round's node keys (bytes or hex) - a host's URL is a
+ * seat of its own only when it proves one of them (and no other URL proved the same key: those are one seat). `verify`: BIP-340
+ * (the page's curve.verify). Without keys or verify every host is one seat.
+ */
+async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 8000 } = {}) {
+  const want = new Set((keys || []).map(seatKeyHex).filter(Boolean));
+  const byHost = new Map();
+  for (const u of distinctSources(nodes)) { const h = hostOf(u); if (!byHost.has(h)) byHost.set(h, []); byHost.get(h).push(u); }
+  const seats = [];
+  await Promise.all([...byHost.entries()].map(async ([host, urls]) => {
+    if (urls.length === 1 || !want.size || typeof verify !== 'function') { seats.push({ id: `host:${host}`, urls, key: null, at: urls[0] }); return; }
+    const proven = await Promise.all(urls.map((u) => provenKeyAt(u, { fetcher, verify, ms })));
+    const byKey = new Map(), rest = [];
+    urls.forEach((u, i) => {
+      const k = proven[i];
+      if (k && want.has(k)) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(u); } else rest.push(u);
+    });
+    for (const [k, us] of byKey) seats.push({ id: `key:${k}`, urls: us, key: k, at: us[0] });
+    if (rest.length) seats.push({ id: `host:${host}`, urls: rest, key: null, at: rest[0] });
+  }));
+  // one key proven on two hosts is one seat (a seat reached at two names)
+  const merged = new Map();
+  for (const s of seats) {
+    const m = merged.get(s.id);
+    if (m) m.urls.push(...s.urls); else merged.set(s.id, { ...s, urls: [...s.urls] });
+  }
+  const order = new Map(distinctSources(nodes).map((u, i) => [u, i]));
+  return [...merged.values()].sort((a, b) => order.get(a.at) - order.get(b.at)).map(({ id, urls, key }) => ({ id, urls, key }));
+}
+
+/**
+ * ONE SEAT'S VOICE: its URLs' answers as one vote. `answers` are the answers of the seat's URLs; `keyOf(a)` what an answer says, or null
+ * for no answer (a refusal, a timeout). The first answer when every answer that said something says the same, else null - a seat whose
+ * URLs disagree has no vote.
+ */
+function seatVoice(answers, keyOf) {
+  let first = null, k0 = null;
+  for (const a of answers || []) {
+    const k = keyOf(a);
+    if (k === null || k === undefined) continue;
+    if (first === null) { first = a; k0 = k; } else if (k !== k0) return null;
+  }
+  return first;
+}
+
 // ---- arena-protocol/src/bech32.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -23946,6 +24077,7 @@ function lockClaimKeyOf(entry) {
 // wallet that holds it; and a lock already made, that no signer node has committed
 // yet, is kept with its stake (`saveLock`), so a reload before the signer node takes
 // the entry uses that lock instead of dealing and paying again.
+
 
 
 
@@ -24834,7 +24966,12 @@ let seatedLookup = null;
 const federationOfClient = new WeakMap();
 /** The page's lookup of a federation's seated gateways (null: none). */
 const SEATED_AGREE = 2;   // kanban #3183: seat answers that must name a gateway seated
-function useSeatedGateways(lookup) { seatedLookup = typeof lookup === 'function' ? lookup : null; }
+// `keys` (the network's seat keys, hex, or a function answering them: the page's ARENA_CENSUS_KEYS), `verify` (BIP-340) and `fetcher`: how the
+// answers' seats are told apart (kanban #3588, seat-identity.js seatsOf)
+let seatedProofs = {};
+function useSeatedGateways(lookup, { keys = null, verify = null, fetcher = null } = {}) {
+  seatedLookup = typeof lookup === 'function' ? lookup : null; seatedProofs = { keys, verify, fetcher };
+}
 /** Which federation a lock client is a wallet of (openPlayerWallet notes it). */
 function noteClientFederation(client, federationHex) { if (client && typeof client === 'object' && federationHex) federationOfClient.set(client, String(federationHex).toLowerCase()); }
 /**
@@ -24856,7 +24993,30 @@ async function seatedGatewaysOf(client) {
   // guardian's, so a guardian seat added a gateway of its own there and, answering first, named it seated - it led every deposit and the swap's
   // receive leg. The lookup now hands each seat's answer ({ answers: [[url, ...], ...] }); a gateway is seated only when at least
   // SEATED_AGREE answers name it, in the order the first of them gives. A bare list is one seat's word: nothing seated from it.
-  const answers = got && Array.isArray(got.answers) ? got.answers.filter(Array.isArray) : [];
+  // ONE SEAT, ONE ANSWER (kanban #3588, audit client-a7-2-1, the gap in #3183): the answers carried no seat, so one guardian seat named in a link
+  // under two paths of its box (https://evil.example/a, /b) was the two seats SEATED_AGREE asks for, and its own gateway led the deposit and the
+  // swap legs again. The lookup hands each answer with the address it came from ({ seat, urls }); the addresses are grouped into seats as
+  // seat-identity.js seatsOf does (one host is one seat unless each of its URLs proves a distinct key of the network's seats), and a seat's
+  // answers are one answer - none when they disagree. A bare list (an older lookup) is a seat of its own.
+  const raw = got && Array.isArray(got.answers) ? got.answers : [];
+  const tagged = raw.map((a, i) => (Array.isArray(a) ? { seat: `#${i}`, urls: a } : a && Array.isArray(a.urls) ? { seat: String(a.seat || `#${i}`), urls: a.urls } : null)).filter(Boolean);
+  const idOf = new Map();
+  try {
+    const { keys, verify, fetcher } = seatedProofs;
+    const bases = tagged.map((a) => a.seat).filter((x) => /^https?:\/\//.test(x));
+    const several = new Set(bases.map(hostOf)).size < bases.length;
+    const ks = !several ? [] : typeof keys === 'function' ? await keys() : keys;
+    for (const g of await seatsOf(bases, { keys: Array.isArray(ks) ? ks : [], verify, fetcher: fetcher || fetch, ms: 2500 })) for (const u of g.urls) idOf.set(u, g.id);
+  } catch { /* each address then by its host */ }
+  const bySeat = new Map();
+  for (const a of tagged) {
+    const id = idOf.get(a.seat) || (/^https?:\/\//.test(a.seat) ? `host:${hostOf(a.seat)}` : a.seat);
+    if (!bySeat.has(id)) bySeat.set(id, []);
+    bySeat.get(id).push(a.urls);
+  }
+  const answers = [];
+  // a seat's answers agree when they name the same gateways, in any order
+  for (const said of bySeat.values()) { const v = seatVoice(said, (urls) => JSON.stringify([...new Set(urls.filter(Boolean).map((x) => gwKey(x)))].sort())); if (v) answers.push(v); }
   const seen = new Map();
   for (const a of answers) for (const u of new Set(a.filter(Boolean).map((x) => gwKey(x)))) seen.set(u, (seen.get(u) || 0) + 1);
   const l = [];
@@ -26691,9 +26851,16 @@ const distinctSeats = (nodes) => {
   for (const n of nodes || []) { const k = sourceKey(String(n)) || String(n).replace(/\/+$/, ''); if (!seen.has(k)) { seen.add(k); out.push(n); } }
   return out;
 };
-async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null } = {}) {
+// ONE VOTE PER SEAT, NOT PER URL (kanban #3574, audit client-a7-1-1, the gap in #3350): http://liar.test/a, /b and /c of one box were still
+// three seats (distinctSeats keeps path-distinct URLs, as the live seats differ by path) and their unsigned ACCEPTED settlement outvoted the
+// round's two. Now the URLs of one host are one seat unless each proves a distinct node key of the round (`keys`: round.nodes; `verify`: the
+// page's curve.verify) at GET /identity?nonce= (seat-identity.js seatsOf); a seat with several URLs is asked at each and counts once, and
+// not at all when they disagree. The threshold is capped by those seats, not by URLs.
+async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null } = {}) {
+  const seats = await seatsOf(nodes, { keys, verify, fetcher });
   // EVERY SIGNER NODE AT ONCE (kanban #593)
-  const answers = await Promise.all(distinctSeats(nodes).map(async (node) => {
+  const asked = seats.flatMap((seat) => seat.urls.map((node) => ({ seat, node })));
+  const answers = await Promise.all(asked.map(async ({ node }) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
@@ -26713,25 +26880,38 @@ async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee
       return { said: `${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}` };
     } catch (e) { return { said: `${node}: ${e.message}` }; }
   }));
-  const accepted = answers.filter((a) => a.ok);
+  // (kanban #3574) one answer per seat: the one its URLs agree on, none when they disagree
+  const bySeat = new Map(seats.map((seat) => [seat, []]));
+  asked.forEach((q, i) => bySeat.get(q.seat).push(answers[i]));
+  const accepted = [];
+  for (const [seat, said] of bySeat) {
+    const v = seatVoice(said, (a) => (a.ok ? a.key : null));
+    if (v) accepted.push({ ...v, urls: said.filter((a) => a.ok).map((a) => a.from) });
+    else if (said.some((a) => a.ok)) answers.push({ said: `${seat.urls[0]}: its URLs disagree on the settlement - no vote` });
+  }
   // the same settlement: its txid and its payouts in their order (an output's index is its place in the list)
   // (kanban #1671) each answer's key was built in its own seat's try
   const groups = new Map();
   for (const a of accepted) { const k = a.key; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(a); }
   const ranked = [...groups.values()].sort((x, y) => y.length - x.length);
-  const need = Math.max(1, Number(needed) || 1);
+  // the caller's threshold was capped by the URLs asked (settlementAgreement); where those URLs are fewer seats, by the seats (kanban #3574)
+  const urls = distinctSeats(nodes).length;
+  const need = Math.max(1, seats.length < urls ? Math.min(Number(needed) || 1, seats.length) : Number(needed) || 1);
   const pays = (a) => !!payee && a.moved.payouts.some((p) => isQualifierTo(p, payee));
   const agreed = ranked.find((g) => g.length >= need) || null;
   // `seats`: the seats that answered this settlement (kanban #1355): the round's own, whose word a stake's "none" may rest on
-  const seatsOf = (g) => g.map((a) => String(a.from).replace(/\/+$/, ''));
-  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need, seats: seatsOf(agreed) };
+  const seatsOfGroup = (g) => g.flatMap((a) => a.urls.map((u) => String(u).replace(/\/+$/, '')));
+  if (agreed) return { ...agreed[0], agreeing: agreed.length, needed: need, seats: seatsOfGroup(agreed) };
   const paying = ranked.find((g) => g.some(pays));
-  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true, seats: seatsOf(paying) };
+  if (paying) return { ...paying[0], agreeing: paying.length, needed: need, short: true, seats: seatsOfGroup(paying) };
   const said = answers.filter((a) => !a.ok).map((a) => a.said);
   if (ranked.length) return { ok: false, agreeing: ranked[0].length, needed: need,
     why: `only ${ranked[0].length} of the ${need} seats needed agree on this round's settlement yet${said.length ? ` (${said.join('; ')})` : ''}` };
   return { ok: false, agreeing: 0, needed: need, why: `no seat holds an accepted settlement of this round yet (${said.join('; ')})` };
 }
+// WHAT A SEAT PROVES ITSELF AGAINST (kanban #3574): the round's node keys and the page's BIP-340 verify, for settlementOf's seatsOf
+const seatProofs = (round, curve) => ({ keys: Array.isArray(round && round.nodes) ? round.nodes : [],
+  verify: curve && typeof curve.verify === 'function' ? (sig, msg, key) => { try { return !!curve.verify(sig, msg, key); } catch { return false; } } : null });
 /** HOW MANY SEATS MUST AGREE ON A ROUND'S SETTLEMENT (kanban #1163): its settlement threshold, never more than the seats asked. */
 const settlementAgreement = (round, nodes = []) => {
   let t = 1; try { t = sharesNeededFor(round); } catch { t = 1; }
@@ -26795,7 +26975,7 @@ async function redeemPayout({ round, roundId, invite, seed, curve, LockClient, s
     if (kept) return { ...JSON.parse(kept), amountMsat: BigInt(JSON.parse(kept).amountMsat), ok: true, final: true, kept: true };
   } catch { /* an unreadable note is no note */ }
   onStep('asking the seats for the round\'s settlement');
-  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
+  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine, ...seatProofs(round, curve) });
   if (!s.ok) return { ok: false, final: false, why: s.why };
   const at = s.moved.payouts.findIndex((p) => isQualifierTo(p, mine));
   if (at < 0) return { ok: false, final: true, txid: s.txid, why: 'the round\'s settlement pays this seed\'s key nothing: no payout to collect' };
@@ -26985,7 +27165,7 @@ async function returnStake({ round, roundId, invite, seed, curve, LockClient, st
   // look already found forfeited by the signer nodes (kanban #593, playtest 2026-10-23: round 8464c5fd never settled, its seats
   // had signed the forfeit of the unfilled order's locks, and the collect asked for a settlement first - nothing was redeemed)
   if (!refused && !forfeited) {
-    const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes) });
+    const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), ...seatProofs(round, curve) });
     if (!s.ok) return { ok: false, final: false, why: s.why };
   }
   let got;
@@ -27911,7 +28091,7 @@ async function lookOwed({ round, roundId, seed, curve, nodes, fetcher = fetch, c
   // (an Arena lock is read with its own call: `fields` says which; a payout output is a stock contract)
   const held = async (txid, outIdx, fields = null) => !client || !!JSON.parse(await lockStatusOf(client, fields, txid, Number(outIdx))).stored;
   // THE SETTLEMENT THE ROUND'S THRESHOLD OF SEATS AGREES ON (kanban #1163): "none" only on their word, never one seat's
-  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine });
+  const s = await settlementOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine, ...seatProofs(round, curve) });
   const contractIdOf = contractIdVia(LockClient || (client && client.constructor));
   let payout;
   const paidNote = note(noteKeyOf(PAYOUT_NOTE, roundId, mine, order));
@@ -33395,11 +33575,12 @@ const MARK_INPUT_WAIT_MS = 10000;
 const FEED_WINDOW = 32;
 // A SEAT STILL TAKING THE HANDOUT IS ASKED AGAIN (kanban #828, 2026-11-02 04:05:41Z, both players of round a5fc9c2f): postHandout goes on once enough seats
 // took it, the entry goes to one seat, and that seat's handout can still be on its way; its 400 ended the join with the stake already locked. 8 s; any other refusal stands.
-async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500 } = {}) {
+// Answers { status, bytes }; each ask is bounded by ENTRY_ANSWER_MS (kanban #3596), and a seat silent past it throws.
+async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500, answerMs = ENTRY_ANSWER_MS } = {}) {
   for (let n = 0; ; n++) {
-    const r = await fetcher(url, { method: 'POST', body });
+    const r = await entryAnswered(fetcher, url, body, answerMs);
     if (r.status === 201) return r;
-    const said = (await r.text()).trim();
+    const said = entryWords(r.bytes);
     // AND A SEAT WHOSE SEATING CERTIFICATE IS STILL ON ITS WAY (the owner's report 2026-11-10 08:54Z, round 0ff01991: the six seats had signed the seating,
     // the certificate reached them after the entry, which came 9 s before the close; the join ended with the stake locked) - asked again the same 8 s
     if (n + 1 >= tries || !/publish the handout first|that round is not seated yet/.test(said)) throw new Error(`the node refused the entry: ${said}`);
@@ -33458,6 +33639,24 @@ const RUN_ENDING_WORDS = Object.freeze({ 1: 'DELIVERED', 2: 'WRECKED', 3: 'MISSE
 // not yet seen voids the entry anyway; two minutes covers a join held to a round that starts later.
 const LOCK_HAND_MS = 120000;
 const LOCK_ACCEPT_HEAD_MS = 3000;   // the lock client's acceptance first; the seats' own check after it
+
+// ONE SEAT'S ANSWER TO POST /entry, BODY INCLUDED, WITHIN ENTRY_ANSWER_MS OR NOT AT ALL (kanban #3596, audit client a7-3-1): measured, one
+// committee seat that took POST /entry and never answered held Client.join for good - joinOn's fetch had no deadline, join awaited every
+// peer, so the stake lock was handed to no seat and the session never opened. A seat silent past the bound did not take the entry; the
+// feed's 'no such entry' path offers it again. The market's submitPick bounds the same door (ENTRY_WAIT_MS).
+const ENTRY_ANSWER_MS = 15000;
+async function entryAnswered(fetcher, url, body, ms = ENTRY_ANSWER_MS) {
+  let timer;
+  const late = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`no answer to the entry within ${ms} ms`)), ms); });
+  try {
+    return await Promise.race([(async () => {
+      const r = await fetcher(url, { method: 'POST', body, signal: AbortSignal.timeout(ms) });
+      const bytes = typeof r.arrayBuffer === 'function' ? new Uint8Array(await r.arrayBuffer()) : new TextEncoder().encode(String(await r.text()));
+      return { status: r.status, bytes };
+    })(), late]);
+  } finally { clearTimeout(timer); }
+}
+const entryWords = (bytes) => new TextDecoder().decode(bytes.subarray(0, 4096)).trim();
 
 const OPENED_ROUNDS = new Map();
 
@@ -33836,7 +34035,7 @@ class Client {
     // and the chip named it because its frozen run had gone furthest.
     this.playerPubkey = entry.playerPubkey;
 
-    const joined = agrees(mine, new Uint8Array(await r.arrayBuffer()), 'entry');
+    const joined = agrees(mine, r.bytes, 'entry');
     // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS beside it (kanban #1897, #1938): what binds the stake and fee lock to this entry and no copy
     // (not waited on: it never throws, and the join's time is the player's - `lockClaimed` holds each seat's answer to come)
     this.lockClaimed = [];
@@ -33847,7 +34046,11 @@ class Client {
     // A node that will not take it is written down, not thrown: this node took
     // the entry, and the run can still be played.
     this.joinedEntry = entry;
-    this.peerJoins = await Promise.all(this.peers.map((base) => this.joinOn(base)));
+    // NOT WAITED ON PAST WHAT THE ROUND NEEDS (kanban #3596): each peer's answer is bounded (ENTRY_ANSWER_MS), and once the home seat and
+    // the peers that took the entry are the `needed` seats of the round's stake lock, join goes on - a peer still answering lands in
+    // `peerJoins` when it does, and the lock hand-off below asks every seat again until each took the lock. Without a stake lock (no
+    // count to go by) every peer's bounded answer is waited for, as before.
+    await this.#joinPeers(this.stakeLock && Number(this.stakeLock.needed) > 0 ? Number(this.stakeLock.needed) : Infinity);
 
     // AND THE STAKE LOCK GOES TO EVERY SIGNER NODE NOW THAT THE ENTRY IS THERE (§23.1
     // step 5, W1b). A signer node verifies it in the federation and only then counts
@@ -33864,6 +34067,22 @@ class Client {
       this.lockHanding = this.#handLocksUntilTaken(mine);
     }
     return joined;
+  }
+
+  #joinPeers(needed) {
+    const peers = this.peers;
+    const joins = peers.map((base) => ({ base, ok: false, why: 'no answer yet', pending: true }));
+    this.peerJoins = joins;
+    if (!peers.length) return Promise.resolve(joins);
+    return new Promise((done) => {
+      let answered = 0, took = 1;   // the home seat took it
+      peers.forEach((base, i) => this.joinOn(base).then((j) => {
+        joins[i] = j;
+        answered++;
+        if (j.ok) took++;
+        if (answered === peers.length || took >= needed) done(joins);
+      }));
+    });
   }
 
   async #handLocksUntilTaken(mine) {
@@ -33960,11 +34179,11 @@ class Client {
   /** Signer nodes this client's entry on one other committee node. */
   async joinOn(base) {
     try {
-      const p = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(this.joinedEntry) });
+      const p = await entryAnswered((...a) => fetch(...a), `${base}/entry`, encodeEntryContract(this.joinedEntry));   // bounded (kanban #3596)
       // and the player's claim on its locks (kanban #1897, #1938)
       if (p.status === 201 && this.stakeLock && typeof this.stakeLock.claimFor === 'function')
         (this.lockClaimed = this.lockClaimed || []).push(postLockClaim({ node: base, entryId: entryId(this.joinedEntry), claimFor: this.stakeLock.claimFor }));
-      return { base, ok: p.status === 201, why: p.status === 201 ? null : (await p.text()).trim() };
+      return { base, ok: p.status === 201, why: p.status === 201 ? null : entryWords(p.bytes) };
     } catch (e) { return { base, ok: false, why: e.message }; }
   }
 
@@ -40106,6 +40325,9 @@ function paidRecordKeys(storage) {
 
 
 
+// the checked census's node keys (hex), the seat keys a host's URLs prove themselves against (kanban #3575, #3577)
+const censusKeyList = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
+
 
 /**
  * THE TERMS A GAME VERSION SELLS ITS ITEMS ON: a version requiring protocol 11 the reserves' - nodes 40 %, the
@@ -40189,8 +40411,17 @@ async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000, 
  * only one is listed): GET /items names a purchase only when two seats do. Answers { keptBy: the first keeping seat in list order or
  * null, kept: how many kept it, last: the last refusal }.
  */
-async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000 }) {
+// TWO SEATS, NOT TWO URLS OF ONE BOX (kanban #3577, audit client-a7-1-4): the 200s were counted per list entry, so a lobby link naming
+// http://liar.test/a and /b (game.nodes keeps both, #3253) was the two keeping seats #2420 asks for - the record was dropped while no honest
+// seat held it, and the paid item never came. The list is grouped into seats (seat-identity.js seatsOf: one host one seat unless each of its
+// URLs proves a distinct key of the checked census - `keys`, default newestCheckedCensus; `verify`, default the page's curve); every URL is
+// still posted to, and a seat keeps the record only when its URLs all said 200 (one that also refused has no vote). `need` counts seats.
+const handVerify = () => { const c = globalThis.ARENA_CURVE; return c && typeof c.verify === 'function' ? (sg, m, k) => { try { return !!c.verify(sg, m, k); } catch { return false; } } : null; };
+async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000, keys = null, verify = null }) {
   const list = (seats || []).slice(0, 64);
+  let groups;
+  try { groups = await seatsOf(list, { keys: keys || censusKeyList(), verify: verify || handVerify(), fetcher: fetch, ms: 15000 }); }
+  catch { groups = list.map((u) => ({ id: u, urls: [u] })); }
   const why = [];
   const kept = await Promise.all(list.map(async (s, i) => {
     try {
@@ -40200,12 +40431,14 @@ async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000 }) {
     } catch (e) { why[i] = `${s}: ${e.message}`; }
     return false;
   }));
-  const n = kept.filter(Boolean).length;
-  const need = Math.min(2, list.length);
+  // (kanban #3577) per seat: kept when every URL of it said 200
+  const keeping = groups.filter((g) => g.urls.every((u) => kept[list.indexOf(u)])).map((g) => g.urls[0]);
+  const n = keeping.length;
+  const need = Math.min(2, groups.length);
   const refusals = why.filter(Boolean);
   const last = !list.length ? 'no seat to hand it to' : refusals.length ? refusals[refusals.length - 1] : 'no seat to hand it to';
-  return { keptBy: list.length && n >= need ? list[kept.indexOf(true)] : null, kept: n,
-    last: n && n < need ? `only ${n} of ${list.length} seats kept it (two must): ${last}` : last };
+  return { keptBy: list.length && n >= need ? keeping[0] : null, kept: n,
+    last: n && n < need ? `only ${n} of ${groups.length} seats kept it (two must): ${last}` : last };
 }
 
 /**
@@ -40335,8 +40568,15 @@ async function resendPaidRecords({ storage, fetch }) {
  */
 // kanban #2802 (audit r21 client-2): GET /items was read whole - one seat's 64 MiB answer was pulled and parsed on the page's only thread
 const OWNED_ITEMS_BYTES_MAX = 4 * 1024 * 1024;
-async function ownedItems({ seats, player, gameName = null, fetch }) {
-  const answers = await Promise.all((seats || []).map(async (s) => {
+// ONE SEAT, ONE ANSWER (kanban #3575, audit client-a7-1-2): every list entry was a seat - a link naming http://liar.test and http://liar.test/
+// gave one box the two answers `need` asks for, and its made-up purchase was signed into the entry (every honest seat refused the join). The
+// list is now grouped into seats (seat-identity.js seatsOf: each source once, one host one seat unless each of its URLs proves a distinct key of
+// the checked census - `keys`, default newestCheckedCensus; `verify` BIP-340), and a seat's answers are one answer, none when they disagree
+const ownedRecordKey = (it) => JSON.stringify([it.id, String(it.itemId), String(it.gameName)]);
+async function ownedItems({ seats, player, gameName = null, fetch, keys = null, verify = null }) {
+  const groups = await seatsOf(seats || [], { keys: keys || censusKeyList(), verify, fetcher: fetch, ms: 15000 });
+  const urls = groups.flatMap((g) => g.urls.map((u) => ({ g, u })));
+  const perUrl = await Promise.all(urls.map(async ({ u: s }) => {
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/items?player=${toHex(player)}${gameName ? `&game=${encodeURIComponent(gameName)}` : ''}`, { signal: AbortSignal.timeout(15000) });
       if (!r.ok) return null;
@@ -40344,6 +40584,11 @@ async function ownedItems({ seats, player, gameName = null, fetch }) {
       return Array.isArray(items) ? items.slice(0, 1000) : [];
     } catch { return null; }
   }));
+  const answers = groups.map((g) => {
+    const said = perUrl.filter((_, i) => urls[i].g === g);
+    // the seat's word: its URLs' lists agree when they name the same records
+    return seatVoice(said, (items) => (items ? JSON.stringify([...new Set(items.filter((it) => it && typeof it.id === 'string').map(ownedRecordKey))].sort()) : null));
+  });
   const answered = answers.filter((a) => a);
   const need = answered.length >= 2 ? 2 : 1;
   const byRecord = new Map();
@@ -40353,7 +40598,7 @@ async function ownedItems({ seats, player, gameName = null, fetch }) {
       if (!it || typeof it.id !== 'string' || seen.has(it.id)) continue;
       if (gameName && it.gameName !== gameName) continue;     // kanban #2421: only the game asked
       seen.add(it.id);
-      const k = JSON.stringify([it.id, String(it.itemId), String(it.gameName)]);
+      const k = ownedRecordKey(it);
       const e = byRecord.get(k);
       if (e) e.n++; else byRecord.set(k, { it, n: 1 });
     }
@@ -40612,6 +40857,7 @@ function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
 
 
 
+
 const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 
@@ -40620,8 +40866,17 @@ const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (
  * only when `needed` agree. With `height` the set is the one in force there (`atHeight`), else at each node's tip (`inForce`). Answers
  * { ok, fees, agreeing, asked, tip, limits, sums, schedule, proposals } - `proposals` of an agreeing node - or { ok: false, why }.
  */
-async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000 } = {}) {
-  const asked = [...new Set((nodes || []).map(feesBaseOf))];
+// ONE SEAT, ONE VOTE (kanban #3576, audit client-a7-1-3): the URLs of the list were the votes, so a link naming the round's five seats plus six
+// paths of one box (http://liar.test/a .. /f) set the round's fees by itself, and every honest seat refused the paid entry built on them. The
+// URLs are grouped into seats (seat-identity.js seatsOf: one host one seat unless each of its URLs proves a distinct key of the checked census -
+// `keys`, default newestCheckedCensus; `verify`, default the page's curve), a seat's answers are one vote (none when they disagree), and
+// `needed` is capped by the seats, not the URLs
+const feesVerify = () => { const c = globalThis.ARENA_CURVE; return c && typeof c.verify === 'function' ? (sg, m, k) => { try { return !!c.verify(sg, m, k); } catch { return false; } } : null; };
+const feesCensusKeys = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
+async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000, keys = null, verify = null } = {}) {
+  const seats = await seatsOf([...new Set((nodes || []).map(feesBaseOf))], { keys: keys || feesCensusKeys(), verify: verify || feesVerify(), fetcher, ms: timeoutMs });
+  const asked = seats.flatMap((s) => s.urls);
+  const seatAt = seats.flatMap((s) => s.urls.map(() => s));
   const q = Number.isInteger(height) && height >= 0 ? `?height=${height}` : '';
   // NOT HELD FOR THE SLOWEST NODE (kanban #625, measured 2026-10-24 20:07Z: an order's fetchFees took 10 s - 13 of 14 nodes agreed at
   // once, the 14th was restarting): once more than half the nodes answered, the rest get COMPARE_GRACE_MS more
@@ -40629,13 +40884,16 @@ async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u, o) =>
   await majorityThenGrace(asked.map(async (b, i) => {
     try { const r = await fetcher(`${b}/fees${q}`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }); got[i] = r.ok ? await r.json() : null; } catch { got[i] = null; }
   }), COMPARE_GRACE_MS);
-  const answers = got.filter((a) => a && (q ? a.atHeight : a.inForce));
+  const setKey = (a) => (a && (q ? a.atHeight : a.inForce) ? JSON.stringify(Object.keys(FEES).map((f) => (q ? a.atHeight : a.inForce)[f])) : null);
+  // (kanban #3576) one answer per seat: the one its URLs agree on
+  const answers = seats.map((s) => seatVoice(got.filter((_, i) => seatAt[i] === s), setKey)).filter(Boolean);
   const by = new Map();
-  for (const a of answers) { const set = q ? a.atHeight : a.inForce; const k = JSON.stringify(Object.keys(FEES).map((f) => set[f])); by.set(k, [...(by.get(k) || []), a]); }
+  for (const a of answers) { const k = setKey(a); by.set(k, [...(by.get(k) || []), a]); }
   const best = [...by.values()].sort((x, y) => y.length - x.length)[0] || [];
-  if (best.length < Math.min(needed, asked.length) || !best.length) return { ok: false, why: `only ${best.length} of ${asked.length} nodes agree on the fees${q ? ` at height ${height}` : ''}, and ${Math.min(needed, asked.length)} must`, asked: asked.length };
+  const need = Math.min(needed, seats.length);
+  if (best.length < need || !best.length) return { ok: false, why: `only ${best.length} of ${seats.length} nodes agree on the fees${q ? ` at height ${height}` : ''}, and ${need} must`, asked: seats.length };
   const a = best[0];
-  return { ok: true, fees: Object.freeze({ ...(q ? a.atHeight : a.inForce) }), agreeing: best.length, asked: asked.length, tip: a.tip, limits: a.limits, sums: a.sums,
+  return { ok: true, fees: Object.freeze({ ...(q ? a.atHeight : a.inForce) }), agreeing: best.length, asked: seats.length, tip: a.tip, limits: a.limits, sums: a.sums,
     schedule: a.schedule, proposals: a.proposals || [] };
 }
 
@@ -48011,6 +48269,13 @@ const h2hFromHex = (h) => Uint8Array.from(String(h).match(/../g) || [], (x) => p
 const H2H_VOID_SLACK_MS = 1000;
 const lockSetThreshold = (n) => { try { return receiptsNeeded(n); } catch { return Math.floor(n / 2) + 1; } };
 
+// HOW MANY LISTED ADDRESSES MUST SAY A THING SO THAT `share` OF THE COMMITTEE'S n SEATS ARE AMONG THEM (kanban #3593): at most n of the listed
+// addresses are seats, so the addresses beyond n - names or paths of one box - are added to the share. The per-host count (#3307) stays beside it:
+// paths of one box are one host, names of one box are addresses beyond n. Without a committee: 0 (the per-host count alone, as before)
+const addressesForShare = (listed, committee, share) => {
+  const n = committee && committee.length ? committee.length : 0;
+  return n ? Math.min(listed, Math.max(0, listed - n) + share) : 0;
+};
 /** How long one ask of the lock set waits for the seats still out once a majority answered (kanban #3025). */
 const H2H_STRAGGLER_MS = 500;
 async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = null, entryCloseMs, fetcher = fetch, timeoutMs = H2H_SEAT_ASK_MS, stragglerMs = H2H_STRAGGLER_MS }) {
@@ -48031,7 +48296,12 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
   // BY HOST, NOT BY ADDRESS (kanban #3307, audit h2h-a5-2-1): a join link naming the seats plus nine paths of one box made the box's instant answers a
   // majority of the listed addresses, so every poll ended H2H_STRAGGLER_MS after them and an honest seat slower than that was never heard. The
   // straggler rule starts once a majority of HOSTS answered (each host one vote, as #2709 counts them)
+  // A MAJORITY OF THE COMMITTEE, NOT OF THE NAMES (kanban #3593, audit h2h-a7-3-1, the gap in #3307): a hostname costs nothing, so one box under nine
+  // DNS names was nine hosts, its instant answers a majority of them, and the cut again shut out honest seats answering in 600 ms. With a committee
+  // of n seats the cut also waits until so many addresses answered that a majority of the n is among them (addressesForShare)
   const answeredHosts = new Set(), hostMajority = Math.floor(hosts.length / 2) + 1;
+  const addressMajority = addressesForShare(listed.length, committee, committee && committee.length ? Math.floor(committee.length / 2) + 1 : 0);
+  let answeredAddresses = 0;
   await new Promise((done) => {
     let left = listed.length;
     if (!left) { done(); return; }
@@ -48045,10 +48315,10 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
         });
       } catch { said[i] = null; }
       if (!early) { const st = stands(said[i]); if (st) { early = { entries: st.entries, atMs: st.atMs }; done(); } }
-      answeredHosts.add(hostOf[i]);
+      answeredHosts.add(hostOf[i]); answeredAddresses++;
       if (--left === 0) done();
       // a majority of the seats' hosts answered: the rest get H2H_STRAGGLER_MS more, then this ask ends with what came (the next poll asks all again)
-      else if (!straggle && answeredHosts.size >= hostMajority) straggle = setTimeout(done, stragglerMs);
+      else if (!straggle && answeredHosts.size >= hostMajority && answeredAddresses >= addressMajority) straggle = setTimeout(done, stragglerMs);
     });
   });
   if (straggle) clearTimeout(straggle);
@@ -48079,7 +48349,9 @@ async function lockSetOfSeats({ roundIdHex, nodes, committee = null, verify = nu
   const voidOf = new Map();
   for (const [i, x] of said.entries()) if (x && typeof x === 'object') { if (!voidOf.has(hostOf[i])) voidOf.set(hostOf[i], []); voidOf.get(hostOf[i]).push(x.void === true ? 'void' : 'not'); }
   const voids = [...voidOf.values()].filter((v) => hostWord(v) === 'void').length;
-  return { required: true, certified, void: !certified && voids > 0, voids: certified ? 0 : voids };
+  // kanban #3593: and how many addresses said it, for the committee's share (addressesForShare)
+  const voidAddresses = said.filter((x) => x && typeof x === 'object' && x.void === true).length;
+  return { required: true, certified, void: !certified && voids > 0, voids: certified ? 0 : voids, voidAddresses: certified ? 0 : voidAddresses };
 }
 
 /**
@@ -48093,9 +48365,28 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
   // page gave up at close + 9 s and showed "Not revealed - you lose" while the opponent revealed): a seat's VOID after the window still ends the
   // wait at once; with none, a late certificate opens the reveal up to close + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS
   const giveUpAt = Number(entryCloseMs) + LOCK_SET_WINDOW_MS + H2H_REVEAL_WAIT_MS;
+  // the reveal to every listed seat (each address once, seatsByHost #2709), posted again every poll to each whose answer is not final, until
+  // each gave a final one or the reveal's deadline passed (#3015, #3154, #3204 below)
+  const revealUntilFinal = async () => {
+    const { listed } = seatsByHost(nodes);
+    let seats = await revealMove({ entryIdHex, move, salt, nodes: listed, identity, fetcher, timeoutMs });
+    const askAgain = (x) => x.status === 0 || x.status === 404 || x.status === 408 || x.status === 425 || x.status === 429 || x.status >= 500
+      || (x.status === 409 && /not certified yet|ask again|try again/i.test(String(x.why || '')));
+    while (now() <= giveUpAt) {
+      const again = seats.filter(askAgain);
+      if (!again.length) break;
+      await sleep(H2H_LOCK_SET_POLL_MS);
+      const more = await revealMove({ entryIdHex, move, salt, nodes: again.map((x) => x.node), identity, fetcher, timeoutMs });
+      seats = seats.map((x) => more.find((m) => m.node === x.node) || x);
+    }
+    return seats;
+  };
   for (;;) {
     const got = await lockSetOfSeats({ roundIdHex, nodes, committee, verify, entryCloseMs, fetcher, timeoutMs });
-    if (got.required === false) return { seats: await revealMove({ entryIdHex, move, salt, nodes, identity, fetcher, timeoutMs }), certified: null };
+    // "NOT REQUIRED" IS ASKED AGAIN TOO (kanban #3593, audit h2h-a7-3-1 (b)): it is any address's unsigned word, and one box under nine DNS names
+    // saying it made the page post its reveal once and return - the honest seats' "not certified yet - ask again shortly" was never followed up
+    // (FORFEIT). The reveal is now posted to every listed seat until each gave a final answer, as a certified one is (#3015, #3204)
+    if (got.required === false) return { seats: await revealUntilFinal(), certified: null };
     if (got.certified) {
       if (!got.certified.entries.includes(String(entryIdHex))) return { seats: [], notCertified: true, why: 'your entry is not in the round\'s certified lock set: it is not played, its stake comes back' };
       // NOT DONE WHILE THE SEATS ASK AGAIN (kanban #3015, audit h2h r1-1, measured 2026-11-19: a seat one signature ahead served its certificate
@@ -48117,18 +48408,7 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
       // so it is no reason to stop asking a seat whose answer is not final: every listed seat (each address once, seatsByHost #2709) is posted
       // again every poll until each one has given a final answer (a reveal taken, or a refusal that will not change) or the reveal's deadline
       // passes.
-      const { listed } = seatsByHost(nodes);
-      let seats = await revealMove({ entryIdHex, move, salt, nodes: listed, identity, fetcher, timeoutMs });
-      const askAgain = (x) => x.status === 0 || x.status === 404 || x.status === 408 || x.status === 425 || x.status === 429 || x.status >= 500
-        || (x.status === 409 && /not certified yet|ask again|try again/i.test(String(x.why || '')));
-      while (now() <= giveUpAt) {
-        const again = seats.filter(askAgain);
-        if (!again.length) break;
-        await sleep(H2H_LOCK_SET_POLL_MS);
-        const more = await revealMove({ entryIdHex, move, salt, nodes: again.map((x) => x.node), identity, fetcher, timeoutMs });
-        seats = seats.map((x) => more.find((m) => m.node === x.node) || x);
-      }
-      return { seats, certified: got.certified };
+      return { seats: await revealUntilFinal(), certified: got.certified };
     }
     // ONE SEAT'S VOID IS NOT FINAL (kanban #2798, #1489 r21-h2h-1): `void` is any seat's unsigned word, and a seat that said it on the first
     // poll - while the honest seats were still certifying - made the page skip its reveal and forfeit a round the others played. Before the
@@ -48140,9 +48420,12 @@ async function revealWhenCertified({ roundIdHex, entryIdHex, move, salt, nodes, 
     // point (plus a second of clock slack) and only when more seats said it than a committee's dishonest share can (n - threshold + 1);
     // else the page keeps asking until its own deadline
     const n = committee && committee.length ? committee.length : seatsByHost(nodes).listed.length;
-    const voidsNeeded = Math.max(1, Math.min(seatsByHost(nodes).hosts.length, n - lockSetThreshold(n) + 1));   // kanban #3307: voids are counted per host
+    const { listed, hosts } = seatsByHost(nodes);
+    const voidsNeeded = Math.max(1, Math.min(hosts.length, n - lockSetThreshold(n) + 1));   // kanban #3307: voids are counted per host
+    // kanban #3593: and by address, the addresses beyond the committee's n added - nine DNS names of one box are nine addresses beyond the seats
+    const voidAddressesNeeded = addressesForShare(listed.length, committee, n - lockSetThreshold(n) + 1);
     const windowOver = now() > Number(entryCloseMs) + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS + H2H_VOID_SLACK_MS;
-    if ((got.void && got.voids >= voidsNeeded && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
+    if ((got.void && got.voids >= voidsNeeded && (got.voidAddresses || 0) >= voidAddressesNeeded && windowOver) || now() > giveUpAt) return { seats: [], void: true, why: 'the round\'s lock set was not certified by its close + 3 s: the round is VOID, every stake comes back' };
     if (onWait) { try { onWait('certifying'); } catch { /* the page's own */ } }
     await sleep(H2H_LOCK_SET_POLL_MS);
   }
@@ -48481,6 +48764,7 @@ async function checkedGameInfoOfTile(tile, verifyEd25519) {
 // DETERMINISTIC AND WITHOUT A DOM: the same answer, title and viewer give the same rows, so a test and the page agree.
 // The one function that talks to the network, fetchSeason, fetchSeasonSnapshot, is handed its fetch.
 
+
 /** The windows the page offers (protocol season.js takes 1 to 90 whole days; the seat keeps each one 30 s). */
 const SEASON_DAYS_CHOICES = [7, 30, 90];
 /** How often an open season view asks again: the seat keeps a season 30 s (SEASON_KEEP_MS), so sooner reads the same. */
@@ -48630,15 +48914,20 @@ async function fetchSeasonSnapshot({ url, game, days, title = null, viewer = [],
 /** How long the season race waits past its first answer for the seats it asked, to confirm each row's key (kanban #3308). */
 const SEASON_CONFIRM_MS = 1500;
 /** The first view, each row's key the one most answering seats give under its name (kanban #3308); unconfirmed rows marked. */
-function confirmRows(views) {
+// ONE SEAT, ONE CONFIRMATION (kanban #3589, audit client-a7-2-2): the views were counted per answering URL, so two paths of one box
+// (https://liar.example/a and /b) were the "second seat" #3308 waits for, and confirmed the box's own key under the leader's name. `seatOf(view)`
+// names the seat a view came from (fetchSeason: seat-identity.js seatsOf); a seat's views count once, and not at all when they disagree
+function confirmRows(views, seatOf = (v) => v.seat) {
   const first = views[0];
   if (!first || !Array.isArray(first.rows)) return first;
   const rows = first.rows.map((r) => {
-    const count = new Map();
+    const bySeat = new Map();
     for (const v of views) {
       const o = (v.rows || []).find((x) => x && (r.name ? x.name === r.name : x.player === r.player));   // a row with no name: by its key
-      if (o && typeof o.player === 'string') count.set(o.player, (count.get(o.player) || 0) + 1);
+      if (o && typeof o.player === 'string') { const k = seatOf(v); if (!bySeat.has(k)) bySeat.set(k, new Set()); bySeat.get(k).add(o.player); }
     }
+    const count = new Map();
+    for (const said of bySeat.values()) if (said.size === 1) { const p = [...said][0]; count.set(p, (count.get(p) || 0) + 1); }
     const ranked = [...count].sort((a, b) => b[1] - a[1]);
     const top = ranked[0];
     if (top && top[1] >= 2 && (ranked.length === 1 || top[1] > ranked[1][1])) return top[0] === r.player ? r : { ...r, player: top[0] };
@@ -48646,7 +48935,10 @@ function confirmRows(views) {
   });
   return { ...first, rows };
 }
-async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout, race = 1 } = {}) {
+// `keys`: the network's seat keys (hex; or a function answering them, the page's ARENA_CENSUS_KEYS) and `verify` (BIP-340): a host's URLs are
+// separate seats for the confirmation only when each proves one of them (kanban #3589); without them each host is one seat
+async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch, via = (u) => u, answerMs = SEASON_ANSWER_MS, timeout, race = 1,
+  keys = null, verify = null } = {}) {
   if (!Number.isInteger(days) || days < 1 || days > 90)
     return { ok: false, why: 'a season is 1 to 90 whole days', tried: [] };
   if (!game) return { ok: false, why: 'a season is asked for by a game', tried: [] };
@@ -48664,9 +48956,25 @@ async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch
   // a fast seat put its own key under "Satoshi" and every zap's e-cash went to it. The race now waits up to SEASON_CONFIRM_MS past the first
   // answer for the others it asked; a row's key is the one most of the answering seats give under its name (two at least), and a row whose key
   // no second seat confirms is marked keyUnconfirmed (the page takes no zap to it)
+  // (kanban #3589) which seat each URL is, found beside the race: the URLs of one host are one seat unless each proves a seat key
+  let grouping = null;
+  const seatOfUrl = async () => {
+    if (!grouping) grouping = (async () => {
+      // the keys are asked for only where a host has several URLs (a census check can take a while; one URL per host needs none)
+      const several = new Set(seats.map(hostOf)).size < seats.length;
+      const ks = !several ? [] : typeof keys === 'function' ? await keys() : keys;
+      const groups = await seatsOf(seats, { keys: Array.isArray(ks) ? ks : [], verify, fetcher: (u, o) => fetch(via(u), o) });
+      const m = new Map(); for (const g of groups) for (const u of g.urls) m.set(u, g.id);
+      return m;
+    })().catch(() => new Map());
+    const m = await grouping;
+    return (v) => m.get(v.seat) || `host:${hostOf(v.seat)}`;
+  };
+  const confirmed = async (views) => confirmRows(views, await seatOfUrl());
+  seatOfUrl().catch(() => {});   // started with the race, so it is ready when the first answers are
   const raced = (batch) => new Promise((resolve, reject) => {
     const views = []; let left = batch.length, timer = null, over = false;
-    const finish = () => { if (over) return; over = true; if (timer) clearTimeout(timer); if (!views.length) reject(new Error('none')); else resolve(confirmRows(views)); };
+    const finish = () => { if (over) return; over = true; if (timer) clearTimeout(timer); if (!views.length) reject(new Error('none')); else confirmed(views).then(resolve, reject); };
     for (const seat of batch) ask(seat).then((v) => { if (over) return; views.push(v); if (!timer) timer = setTimeout(finish, SEASON_CONFIRM_MS); },
       (e) => { tried.push({ seat, why: e && e.message ? e.message : String(e) }); })
       .finally(() => { if (--left === 0) finish(); });
@@ -48681,7 +48989,8 @@ async function fetchSeason({ nodes, game, days, title = null, viewer = [], fetch
   const step = race > 1 ? race : 1;
   for (let i = front.length; i < seats.length; i += step) {
     const batch = seats.slice(i, i + step);
-    if (batch.length === 1) { try { return await ask(batch[0]); } catch (e) { tried.push({ seat: batch[0], why: e && e.message ? e.message : String(e) }); } continue; }
+    // A LONE VIEW CONFIRMS NOTHING (kanban #3589): a batch of one seat was returned whole, without confirmRows - every row's key that seat's word
+    if (batch.length === 1) { try { return await confirmed([await ask(batch[0])]); } catch (e) { tried.push({ seat: batch[0], why: e && e.message ? e.message : String(e) }); } continue; }
     try { return await raced(batch); } catch { /* the next ones */ }
   }
   return { ok: false, why: tried.length ? 'no node answered the season just now' : 'no node to ask', tried };
