@@ -39589,8 +39589,8 @@ function lobbyLine(row, nowMs = Date.now(), { loads = null, census = null, tooOl
   const when = row.phase === 'pending'
     ? `committee: pending, entry opens in ${lobbyClock(row.committeeTimeMs - nowMs)}`
     : `entry open, closes in ${lobbyClock(row.entryCloseMs - nowMs)}`;
-  // "N signer nodes agree (M needed)", never "7 of 5" (2026-10-04 11:25Z)
-  const agree = `${row.signerNodesAgree} signer ${row.signerNodesAgree === 1 ? 'node agrees' : 'nodes agree'} (${row.needed} needed)`
+  // "N seats agree (M needed)", never "7 of 5" (2026-10-04 11:25Z; seats, not signer nodes - kanban #3538)
+  const agree = `${row.signerNodesAgree} ${row.signerNodesAgree === 1 ? 'seat agrees' : 'seats agree'} (${row.needed} needed)`
     + (row.phase === 'open' && !row.joinable ? ` - waiting for ${row.needed - row.signerNodesAgree} more` : '');
   const counts = row.said.map((c) => `${c.joined} joined, ${c.playing} playing (says ${c.node})`).join('; ');
   const who = row.names && row.names.length ? ` · players: ${row.names.map((n) => n.name).join(', ')}` : '';
