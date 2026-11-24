@@ -759,8 +759,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             // `pow` (kanban #2847): on in the relay the host runs (tools/nostr-relay.mjs, ARENA_RELAY_POW=0 turns it off); a library caller asks for it
             // SEEN IN THE POOL IT WRITES TO (kanban #2988, audit nostr r1-2): seen_authors knows every key that ever wrote anything, so fresh keys
             // that each posted one cheap seed (the seed pool nearly empty, no work asked) then wrote unmined into a nearly full state pool and
-            // evicted newcomers' profiles. Outside the seed pool an author is "seen" only while it holds an event in that pool
-            const seenHere = seed ? !!seenAuthor.get(e.pubkey) : !!holderUse.get(e.pubkey, poolOf(e.kind));
+            // evicted newcomers' profiles. An author is "seen" only while it holds an event in that pool. kanban #3600 (audit nostr a7-3-2): the seed
+            // pool too: one free kind 0 into the state pool made a fresh key "seen", and its unmined seed then filled the priced last 10 % of the seed
+            // pool. A player replacing their own seed still holds one; otherwise only standing (hasStanding, #3377) waives the work
+            const seenHere = !!holderUse.get(e.pubkey, poolOf(e.kind));
             if (pow && !seenHere && !hasStanding(e.pubkey, ids)) {
               const fill = Math.max(before.n / (seed ? lim.seedEvents : lim.totalEvents), before.b / (seed ? lim.seedBytes : lim.totalBytes));
               const need = powRequired(fill, lim);   // lim.powFill / powBase / powMax: the defaults above unless a test sets them
