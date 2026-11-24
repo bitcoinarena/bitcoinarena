@@ -67,8 +67,10 @@ export function bitcoindRpc({ url, cookiePath, fetcher = fetch, readCookie } = {
     try { return JSON.parse(text); }
     catch { throw new Error(`bitcoind answered something that is not json: ${text.slice(0, 200)}`); }
   };
-  const call = async function call(method, params = []) {
-    const body = await post({ jsonrpc: '1.0', id: 'arena', method, params }, method);
+  // `label` names the reader in the request's id (kanban #3541: a test's bitcoind tells the departure scan's reads from the chain view's);
+  // bitcoind echoes the id and reads nothing else of it
+  const call = async function call(method, params = [], { label = 'arena' } = {}) {
+    const body = await post({ jsonrpc: '1.0', id: label, method, params }, method);
     if (body.error) throw new Error(`bitcoind refused ${method}: ${body.error.message || body.error}`);
     return body.result;
   };

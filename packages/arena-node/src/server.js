@@ -3818,7 +3818,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // AND EVERY NOTICE ANCHORED ON THIS SEAT'S CHAIN (kanban #2612, feedback #041): the anchor carries the notice, so the seat reads it at
   // the anchor's block and the federation sees it from there - a guardian cannot keep it back until its period is over
   const departureChain = ballot && typeof ballot.tipHeight === 'function' && typeof ballot.blockHashAt === 'function' && typeof ballot.departuresAt === 'function'
-    ? { tipHeight: ballot.tipHeight, blockHashAt: ballot.blockHashAt, departuresAt: ballot.departuresAt } : null;
+    ? { tipHeight: ballot.tipHeight, blockHashAt: ballot.departureHashAt || ballot.blockHashAt, departuresAt: ballot.departuresAt } : null;
   let departureScanning = false;
   const scanDepartureChain = async () => {
     if (!departureChain || departureScanning) return;

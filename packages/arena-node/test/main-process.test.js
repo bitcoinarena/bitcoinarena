@@ -177,7 +177,7 @@ async function fakeBitcoind(view, cookie) {
     return res.end(JSON.stringify(answerOne(parsed)));
   }); });
   function answerOne({ id, method, params = [] }) {
-    calls.push({ method, params, authed: true, atMs: Date.now() });
+    calls.push({ method, params, id, authed: true, atMs: Date.now() });   // `id`: the reader's label (kanban #3541: 'departure' for the anchor scan)
     if ((method === 'getblock' && fake.failBlocks) || (method === 'getblockheader' && fake.failHeaders)) {
       calls[calls.length - 1].failed = true;
       return { id, result: null, error: { code: -1, message: `the fake fails ${method === 'getblock' ? 'block' : 'header'} reads` } };
@@ -346,7 +346,10 @@ async function failedReads() {
   const view = f.build();
   const btc = await fakeBitcoind(view, '__cookie__:s3cret');
   btc.failBlocks = true;
-  const child = startMain(f.store, f.env(btc));
+  // THE DEPARTURE-ANCHOR SCAN OFF (kanban #3541): it reads blocks of the same bitcoind 30 s after the start and every 60 s - its reads
+  // are not the chain view's, whose pause this counts (it saw 110 of them in its 60 s); the scan's own test is (f). AND THE DAY'S DUTY POSTER
+  // OFF: it reads its census past another view's failed read by design (hold: false, kanban #702) - with GET /pending's 12, 49 of the 110
+  const child = startMain(f.store, { ...f.env(btc), ARENA_DEPARTURE_SCAN: '0', ARENA_DUTY_POST: 'off' });
   try {
     const port = await child.up;
     await postRound(port, f.contract);
@@ -368,7 +371,8 @@ async function failedReads() {
       throw new Error(`${e.message}; getblock after the failure at s: ${rd.slice(0, 5).join(',')}..${rd.slice(-3).join(',')} (${rd.length}); methods after: ${[...new Set(btc.calls.filter((c) => c.atMs > failedAt + 60000).map((c) => c.method))].join(',')}; out: ${child.out.trim().split('\n').slice(-3).join(' | ')}; err: ${child.err.trim().split('\n').slice(-3).join(' | ')}`);
     }
     const r = await randomness(port, f.rid);
-    const reads = btc.calls.filter((c) => c.method === 'getblock').slice(firstTry);
+    // GET /pending's background read of the last 12 blocks is not the view's either: its reads carry the label 'pending' (kanban #3541)
+    const reads = btc.calls.filter((c) => c.method === 'getblock').slice(firstTry).filter((c) => c.id !== 'pending');
     const inside = reads.filter((c) => c.atMs < failedAt + 59000);
     assert.equal(inside.length, 0, `no block read within 60 s of the failure (${inside.length})`);
     const nextRead = reads.length ? reads[0].atMs - failedAt : null;
@@ -379,6 +383,7 @@ async function failedReads() {
     const tookMs = nextRead;
     assert.ok(reads.filter((c) => c.atMs >= failedAt + 59000).length >= f.CENSUS + 1, 'the good read: the whole view');
     void assignedBy;
+    assert.equal(btc.calls.filter((c) => c.id === 'departure').length, 0, 'the scan is off: no departure read');
     child.kill('SIGTERM');                         // a clean exit writes the process's V8 coverage
     assert.equal((await child.exited).code, 0);
     return { tookMs, assignedBy };
@@ -390,7 +395,8 @@ async function reReadFails() {
   const f = chainFixture('main-reread-fail-', { committeePast: true });
   const full = f.build();
   const btc = await fakeBitcoind(f.build({ length: 34 }), '__cookie__:s3cret');
-  const child = startMain(f.store, f.env(btc));
+  // the departure-anchor scan off, as (c): its pass from height 0 is not the view's re-read (kanban #3541)
+  const child = startMain(f.store, { ...f.env(btc), ARENA_DEPARTURE_SCAN: '0' });
   try {
     const port = await child.up;
     await until('POST /round answers 202', 20000, async () => (await postRound(port, f.contract)).status === 202);
@@ -408,11 +414,36 @@ async function reReadFails() {
     assert.ok(tookMs >= 8000, `the next look came ${tookMs} ms after the failed read (VIEW_REREAD_MS 10 s)`);
     const after = heightsRead(btc, full, healedAt);
     assert.ok(after.length > 0 && after.every((h) => h >= 34), `read on from 34: ${after.join(',')}`);
+    assert.equal(btc.calls.filter((c) => c.id === 'departure').length, 0, 'the scan is off: no departure read');
     const r = await randomness(port, f.rid);
     assert.deepEqual([r.status, r.height, r.hash], [200, '36', toHex(f.named(full).hash)]);
     child.kill('SIGTERM');                         // a clean exit writes the process's V8 coverage
     assert.equal((await child.exited).code, 0);
     return { tookMs };
+  } finally { child.kill('SIGKILL'); await btc.close(); }
+}
+
+// (f) THE DEPARTURE-ANCHOR SCAN, ON BY DEFAULT (kanban #2612, #3541): its reads carry the label 'departure' (the request id), the chain
+// view's never do, and one pass reads at most 64 blocks - on a 100-block chain the first pass (30 s after the start) reads 0..63, each once
+async function departureScan() {
+  const f = chainFixture('main-departure-');
+  const view = f.build({ length: 100 });
+  const btc = await fakeBitcoind(view, '__cookie__:s3cret');
+  const child = startMain(f.store, f.env(btc));
+  try {
+    await child.up;
+    const startedAt = Date.now();
+    const first = await until('the scan reads', 45000, async () => btc.calls.find((c) => c.id === 'departure'));
+    assert.ok(first.atMs - startedAt >= 25000, `the first pass came ${first.atMs - startedAt} ms after the start (30 s)`);
+    await new Promise((r) => setTimeout(r, 4000));
+    const scan = btc.calls.filter((c) => c.id === 'departure');
+    assert.deepEqual([...new Set(scan.map((c) => c.method))].sort(), ['getblock', 'getblockhash'], 'the scan reads blocks and their hashes');
+    const blocks = scan.filter((c) => c.method === 'getblock').map((c) => byHashHeight(view, c.params[0]));
+    assert.deepEqual(blocks, Array.from({ length: 64 }, (_, h) => h), 'one pass: 64 blocks at most, from height 0, each once');
+    assert.ok(btc.calls.filter((c) => c.id !== 'departure' && c.method === 'getblock').every((c) => typeof c.id === 'number' || c.id === 'arena' || c.id === 'pending'),
+      'no other reader carries the label (the view\'s: \'arena\' or a batch\'s number; GET /pending\'s: \'pending\')');
+    child.kill('SIGTERM');
+    assert.equal((await child.exited).code, 0);
   } finally { child.kill('SIGKILL'); await btc.close(); }
 }
 
@@ -461,6 +492,7 @@ test('main.js as the units run it', { concurrency: true }, async (t) => {
     t.test('(c) a view that did not read: one "did not read" line, no read within 60 s, then a good read and the round taken', async () => { const x = await failedReads(); took.fail = x.tookMs; took.failBy = x.assignedBy; }),
     t.test('(d) a re-read that fails partway: the node up, nothing assigned from the half read, read on and assigned at the next look', async () => { took.reread = (await reReadFails()).tookMs; }),
     t.test('(e) a beacon refresh that fails: /randomness 409 "no randomness yet", the node up; healed, block 36 named', refreshFails),
+    t.test('(f) the departure-anchor scan: its reads labelled \'departure\', 64 blocks at most a pass', departureScan),
   ]);
   t.diagnostic(`grow: the beacon named ${took.grow} ms after the chain grew; failed read: the next read ${took.fail} ms after the failure, then assigned by ${took.failBy}; failed re-read: assigned ${took.reread} ms after it`);
 });
