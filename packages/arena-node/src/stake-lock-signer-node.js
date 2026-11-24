@@ -328,7 +328,8 @@ function otherStakedUnderKey(round, entry, entryIdBytes, kind, { yieldNow = fals
 }
 
 // whether a held entry's locks could still be let go (round.yieldEntryLocks' conditions, read without writing)
-// kanban #3369: whether another seat of the round answered that it holds this entry staked (namersAtPeers' `staked`)
+// kanban #3369: whether other seats of the round answered that they hold this entry staked (namersAtPeers' `staked`, which server.js sets
+// only when f + 1 distinct seats of the round say so - never one seat's unsigned word, kanban #3566)
 const stakedAtPeer = (namers, entryIdBytes) => (namers || []).some((p) => p && p.staked === true && p.entryId && Buffer.from(p.entryId).equals(Buffer.from(entryIdBytes)));
 function yieldable(round, entryIdBytes, { peerStakedLower = false } = {}) {
   const outs = [round.stakeLock(entryIdBytes), round.feeLock ? round.feeLock(entryIdBytes) : null].filter(Boolean).map((l) => String(l.outpoint));

@@ -7070,7 +7070,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return { entryId: new Uint8Array(id), joinedMs: Number(body.joinedMs), entry: e, claimed, staked: body.staked === true };   // kanban #3369
       } catch { return null; }
     }));
-    return said.filter(Boolean);
+    // `staked` NOT ON ONE SEAT'S WORD (kanban #3566, audit gossip r1-1): a peer's `staked` is unsigned JSON, and one colluding seat that answered
+    // `staked: true` for a stranger's lower entry under a head-to-head player's key made every honest seat let the player's stake go for it
+    // (peerStakedLower skips the #3320 no-receipts rule). An entry now counts as staked elsewhere only when as many distinct seats of the round
+    // as can be faulty, plus one, say so (as #2680 for GET /outcome, #2843 for /cancels): n - threshold + 1 - 3 of a 7-seat committee, 1 of a
+    // 2-seat one, which tolerates none. The #3369 crossed locks still meet: when fewer seats than that took the lower entry first, at least a
+    // threshold of seats hold the higher one, and the round settles on it.
+    const n = peers.length + 1;
+    let faulty; try { faulty = n - roundThreshold(n); } catch { faulty = Math.floor((n - 1) / 3); }
+    const need = Math.max(1, faulty + 1);
+    const stakedBy = new Map();   // entry id -> how many distinct peers (peers are distinct endpoints above) said they hold it staked
+    for (const p of said) if (p && p.staked) { const k = toHex(p.entryId); stakedBy.set(k, (stakedBy.get(k) || 0) + 1); }
+    return said.filter(Boolean).map((p) => ({ ...p, staked: p.staked && (stakedBy.get(toHex(p.entryId)) || 0) >= need }));
   };
   // `atMs` (kanban #1805): the time the door (POST /lock, POST /fee-lock) checked the round's lock close, before any await; kept as the lock's
   // verified_ms. A repair from peers and a replayed order pass none: their rows carry the time they are written (or the vouched time, keepLockTimes).
