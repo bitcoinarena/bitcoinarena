@@ -23,6 +23,8 @@ import { entryItemDigest } from '../../arena-protocol/src/contracts.js';
 import { ITEMS_VERSION, RESERVES_VERSION } from '../../arena-protocol/src/constants.js';
 import { newestCheckedCensus } from './committee.js';
 import { seatsOf, seatVoice } from './seat-identity.js';
+// the checked census's node keys (hex), the seat keys a host's URLs prove themselves against (kanban #3575, #3577)
+const censusKeyList = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
 import { PAID_PURCHASE_PREFIX, PAID_GIFT_PREFIX, paidRecordGet, paidRecordPut, paidRecordPutIf, paidRecordFind, paidRecordWallet, paidRecordDropIf, paidRecordMark, paidRecordKeys } from './paid-records.js';
 
 /**
@@ -107,8 +109,17 @@ export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 
  * only one is listed): GET /items names a purchase only when two seats do. Answers { keptBy: the first keeping seat in list order or
  * null, kept: how many kept it, last: the last refusal }.
  */
-export async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000 }) {
+// TWO SEATS, NOT TWO URLS OF ONE BOX (kanban #3577, audit client-a7-1-4): the 200s were counted per list entry, so a lobby link naming
+// http://liar.test/a and /b (game.nodes keeps both, #3253) was the two keeping seats #2420 asks for - the record was dropped while no honest
+// seat held it, and the paid item never came. The list is grouped into seats (seat-identity.js seatsOf: one host one seat unless each of its
+// URLs proves a distinct key of the checked census - `keys`, default newestCheckedCensus; `verify`, default the page's curve); every URL is
+// still posted to, and a seat keeps the record only when its URLs all said 200 (one that also refused has no vote). `need` counts seats.
+const handVerify = () => { const c = globalThis.ARENA_CURVE; return c && typeof c.verify === 'function' ? (sg, m, k) => { try { return !!c.verify(sg, m, k); } catch { return false; } } : null; };
+export async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000, keys = null, verify = null }) {
   const list = (seats || []).slice(0, 64);
+  let groups;
+  try { groups = await seatsOf(list, { keys: keys || censusKeyList(), verify: verify || handVerify(), fetcher: fetch, ms: 15000 }); }
+  catch { groups = list.map((u) => ({ id: u, urls: [u] })); }
   const why = [];
   const kept = await Promise.all(list.map(async (s, i) => {
     try {
@@ -118,12 +129,14 @@ export async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000 
     } catch (e) { why[i] = `${s}: ${e.message}`; }
     return false;
   }));
-  const n = kept.filter(Boolean).length;
-  const need = Math.min(2, list.length);
+  // (kanban #3577) per seat: kept when every URL of it said 200
+  const keeping = groups.filter((g) => g.urls.every((u) => kept[list.indexOf(u)])).map((g) => g.urls[0]);
+  const n = keeping.length;
+  const need = Math.min(2, groups.length);
   const refusals = why.filter(Boolean);
   const last = !list.length ? 'no seat to hand it to' : refusals.length ? refusals[refusals.length - 1] : 'no seat to hand it to';
-  return { keptBy: list.length && n >= need ? list[kept.indexOf(true)] : null, kept: n,
-    last: n && n < need ? `only ${n} of ${list.length} seats kept it (two must): ${last}` : last };
+  return { keptBy: list.length && n >= need ? keeping[0] : null, kept: n,
+    last: n && n < need ? `only ${n} of ${groups.length} seats kept it (two must): ${last}` : last };
 }
 
 /**
@@ -257,7 +270,6 @@ export const OWNED_ITEMS_BYTES_MAX = 4 * 1024 * 1024;
 // gave one box the two answers `need` asks for, and its made-up purchase was signed into the entry (every honest seat refused the join). The
 // list is now grouped into seats (seat-identity.js seatsOf: each source once, one host one seat unless each of its URLs proves a distinct key of
 // the checked census - `keys`, default newestCheckedCensus; `verify` BIP-340), and a seat's answers are one answer, none when they disagree
-const censusKeyList = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
 const ownedRecordKey = (it) => JSON.stringify([it.id, String(it.itemId), String(it.gameName)]);
 export async function ownedItems({ seats, player, gameName = null, fetch, keys = null, verify = null }) {
   const groups = await seatsOf(seats || [], { keys: keys || censusKeyList(), verify, fetcher: fetch, ms: 15000 });
