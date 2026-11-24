@@ -19,8 +19,10 @@
 //    refused, and with no importModuleDynamically an import() throws.
 // 4. ONLY STRINGS CROSS. core-driver.js runs beside the core in the same sandbox and is called with an operation's name
 //    and a JSON string; it answers a JSON string. No object of the node's is ever handed in.
-// 5. A THREAD OF ITS OWN, WATCHED. The sandbox is built in a worker thread per core (core-host.js), a V8 isolate of its own
-//    that holds none of the node's memory; the node waits for each answer against a deadline - blocked (Atomics.wait) in a
+// 5. A THREAD OF ITS OWN, WATCHED, IN A PROCESS OF ITS OWN. The sandbox is built in a worker thread per core (core-host.js), a V8 isolate of its own
+//    that holds none of the node's memory - and since kanban #3557 that thread is not the seat's: it runs in the core process
+//    (core-runner.js), which holds none of the seat's keys, reads none of its files and, where the machine has bubblewrap, has no
+//    network and no file system but the node's own code (core-supervisor.js runnerCommand); the node waits for each answer against a deadline - blocked (Atomics.wait) in a
 //    replay worker and for the warm ghost, and without blocking (Atomics.waitAsync, callAsync) where the seat's own thread asks
 //    while it serves: decide, a round's run length (kanban #3556). Each core thread is started by this node thread's core supervisor (core-supervisor.js), a thread that is
 //    never blocked: it hears the core thread's exit at once - a heap death wakes the node, not its deadline - and reads the
@@ -161,7 +163,7 @@ function supervisorOf() {
   if (!supervisor) {
     // no flags of the process (the core thread names its own): a worker refuses --input-type, and a node started with
     // `node --input-type=module -e` lost its supervisor and waited out every core's load deadline
-    const worker = new Worker(new URL('./core-supervisor.js', import.meta.url), { env: {}, workerData: { arenaCoreSupervisor: true },
+    const worker = new Worker(new URL('./core-supervisor.js', import.meta.url), { env: {}, workerData: { arenaCoreSupervisor: true, coreProcess: process.env.ARENA_CORE_PROCESS || 'auto' },
       execArgv: [] });
     worker.unref();
     worker.on('error', (e) => { console.log(`[sandbox] the core supervisor failed: ${e && e.message}`); supervisor = null; });
