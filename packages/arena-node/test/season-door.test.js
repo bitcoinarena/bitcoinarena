@@ -247,7 +247,8 @@ test('GET /season?scope=network: the other seats\' rounds merged, a round counte
     assert.equal(j.agree, 3);
     assert.deepEqual(j.seats, { asked: 7, answered: 4 }, 'E silent, F this seat itself, G A\'s second address');
     // kanban #2273: the first page of each (one page here: no answer hands on `next`)
-    assert.ok(asked.every((u) => u.endsWith(`/season-rounds?game=${game}&days=7&page=1&after=`)), 'every seat asked for the same ids and days');
+    // kanban #3570: every seat is asked once per game set over the longest window (90 days); the week asked for is a filter of that account
+    assert.ok(asked.every((u) => u.endsWith(`/season-rounds?game=${game}&days=90&page=1&after=`)), 'every seat asked for the same ids, over 90 days');
     assert.equal(j.rounds, local.rounds + 1, 'this seat\'s two rounds, round 1 over B\'s dissent, and the one only A, B and C hold');
     const unranked = (rows) => rows.map(({ rank, ...x }) => x);
     assert.deepEqual(j.rows.map((x) => x.rank), [1, 2, 3]);
