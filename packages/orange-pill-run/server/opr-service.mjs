@@ -301,7 +301,11 @@ export function createOpr(o = {}) {
   // behind a shared public IPv4 (CGNAT, cafe Wi-Fi) opened 10 attempts from two free keys, played none, and every other player there was refused
   // for the whole daily round. A key's first attempt of the round now counts only the address's PLAYED attempts (scored or refused at submit -
   // what #3283 bounds: the stored runs); its further attempts count every attempt of the address, as before
-  const ipFull = (r, key, { first = false } = {}) => !!key && q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state ${first ? "IN ('scored', 'rejected')" : "!= 'expired'"}`)
+  // PLAYED MEANS A RUN THAT IS KEPT (kanban #3590, audit opr a7-2-1): a refusal costs nothing - a junk log sent right after the start is
+  // refused at once ('malformed', nothing stored) - so 10 throw-away refusals from two free keys locked the address again. A key's first attempt
+  // counts only the address's runs that are kept: scored ones ('awaiting': one waiting for its entry) and refusals that stored their log (what #3283
+  // bounds) - a refusal that kept nothing does not take another key's first attempt
+  const ipFull = (r, key, { first = false } = {}) => !!key && q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND ${first ? "(state IN ('scored', 'awaiting') OR (state = 'rejected' AND log IS NOT NULL))" : "state != 'expired'"}`)
     .get(r.id, key).n >= cfg.ipAttemptsShare * r.max_attempts;
   const IP_FULL = 'this address opened all the attempts it may in this round';
   const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
