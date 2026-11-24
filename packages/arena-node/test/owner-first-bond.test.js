@@ -37,6 +37,10 @@ test('on a running seat: signed by the owner, refused for another key and on a s
     const early = await post(req(secret));
     assert.equal(early.status, 400); assert.match((await early.json()).why, /not installed yet/);
     st.save({ done: { service: 1, bond: 1 } });
+    // kanban #3341: no public endpoint, no bond - asked before anything else, so the owner page says so before any coins are asked for
+    const noUrl = await post(req(secret, { post: true }));
+    assert.equal(noUrl.status, 400); assert.match((await noUrl.json()).why, /Set your node's public endpoint URL first/);
+    st.save({ reach: { mode: 'direct', url: 'https://node.example' } });
     const noSeed = await post(req(secret, { post: true }));
     assert.equal(noSeed.status, 400); assert.match((await noSeed.json()).why, /wallet seed is not in this node's home/);
     st.save({ bond: { txid: 'b0'.repeat(32), vout: 0, sats: '50000', maturity: 158000 } });
