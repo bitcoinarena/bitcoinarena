@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33, 34]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 export const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -101,6 +101,14 @@ export const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
 export const DISJOINT_RULES_VERSION = 33;
 /** Whether a round of protocol version `v` runs the 2026.0.33 rules (kanban #3257, #3260, #2983). */
 export const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERSION;
+/**
+ * 2026.0.34 - §13D COPIED RUN (spec ruling kanban #3615, 2026-11-24; #3612): in a shared-world round an entry that joined later and replays an
+ * earlier joiner's inputs (relative to each join tick, at least 32 non-empty input words from its first input) is signed FORFEIT, score 0
+ * (copied-run.js). Only a round written at 34 or later with a shared-world config; every round below closes byte for byte as before. An entry
+ * into such a round names the rule's hash (contracts.js `copiedRunRule`). The round creators write 34 only once every seat of the network
+ * runs a build that lists it, as for 33.
+ */
+export const COPIED_RUN_VERSION = 34;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census

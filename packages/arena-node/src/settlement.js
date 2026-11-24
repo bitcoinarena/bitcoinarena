@@ -312,7 +312,9 @@ export class LockSettlement {
       // claimed into the pool like any loser's, and with nobody qualified it is claimed into the remainder split.
       const equivocated = r.outcome === FORFEIT && typeof this.round.provenEquivocation === 'function'
         && this.round.provenEquivocation(roundIdBytes, entryId);
-      const atTheDoor = equivocated || (r.outcome === FORFEIT
+      // AND A COPIED RUN (§13D, kanban #3612: "exactly the §13B FORFEIT path ... never back to the copier"): marked the same way
+      const copied = r.outcome === FORFEIT && typeof this.round.copiedRun === 'function' && !!this.round.copiedRun(roundIdBytes, entryId);
+      const atTheDoor = equivocated || copied || (r.outcome === FORFEIT
         && (!this.round.firstMarkHeld(roundIdBytes, entryId) || !!(this.round.startForfeit && this.round.startForfeit(entryId))));
       entries.push({ ...base, outcome: r.outcome, score: r.score, ...(atTheDoor ? { atTheDoor } : {}) });
     }

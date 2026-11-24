@@ -26,7 +26,8 @@ import { ticksForMs } from '../../arena-protocol/src/tick.js';
 export const MARK_LAG_TICKS = 600;
 import { KNOWN_GOOD_GAMES } from '../../arena-protocol/src/known-games.js';
 import { worldSecretFits } from '../../arena-protocol/src/seed.js';
-import { encodeTranscript, transcriptHash, checkTranscript, GENESIS } from '../../arena-protocol/src/transcript.js';
+import { copiedRunApplies, COPIED_RUN_RULE_HASH, copiedRunOf, runInputs } from '../../arena-protocol/src/copied-run.js';   // §13D, kanban #3612
+import { encodeTranscript, decodeTranscript, transcriptHash, checkTranscript, GENESIS, flatten } from '../../arena-protocol/src/transcript.js';
 import {
   decodeCheckpoint, checkpointId, NO_PREVIOUS, splitSigned, encodeCheckpoint, joinSigned,
 } from '../../arena-protocol/src/checkpoint.js';
@@ -779,6 +780,14 @@ export class Round {
     // which configs share one world is the round's game's to say
     { const game = pluginForRound(asks, this.plugins);
       const fits = worldSecretFits(asks, contract.worldSecret, game.ok ? [...game.plugin.sharedWorld] : []); if (!fits.ok) throw new Error(fits.why);
+      // AND THE COPIED-RUN RULE, ACCEPTED BEFORE STAKING (§13D, kanban #3615/#3612): an entry into a round written at protocol 34 or later
+      // with a shared-world config names the rule's hash (as §13B binds equivocation_rule_hash); an entry into any other round names none,
+      // so every entry keeps one encoding and a rule a round does not run is never signed for.
+      { const governs = copiedRunApplies(asks, game.ok ? [...game.plugin.sharedWorld] : []);
+        const named = contract.copiedRunRule instanceof Uint8Array;
+        if (governs && !(named && Buffer.from(contract.copiedRunRule).equals(Buffer.from(COPIED_RUN_RULE_HASH))))
+          throw new Error(`that round is a shared world at protocol ${asks.protocolVersion}: its entry names the copied-run rule (§13D) by its hash, and that one ${named ? 'names another' : 'names none'}`);
+        if (!governs && named) throw new Error('that entry names the copied-run rule (§13D), and its round does not run it: only a shared-world round of protocol 34 or later does'); }
       // THE PICK (§0A.7a): an entry into an attested round backs one of its game's outcomes, by index; an entry
       // into a replayed round backs none - its result is its run
       const picked = contract.pick !== undefined && contract.pick !== null;
@@ -1728,6 +1737,46 @@ export class Round {
     if (!ok.ok)
       throw new Error(`the stored transcript is broken at ${ok.in} ${ok.at}: ${ok.why}`);
     return { bytes: encodeTranscript(t), hash: transcriptHash(t), ticks: ok.ticks };
+  }
+
+  /**
+   * §13D COPIED RUN (kanban #3615, RULED 2026-11-24; #3612): the earlier entry this entry's run copies, `{ of (hex), words, why }`, or null.
+   * Only on a round the rule governs (protocol 34 or later, a shared-world config: copied-run.js copiedRunApplies) - null on every other,
+   * so those close, re-run and settle byte for byte as before. Read over the canonical transcripts this seat holds (§13C): this entry's
+   * (`canonical` when the caller has it) and each earlier-joined entry's; an entry with none here is not compared. The close and the re-run
+   * (verify.js), the objection door (server.js) and the settlement (settlement.js: never back to the copier) ask this one function.
+   */
+  copiedRun(roundIdBytes, entryIdBytes, canonical = null) {
+    const row = this.get(roundIdBytes);
+    if (!row) return null;
+    const contract = decodeRoundContract(new Uint8Array(row.contract));
+    const found = pluginForRound(contract, this.plugins);
+    if (!found.ok || !found.plugin || !copiedRunApplies(contract, [...(found.plugin.sharedWorld || [])])) return null;
+    const entries = this.entriesOf(roundIdBytes);
+    const me = entries.find((e) => toHex(e.entryId) === toHex(entryIdBytes));
+    if (!me) return null;
+    if (!this.copiedRuns) this.copiedRuns = new Map();
+    const runOfEntry = (e, given) => {
+      let t = given;
+      try { if (!t) t = this.canonicalTranscript(roundIdBytes, e.entryId); } catch { return null; }
+      const key = `${toHex(roundIdBytes)}:${toHex(e.entryId)}:${toHex(t.hash)}`;
+      let run = this.copiedRuns.get(key);
+      if (!run) {
+        try { run = runInputs(e.entry.joinTick, flatten(decodeTranscript(t.bytes))); } catch { return null; }
+        this.copiedRuns.set(key, run);
+        if (this.copiedRuns.size > 256) this.copiedRuns.delete(this.copiedRuns.keys().next().value);
+      }
+      return run;
+    };
+    const mine = runOfEntry(me, canonical);
+    if (!mine) return null;
+    const others = [];
+    for (const e of entries) {
+      if (toHex(e.entryId) === toHex(entryIdBytes) || !(e.entry.joinTick < me.entry.joinTick)) continue;
+      const run = runOfEntry(e, null);
+      if (run) others.push({ entryId: toHex(e.entryId), run });
+    }
+    return copiedRunOf(mine, others);
   }
 
   /**

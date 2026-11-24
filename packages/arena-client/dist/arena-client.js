@@ -619,7 +619,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33, 34]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -695,6 +695,14 @@ const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
 const DISJOINT_RULES_VERSION = 33;
 /** Whether a round of protocol version `v` runs the 2026.0.33 rules (kanban #3257, #3260, #2983). */
 const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERSION;
+/**
+ * 2026.0.34 - §13D COPIED RUN (spec ruling kanban #3615, 2026-11-24; #3612): in a shared-world round an entry that joined later and replays an
+ * earlier joiner's inputs (relative to each join tick, at least 32 non-empty input words from its first input) is signed FORFEIT, score 0
+ * (copied-run.js). Only a round written at 34 or later with a shared-world config; every round below closes byte for byte as before. An entry
+ * into such a round names the rule's hash (contracts.js `copiedRunRule`). The round creators write 34 only once every seat of the network
+ * runs a build that lists it, as for 33.
+ */
+const COPIED_RUN_VERSION = 34;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -2619,6 +2627,15 @@ function encodeEntryContract(e) {
   // a flag in the API and protocol to mark them as bots"): the market maker bots sign it in their own entry, so no seat can add or take it
   // away; the leaderboard leaves such entries out. WRITTEN ONLY FOR A BOT, last of all, its marker alone: every other entry keeps exactly
   // its bytes and its id.
+  // THE COPIED-RUN RULE THE PLAYER ACCEPTS (§13D, kanban #3615/#3612, protocol 34): on a round written at 34 or later with a shared-world
+  // config the entry names the rule's hash (copied-run.js COPIED_RUN_RULE_HASH), as §13B binds equivocation_rule_hash, so its player
+  // accepted it before staking. WRITTEN ONLY WHEN NAMED, after the reserve lock and before the bot mark, after its own marker: every other
+  // entry keeps exactly its bytes and its id.
+  if (e.copiedRunRule !== undefined && e.copiedRunRule !== null) {
+    if (!(e.copiedRunRule instanceof Uint8Array) || e.copiedRunRule.length !== 32) throw new Error('an entry names the copied-run rule by its 32-byte hash');
+    w.u8(COPIED_RUN_ENTRY_MARKER);
+    w.bytes32(e.copiedRunRule);
+  }
   if (e.bot !== undefined && e.bot !== null && e.bot !== false) {
     if (e.bot !== true) throw new Error('an entry is a bot\'s (true) or not');
     w.u8(BOT_MARKER);
@@ -2643,6 +2660,8 @@ const ITEMS_ENTRY_MARKER = 0xad;
 const RESERVE_ENTRY_MARKER = 0xae;
 /** The byte that says the entry is a bot's (kanban #581), last of all - no payload. */
 const BOT_MARKER = 0xaf;
+/** The byte before the copied-run rule's hash an entry names (§13D, protocol 34): never a donation list's first byte. */
+const COPIED_RUN_ENTRY_MARKER = 0xb0;
 const ENTRY_ITEMS_MAX = 8;
 
 /** The byte before an entry's pick: never the first byte of a donation list (its count < 256 starts with 0). */
@@ -2693,7 +2712,7 @@ function decodeEntryContract(bytes) {
   };
   // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
   // the bot mark ends an entry too (kanban #581: a bot's entry with no donation outputs, or a pick and no order, read the mark as a list)
-  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER || b === RESERVE_ENTRY_MARKER || b === BOT_MARKER;
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER || b === RESERVE_ENTRY_MARKER || b === COPIED_RUN_ENTRY_MARKER || b === BOT_MARKER;
   if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
@@ -2733,8 +2752,12 @@ function decodeEntryContract(bytes) {
     r.u8();
     e.reserveOutpoint = readOutpoint(r);
   }
+  if (r.at < bytes.length && bytes[r.at] === COPIED_RUN_ENTRY_MARKER) {
+    r.u8();
+    e.copiedRunRule = r.bytes32();
+  }
   if (r.at < bytes.length) {
-    if (r.u8() !== BOT_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website, its items, its reserve lock nor the bot mark');
+    if (r.u8() !== BOT_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website, its items, its reserve lock nor the bot mark (nor the copied-run rule before it)');
     e.bot = true;
   }
   r.end();
@@ -13558,6 +13581,161 @@ function tableAnchorOf(contract) {
   return { anchorId: taggedHash(TAG.seriesRound, body), first: contract.roundIndex === 0 };
 }
 
+// ---- arena-protocol/src/rules.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
+// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role2026.0.3). Until now these were bound only
+// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
+// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
+// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
+
+
+
+const te = new TextEncoder();
+const RULE_TEXTS = Object.freeze({
+  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
+    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
+    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
+  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
+    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
+    + 'entries ENTRY_VOID.',
+  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
+    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
+  slashing: 'ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
+    + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
+    + 'census nodes, 25 % to the donation set.',
+});
+/** A rule's hash: its text under the rule tag. */
+const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
+const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
+/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
+const DISCONNECT_LAST_MARK = 1;
+const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
+
+/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
+function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
+  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
+    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
+}
+
+/**
+ * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
+ * one naming them must name this build's four hashes and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
+ * role no lower than the round's bond_min.
+ */
+function rulesStand(contract) {
+  const r = contract && contract.rules;
+  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
+  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
+    if (!eq(r[k], RULE_HASHES[k])) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
+  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
+  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
+  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
+    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
+  return { ok: true, why: 'that round names the rules this build settles under' };
+}
+
+/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
+function roleFloorSats(contract, role) {
+  const r = contract && contract.rules;
+  if (!r) return contract.bondMinSats;
+  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
+}
+
+// ---- arena-protocol/src/copied-run.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// §13D COPIED RUN (spec ruling kanban #3615, 2026-11-24; #3612, feedback #445).
+//
+// In a shared world (§12: one world per round) the same inputs relative to the join tick are the same run and the same
+// score, so a player who joins later and replays an earlier joiner's inputs takes a place he did not play for. The rule:
+// the LATER entry (larger joinTick) forfeits - FORFEIT, score 0, the §13B stake path - when its inputs at tick - joinTick
+// equal the earlier entry's, word for word and tick for tick, from its first input, for at least COPIED_RUN_MIN_WORDS
+// non-empty input words. The match is the common prefix: it covers an exact copy, a copy that stops early, a copy that
+// plays on after the earlier run ends, and copy-then-deviate. A tick idle in both (all five words 0) neither counts nor
+// breaks it. Equal join ticks: neither forfeits (neither could have read the other). The earlier entry is never touched.
+//
+// ONLY ON A SHARED-WORLD CONFIG, AND ONLY FOR A ROUND WRITTEN AT COPIED_RUN_VERSION OR LATER: under per-player worlds the same
+// inputs play another world, and a round written before the rule closes exactly as it did (the scheme is the round's, never
+// the seat's). The rule is bound into the Entry Contract (contracts.js `copiedRunRule`), as §13B's equivocation_rule_hash: an
+// entry into such a round names this rule's hash, so its player accepted it before staking.
+//
+// Pure: no store, no core, no clock. Every seat of a committee runs this over the canonical transcripts it holds (§13C).
+
+
+
+
+/** The fewest non-empty input words the shared prefix must hold before anything is decided (ruling (2)). */
+const COPIED_RUN_MIN_WORDS = 32;
+
+const COPIED_RUN_RULE_TEXT = 'ARENA rule copied-run v1 (§13D, kanban #3615, RULED 2026-11-24): in a shared-world round, an entry whose '
+  + 'inputs at tick - joinTick equal, word for word and tick for tick from its first input, those of an entry that joined at an earlier tick '
+  + `for at least ${COPIED_RUN_MIN_WORDS} non-empty input words (a tick idle in both neither counts nor breaks the match) forfeits (FORFEIT, `
+  + 'score 0, its stake as §13B). Equal join ticks: neither forfeits. The earlier entry is never touched.';
+/** The hash an entry into a round under §13D names (contracts.js `copiedRunRule`). */
+const COPIED_RUN_RULE_HASH = ruleHash(COPIED_RUN_RULE_TEXT);
+
+/** Whether §13D governs a round: written at COPIED_RUN_VERSION or later AND its config shares one world (its game says which). */
+function copiedRunApplies(contract, sharedWorld) {
+  const v = Number(contract && contract.protocolVersion);
+  return Number.isInteger(v) && v >= COPIED_RUN_VERSION && worldIsShared(contract, sharedWorld || []);
+}
+
+/** A run's inputs as the rule reads them: `{ joinTick, firstTick, ticks }` - ticks the five-word rows from firstTick on, contiguous. */
+function runInputs(joinTick, flat) {
+  return { joinTick, firstTick: flat.firstTick, ticks: flat.ticks };
+}
+
+const idle = (row) => row.every((v) => v === 0);
+const rowAt = (run, rel) => {
+  const i = run.joinTick + rel - run.firstTick;
+  return i >= 0 && i < run.ticks.length ? run.ticks[i] : undefined;
+};
+
+/**
+ * THE COMMON PREFIX OF TWO RUNS, RELATIVE TO EACH JOIN TICK: `{ words, endsAt }` - the non-empty words of the shared
+ * prefix (ticks idle in both are skipped, not counted) and the relative tick where it ends (the first differing tick, or where
+ * either run has no tick).
+ */
+function sharedPrefix(a, b) {
+  let words = 0, rel = 0;
+  for (;; rel++) {
+    const x = rowAt(a, rel), y = rowAt(b, rel);
+    if (x === undefined || y === undefined) break;
+    if (x.length !== y.length || x.some((v, i) => v !== y[i])) break;
+    if (idle(x)) continue;
+    for (const v of x) if (v !== 0) words++;
+  }
+  return { words, endsAt: rel };
+}
+
+/**
+ * DOES `later` COPY `earlier`? `{ copied, words, why }`. Only a later join can copy: equal join ticks, or `later` not later,
+ * is never a copy.
+ */
+function copiedRun(earlier, later) {
+  if (!(later.joinTick > earlier.joinTick)) return { copied: false, words: 0, why: 'not a later join: neither could have read the other' };
+  const p = sharedPrefix(earlier, later);
+  if (p.words >= COPIED_RUN_MIN_WORDS) return { copied: true, words: p.words, why: `its first ${p.words} non-empty input words (to relative tick ${p.endsAt}) are the earlier run's` };
+  return { copied: false, words: p.words, why: `${p.words} shared non-empty input words, under ${COPIED_RUN_MIN_WORDS}` };
+}
+
+/**
+ * THE EARLIER ENTRY A RUN COPIES, among a round's other runs: the first (by join tick, then entry id) whose shared prefix
+ * reaches the minimum, or null. `others` are `{ entryId (hex), run }`.
+ */
+function copiedRunOf(run, others) {
+  const sorted = [...others].filter((o) => o.run.joinTick < run.joinTick)
+    .sort((x, y) => x.run.joinTick - y.run.joinTick || (x.entryId < y.entryId ? -1 : x.entryId > y.entryId ? 1 : 0));
+  for (const o of sorted) {
+    const c = copiedRun(o.run, run);
+    if (c.copied) return { of: o.entryId, words: c.words, why: c.why };
+  }
+  return null;
+}
+
 // ---- arena-protocol/src/reserves.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -17030,6 +17208,8 @@ function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 0, stak
     ...(pick !== undefined && pick !== null ? { pick } : {}),
     // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry
     ...(order ? { limitPrice, orderExpiryMs } : {}),
+    // THE COPIED-RUN RULE (§13D, kanban #3612): on a shared-world round of protocol 34 or later the player accepts it before staking, by its hash
+    ...(copiedRunApplies(round, sharedWorldOf(round.gameId)) ? { copiedRunRule: COPIED_RUN_RULE_HASH } : {}),
     // A BOT'S ENTRY (kanban #581: a market maker script, never a player): marked, so the leaderboard and its payouts leave it out
     ...(bot === true ? { bot: true } : {}),
     stakeMsat: stakeOf(round),
@@ -33132,69 +33312,6 @@ function seatingBefore(drawnKeys, a, b) {
   return a.every((k, i) => r.has(k) && r.has(b[i]) && r.get(b[i]) <= r.get(k));
 }
 
-// ---- arena-protocol/src/rules.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
-// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role2026.0.3). Until now these were bound only
-// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
-// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
-// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
-
-
-
-const te = new TextEncoder();
-const RULE_TEXTS = Object.freeze({
-  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
-    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
-    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
-  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
-    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
-    + 'entries ENTRY_VOID.',
-  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
-    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
-  slashing: 'ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
-    + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
-    + 'census nodes, 25 % to the donation set.',
-});
-/** A rule's hash: its text under the rule tag. */
-const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
-const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
-/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
-const DISCONNECT_LAST_MARK = 1;
-const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
-
-/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
-function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
-  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
-    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
-}
-
-/**
- * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
- * one naming them must name this build's four hashes and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
- * role no lower than the round's bond_min.
- */
-function rulesStand(contract) {
-  const r = contract && contract.rules;
-  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
-  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
-  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
-    if (!eq(r[k], RULE_HASHES[k])) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
-  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
-  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
-  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
-    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
-  return { ok: true, why: 'that round names the rules this build settles under' };
-}
-
-/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
-function roleFloorSats(contract, role) {
-  const r = contract && contract.rules;
-  if (!r) return contract.bondMinSats;
-  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
-}
-
 // ---- arena-protocol/src/sortition.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -38549,14 +38666,28 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
   try { marked = JSON.parse((keep && keep.getItem(ZAPS_COLLECTING_KEY)) || '[]'); } catch { marked = []; }
   const collecting = new Set(Array.isArray(marked) ? marked : []);
   const begun = new Set(collecting);   // marked by an earlier pass: this pass's own spent answer to its own first refund is not one
-  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
+  // TWO TABS' PASSES MERGE, THE LAST WRITER NO LONGER WINS (kanban #3607, state audit #1489 sm1-page-8): `keep` is the browser's store,
+  // shared by every tab, and a pass wrote its own in-memory copy of these lists back whole. Two tabs (two phrases) whose passes overlapped:
+  // tab A wrote its mark and sent its refund, tab B - which read the list before A's mark - wrote its list over it, A's tab closed before
+  // the answer, and the reload filed A's accepted refund `spent`, never booked. Each write now reads the stored list again right before it
+  // and changes only this pass's own entries: the outpoints it settled are added (arena.zaps.collected), the marks it began are added and
+  // only the marks of the outpoints it settled leave (arena.zaps.collecting). No await lies between the read and the write.
+  const storedList = (k) => { try { const a = JSON.parse((keep && keep.getItem(k)) || '[]'); return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []; } catch { return []; } };
+  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...new Set([...storedList(ZAPS_COLLECTED_KEY), ...seen])].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
   // A MARK NAMES THE VERSION REFUNDED (kanban #2803, audit r21 client-1): a mark was the bare outpoint, so one seat listed a made-up outpoint whose
   // amount the refund could not even parse (the mark stayed), then the same outpoint with any amount: the refund found no contract, the mark said
   // "begun here" and the made-up row was booked as collected (a Referral of any size). A mark is now outpoint#hash(federation, amount, image, item);
   // only the same version's refund counts as begun. A bare outpoint (a mark from before) still counts for any version.
   const markOf = (d, image) => `${d.outpoint}#${toHex(sha256(new TextEncoder().encode(JSON.stringify([String(d.federationId).toLowerCase(), String(d.amountMsat), image, d.item || null])))).slice(0, 32)}`;
-  const dropMarks = (outpoint) => { for (const k of [...collecting]) if (k === outpoint || k.startsWith(`${outpoint}#`)) collecting.delete(k); };
-  const keepCollecting = () => { if (keep) putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...collecting].slice(-ZAPS_SEEN_KEPT))); };
+  const markedHere = new Set(), settledHere = new Set();   // kanban #3607: this pass's own marks, and the outpoints whose marks it drops
+  const outpointOfMark = (k) => String(k).split('#')[0];
+  const dropMarks = (outpoint) => { settledHere.add(outpoint); for (const k of [...collecting]) if (outpointOfMark(k) === outpoint) collecting.delete(k); };
+  const keepCollecting = () => {
+    if (!keep) return;
+    const merged = new Set(storedList(ZAPS_COLLECTING_KEY).filter((k) => !settledHere.has(outpointOfMark(k))));
+    for (const k of markedHere) if (collecting.has(k)) merged.add(k);
+    putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...merged].slice(-ZAPS_SEEN_KEPT)));
+  };
   let cursors = {};
   try { cursors = JSON.parse((keep && keep.getItem(ZAPS_CURSOR_KEY)) || '{}') || {}; } catch { cursors = {}; }
   if (typeof cursors !== 'object' || Array.isArray(cursors)) cursors = {};
@@ -38661,8 +38792,8 @@ async function collectZaps({ storage, keep = storage, random, curve, clients, se
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
     // kanban #2319: the intent is written ahead; a refund whose mark cannot be kept is not sent (its answer could be lost unbooked)
     if (!collecting.has(mark)) {
-      collecting.add(mark);
-      try { keepCollecting(); } catch (e) { collecting.delete(mark); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
+      collecting.add(mark); markedHere.add(mark);
+      try { keepCollecting(); } catch (e) { collecting.delete(mark); markedHere.delete(mark); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
     }
     let said;
     try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { return { ...d, why: String(e && e.message || e) }; }

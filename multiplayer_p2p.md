@@ -3115,6 +3115,7 @@ PlayerEntryContract {
   payout_hash, fee_hash
   equivocation_rule_hash           // player accepts forfeit-on-equivocation
   finality_rule_hash
+  copied_run_rule_hash             // shared-world rounds of protocol 34+: player accepts forfeit-on-copied-run (§13D)
 
   donation_bps                     // player-chosen, <= donation_bps_max
   donation_recipient
@@ -3758,6 +3759,63 @@ Past `final_after` (`finality.js resultFinality`):
 Measured live on the free pair, for a late result, a split and a late
 posting (two test faults, off by default: `ARENA_TEST_DISSENT_FILE` with
 `<entry> first`, and `ARENA_TEST_LATE_POSTING_FILE`).
+
+---
+
+# 13D. Copied run
+
+> **In a shared-world round, an entry that joined later and plays an
+> earlier joiner's inputs forfeits the entry.**
+
+RULED 2026-11-24 (kanban #3615, from #3612 / feedback #445).
+
+In a shared world (§12) the same input stream relative to the join tick
+is the same run and the same score. A player who joins later can read an
+earlier joiner's inputs and replay them, and so take a place he did not
+play for.
+
+- **The rule.** Entry B forfeits when its inputs at `tick - joinTick`
+  equal those of an entry A with a smaller `joinTick`, word for word and
+  tick for tick, from B's first input, for at least **32 non-empty input
+  words**. A word is one of the five signed input values of a tick; a
+  non-empty word is one that is not 0. The match is the common prefix:
+  it covers an exact copy, a copy that stops early, a copy that plays on
+  after A ends, and copy-then-deviate. A tick idle in both runs (all five
+  words 0) neither counts nor breaks the match. Below 32 words nothing is
+  decided, so two idle or trivial runs are never hit.
+- **Equal `joinTick`:** neither forfeits; neither could have read the
+  other. **The earlier entry is never touched.**
+- **Where it applies:** only rounds whose contract names protocol version
+  2026.0.34 or later **and** a shared-world config. Under per-player
+  worlds the same inputs play another world, so a copy gains nothing.
+  Earlier rounds close exactly as before: the scheme is chosen by the
+  round's version, never the seat's.
+- **Bound into the Entry Contract** via `copied_run_rule_hash`, like
+  `equivocation_rule_hash` (§13B): an entry into such a round names the
+  rule's hash, so the player accepted it before staking. A seat refuses
+  an entry into such a round that names none or another, and an entry
+  into any other round that names one.
+- **Close and re-run.** Before signing, a seat compares each entry with
+  every earlier-joined entry of the round over the canonical transcripts
+  it holds (§13C). A match signs `FORFEIT`, score 0, over the entry's
+  canonical transcript and logs
+  `[close] <entry> FORFEIT: copied run of <earlier entry> (§13D)`. A
+  re-run signs the same. An objection against that entry is refused at
+  the door (422), as in §13B.
+- **The stake:** exactly the §13B `FORFEIT` path: claimed into the loser
+  pool when the round has a qualifier, else into the remainder split;
+  never back to the copier.
+- Not required now: holding transcripts back until entry close (a
+  reload and peer catch-up need them). The rule makes the copy
+  worthless instead.
+
+**AS BUILT (2026-11-24, kanban #3612).** `arena-protocol/src/copied-run.js`
+(the rule, pure), `COPIED_RUN_VERSION = 34` in `constants.js`, the
+Entry Contract field `copiedRunRule` after marker `0xb0` (written only
+when named, so every other entry keeps its bytes and id), the door in
+`round.js`, the close, re-run and objection door through
+`Verifier.copiedRunOf` (`verify.js`, `server.js`), and the page's join
+(`arena-client/src/join.js`).
 
 ---
 

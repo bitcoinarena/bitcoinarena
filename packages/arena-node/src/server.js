@@ -14233,6 +14233,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // holding the proof of two chains takes no objection against that entry; the proof, not a replay, decided it.
         const forkHere = round.provenFork(rid, eid);
         if (forkHere) return text(res, 422, `that entry forfeited by §13B: this seat holds the proof that the player signed two chains (at tick ${forkHere.tick}), which no replay contradicts`);
+        // AND A COPIED RUN (§13D, kanban #3612): its FORFEIT is the canonical transcripts', which a replay of its own inputs would "contradict"
+        // - refused at the door, as §13B, before any replay
+        { let copy = null;
+          try { copy = round.copiedRun(new Uint8Array(rid), new Uint8Array(eid)); } catch { copy = null; }
+          if (copy) return text(res, 422, `that entry forfeited by §13D: its run copies entry ${copy.of.slice(0, 16)} (${copy.why}), which no replay contradicts`); }
         // THE RUN IT IS FILED AGAINST: the agreed re-run's while that one stands, else the run the committee signed.
         let standing = null;
         try { standing = resultFinality(round, rid, eid); } catch { standing = null; }

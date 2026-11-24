@@ -711,6 +711,19 @@ export class Verifier {
           transcript: canonical, stopped: true });
       }
     }
+    // §13D COPIED RUN (kanban #3615, RULED 2026-11-24; #3612): in a shared-world round of protocol 34 or later, an entry whose inputs at
+    // tick - joinTick are an earlier joiner's, word for word from its first input for at least 32 non-empty words, is signed FORFEIT, score 0,
+    // over its canonical transcript - compared with every earlier-joined entry's canonical transcript this seat holds. Every other round,
+    // and the earlier entry, close as before.
+    {
+      const copy = this.copiedRunOf(roundIdBytes, entryId, canonical);
+      if (copy) {
+        console.log(`[close] ${hex(entryId).slice(0, 16)} FORFEIT: copied run of ${copy.of.slice(0, 16)} (§13D)`);
+        return this.#sign({ roundIdBytes, entryId, entry, contract,
+          answer: { ok: true, outcome: 'FORFEIT', score: 0, coreHash: this.#coreOf(roundIdBytes)?.hash },
+          transcript: canonical, stopped: true });
+      }
+    }
     // A HELD-BACK FINAL MARK (ruled 2026-09-23): a run that would be signed as a stopped transcript, while a peer
     // holds the run's final mark over inputs this signer node is short of, is not signed yet - its close does not
     // end the window; the settlement's combine does. Only this case; every other stopped run is signed as ever.
@@ -1353,6 +1366,11 @@ export class Verifier {
       }
     }
     return { down, asked };
+  }
+
+  /** §13D COPIED RUN (kanban #3612): the earlier entry this entry's run copies, or null - the store's one answer (round.js copiedRun). */
+  copiedRunOf(roundIdBytes, entryIdBytes, canonical = null) {
+    return typeof this.round.copiedRun === 'function' ? this.round.copiedRun(roundIdBytes, entryIdBytes, canonical) : null;
   }
 
   #attested(contract) {
@@ -2324,6 +2342,8 @@ export class Verifier {
           if (!this.round.provenFork(roundIdBytes, entryIdBytes)) await this.#equivocationProven(roundIdBytes, entryIdBytes);
           const fork = this.round.provenFork(roundIdBytes, entryIdBytes);
           if (fork) scored = { ok: true, outcome: 'FORFEIT', score: 0, coreHash: this.#coreOf(roundIdBytes)?.hash };
+          // §13D COPIED RUN HOLDS IN A RE-RUN TOO (kanban #3612): a copy is re-run as FORFEIT, score 0, as the close signed it
+          else if (this.copiedRunOf(roundIdBytes, entryIdBytes, canonical)) scored = { ok: true, outcome: 'FORFEIT', score: 0, coreHash: this.#coreOf(roundIdBytes)?.hash };
         }
         const built = canonical && resultFrom({
           answer: scored, contract, entry: found.entry, transcript: canonical, entryId: entryIdBytes,

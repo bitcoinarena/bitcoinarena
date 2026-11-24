@@ -36,6 +36,7 @@ import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { worldSeedWord, worldIsShared, worldSlot, slotOfEntryId, WORLD_SLOTS } from '../../arena-protocol/src/seed.js';
 import { playerSecretFor, refundFingerprint } from '../../arena-protocol/src/player-key.js';
 import { gameIsKnownGood, sharedWorldOf } from '../../arena-protocol/src/known-game.js';
+import { copiedRunApplies, COPIED_RUN_RULE_HASH } from '../../arena-protocol/src/copied-run.js';   // §13D, kanban #3612
 import { entryFeeMsat, feeMatchesEntry, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
 import { feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
 import { paysReserves, RESERVES_NODE_FEE_BPS, giftsInFeeLock, giftsFeeBps } from '../../arena-protocol/src/reserves.js';
@@ -1329,6 +1330,8 @@ export function entryFor(round, { seed, curve, playerPubkey, random, joinTick = 
     ...(pick !== undefined && pick !== null ? { pick } : {}),
     // AND THE ORDER, after the pick (protocol contracts.js ORDER_MARKER): its limit price and expiry
     ...(order ? { limitPrice, orderExpiryMs } : {}),
+    // THE COPIED-RUN RULE (§13D, kanban #3612): on a shared-world round of protocol 34 or later the player accepts it before staking, by its hash
+    ...(copiedRunApplies(round, sharedWorldOf(round.gameId)) ? { copiedRunRule: COPIED_RUN_RULE_HASH } : {}),
     // A BOT'S ENTRY (kanban #581: a market maker script, never a player): marked, so the leaderboard and its payouts leave it out
     ...(bot === true ? { bot: true } : {}),
     stakeMsat: stakeOf(round),

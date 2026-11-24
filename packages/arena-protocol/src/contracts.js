@@ -736,6 +736,15 @@ export function encodeEntryContract(e) {
   // a flag in the API and protocol to mark them as bots"): the market maker bots sign it in their own entry, so no seat can add or take it
   // away; the leaderboard leaves such entries out. WRITTEN ONLY FOR A BOT, last of all, its marker alone: every other entry keeps exactly
   // its bytes and its id.
+  // THE COPIED-RUN RULE THE PLAYER ACCEPTS (§13D, kanban #3615/#3612, protocol 34): on a round written at 34 or later with a shared-world
+  // config the entry names the rule's hash (copied-run.js COPIED_RUN_RULE_HASH), as §13B binds equivocation_rule_hash, so its player
+  // accepted it before staking. WRITTEN ONLY WHEN NAMED, after the reserve lock and before the bot mark, after its own marker: every other
+  // entry keeps exactly its bytes and its id.
+  if (e.copiedRunRule !== undefined && e.copiedRunRule !== null) {
+    if (!(e.copiedRunRule instanceof Uint8Array) || e.copiedRunRule.length !== 32) throw new Error('an entry names the copied-run rule by its 32-byte hash');
+    w.u8(COPIED_RUN_ENTRY_MARKER);
+    w.bytes32(e.copiedRunRule);
+  }
   if (e.bot !== undefined && e.bot !== null && e.bot !== false) {
     if (e.bot !== true) throw new Error('an entry is a bot\'s (true) or not');
     w.u8(BOT_MARKER);
@@ -760,6 +769,8 @@ export const ITEMS_ENTRY_MARKER = 0xad;
 export const RESERVE_ENTRY_MARKER = 0xae;
 /** The byte that says the entry is a bot's (kanban #581), last of all - no payload. */
 export const BOT_MARKER = 0xaf;
+/** The byte before the copied-run rule's hash an entry names (§13D, protocol 34): never a donation list's first byte. */
+export const COPIED_RUN_ENTRY_MARKER = 0xb0;
 export const ENTRY_ITEMS_MAX = 8;
 
 /** The byte before an entry's pick: never the first byte of a donation list (its count < 256 starts with 0). */
@@ -810,7 +821,7 @@ export function decodeEntryContract(bytes) {
   };
   // the tail markers after the pick/move section: the federation, then the operator - either may stand alone
   // the bot mark ends an entry too (kanban #581: a bot's entry with no donation outputs, or a pick and no order, read the mark as a list)
-  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER || b === RESERVE_ENTRY_MARKER || b === BOT_MARKER;
+  const tail = (b) => b === FEDERATION_MARKER || b === OPERATOR_MARKER || b === FRONTEND_MARKER || b === ITEMS_ENTRY_MARKER || b === RESERVE_ENTRY_MARKER || b === COPIED_RUN_ENTRY_MARKER || b === BOT_MARKER;
   if (r.at < bytes.length && bytes[r.at] !== PICK_MARKER && bytes[r.at] !== COMMIT_MARKER && !tail(bytes[r.at])) {
     e.donationOutpoints = r.vec(readOutpoint);
     if (!e.donationOutpoints.length) throw new Error('an empty list of donation outpoints is not written: these bytes are not an entry\'s one encoding');
@@ -850,8 +861,12 @@ export function decodeEntryContract(bytes) {
     r.u8();
     e.reserveOutpoint = readOutpoint(r);
   }
+  if (r.at < bytes.length && bytes[r.at] === COPIED_RUN_ENTRY_MARKER) {
+    r.u8();
+    e.copiedRunRule = r.bytes32();
+  }
   if (r.at < bytes.length) {
-    if (r.u8() !== BOT_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website, its items, its reserve lock nor the bot mark');
+    if (r.u8() !== BOT_MARKER) throw new Error('these bytes carry something after the entry that is neither its federation, its operator, its website, its items, its reserve lock nor the bot mark (nor the copied-run rule before it)');
     e.bot = true;
   }
   r.end();
