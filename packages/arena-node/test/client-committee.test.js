@@ -239,11 +239,11 @@ test('the page derives the settlement committee over the seats\' doors, deals to
   assert.equal(got.headers.agreed, 3, 'three sources agreed the headers');
   // one seat that says otherwise refuses the round (ruled 2026-09-28, measured 2026-10-16), and a short line names it; the lists are on `detail` (kanban #1036)
   await assert.rejects(clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher, anchorAt }),
-    (e) => /^the round is refused: https:\/\/liar\.example names other signer nodes/.test(e.message) && /names another settlement committee/.test(e.detail));
+    (e) => /^the round is refused: https:\/\/liar\.example names other seats/.test(e.message) && /names another settlement committee/.test(e.detail));
   // and when every seat names another set, nothing is dealt
   const allLie = async (url) => (url.includes('/committee?') ? new Response(liarSet, { status: 200 }) : fetcher(url));
   await assert.rejects(clientSettlementSignerNodes(rhex, contract, nodes, { curve: pageCurve, fetcher: allLie, anchorAt, nowMs: Date.now() + 1 }),
-    /the round is refused: 3 seats name other signer nodes/);
+    /the round is refused: 3 seats name other seats/);
 });
 
 test('an explorer outside the network: the census block must be its block; a tip that differs is said, not refused', async () => {
