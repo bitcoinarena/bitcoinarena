@@ -87,7 +87,9 @@ test('AUDIT storage: fresh keys from one address each store 5 refused 250 KB log
     const rows = opr.db.prepare("SELECT COUNT(*) AS n, SUM(LENGTH(log)) AS b FROM attempts WHERE ip = '198.51.100.9'").get();
     const after = statSync(dbPath).size + (statSync(dbPath + '-wal', { throwIfNoEntry: false })?.size || 0);
     console.log(`one address: ${rows.n} attempts (${refused} refused at /attempt), ${Math.round(rows.b / 1024)} KB of refused logs kept, db grew ${Math.round((after - before) / 1024)} KB`);
-    assert.ok(rows.n <= 10, `one address opened ${rows.n} attempts with fresh keys`);
+    // #3590: a junk refusal keeps nothing, so it does not take another key's first attempt - each fresh key still gets its first one (20 keys);
+    // its further attempts meet the #3283 cap of 10 for the address
+    assert.ok(rows.n <= 10 + 20, `one address opened ${rows.n} attempts with fresh keys`);
     assert.ok(rows.b < 1024 * 1024, `one address made the service keep ${Math.round(rows.b / 1024)} KB of junk`);
   } finally { srv.close(); opr.close(); }
 });

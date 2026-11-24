@@ -1934,6 +1934,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     g.at = Date.now(); seasonGames = g;
     return g.ids;
   };
+  // kanban #2875: this seat's own season rounds of `ids` in window `w` (the raw read the seat's own /season keeps; the network board's too, kanban #3570)
+  const seasonReadLocal = (ids, w) => {
+    const stored = storedSeasonGames(), held = ids.filter((id) => stored.has(id));
+    const rq = `raw|${held.join(',')}|${SEASON_DAYS_MAX}`;
+    let raw = seasonRaw.get(rq);
+    if (!raw || Date.now() - raw.at > SEASON_KEEP_MS) {
+      const wMax = seasonWindow({ nowMs: Date.now(), days: SEASON_DAYS_MAX });
+      raw = { at: Date.now(), read: held.length ? seasonRounds(round, { games: new Set(held), fromMs: wMax.fromMs, toMs: wMax.toMs, isMarket: (c) => !!attestedOf(c) }) : [] };
+      seasonRaw.set(rq, raw); if (seasonRaw.size > 32) seasonRaw.delete(seasonRaw.keys().next().value);
+    }
+    return raw.read.filter((r) => r.startMs >= BigInt(w.fromMs) && r.startMs < BigInt(w.toMs));
+  };
   // A SEASON'S ANSWER: the board season() built, its rows as the round result shows them
   const seasonBody = (s, ids, w, { leftOut = 0, unchecked = [] } = {}) => {
     const hostedAs = ids.map((id) => hosted.get(id)).find(Boolean);
@@ -1952,7 +1964,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // node key they name (kanban #2982, seasonAccounts below); an answer naming this seat's own key is this seat reached through its
   // own address, not another witness. Every seat's answer is a claim only: what
   // makes a round count is SEASON_NETWORK_AGREE seats agreeing on it byte for byte (season.js). One read per query at a time.
-  const seasonNetKept = new Map();               // query -> { at, json } | { reading }
+  const seasonNetKept = new Map();               // game ids -> { at, net } | { reading } (kanban #3570: one per set, every days= a filter)
   // EVERY SEAT'S ACCOUNTS OF A SEASON, unmerged: this seat's own rounds of the window, then each other seat's answer to
   // GET /season-rounds for the same ids and `days` back from its clock, one label per seat as above. Answers
   // { bySeat: Map label -> rounds, asked }. With `keyed`, an answer counts only when it says it carries each entry's round
@@ -1986,9 +1998,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try { take(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : []); } catch { /* none read yet */ }
     return at;
   };
-  const seasonAccounts = async (ids, w, { days = w.days, keyed = false, signed = false } = {}) => {
+  // `read`: this seat's own rounds of the window when the caller holds them already (kanban #3570: the network board's, from seasonReadLocal)
+  const seasonAccounts = async (ids, w, { days = w.days, keyed = false, signed = false, read = null } = {}) => {
     const games = new Set(ids);
-    const read = seasonRounds(round, { games, fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
+    if (!read) read = seasonRounds(round, { games, fromMs: w.fromMs, toMs: w.toMs, isMarket: (c) => !!attestedOf(c) });
     const own = signed ? seasonRoundsFromJson(signedSeasonRoundsJson(round, read, signSeason)) : read;
     const seats = networkSeats();
     const answers = new Array(seats.length).fill(null);
@@ -2101,33 +2114,62 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let needed; try { needed = roundThreshold(slotsForRole(contract, 'settlement')); } catch (e) { return { ok: false, why: e.message }; }
     return { ok: true, seats: (picked.drawn || picked.committee).map((e) => toHex(e.pubkey || e)), needed };
   };
-  const seasonNetwork = async (ids, w) => {
-    const { bySeat, asked: seats } = await seasonAccounts(ids, w);
+  // ONE NETWORK ACCOUNT PER GAME SET, A WINDOW IS A FILTER OF IT (kanban #3570, audit settle a7-1-2, a gap in #3363; the #2725 rule on the
+  // network board): the board was kept per `${ids}|${days}`, 32 queries held, so one hosted game asked under 33+ day counts missed it on
+  // every request - a whole-store season read and a GET /season-rounds to every network seat each. Now every seat is asked once per game
+  // set over SEASON_DAYS_MAX (this seat's own rounds from the read seasonReadLocal keeps, #2725), the accounts merged once, and kept by the
+  // ids alone. Any days= is that merge's agreed rounds started inside its window, built in memory: no store read, no peer ask.
+  const seasonNetwork = async (ids) => {
+    const wMax = seasonWindow({ nowMs: Date.now(), days: SEASON_DAYS_MAX });
+    const { bySeat, asked } = await seasonAccounts(ids, wMax, { read: seasonReadLocal(ids, wMax) });
     const m = mergeSeasonAccounts(bySeat, { agree: SEASON_NETWORK_AGREE });
     if (!m.ok) throw new Error(m.why);
-    const s = season(m.rounds, { games: ids, fromMs: w.fromMs, toMs: w.toMs });
-    if (!s.ok) throw new Error(s.why);
-    return JSON.stringify({ ...seasonBody(s, ids, w, { leftOut: m.excluded.length, unchecked: SEASON_NETWORK_UNCHECKED }),
-      scope: 'network', agree: SEASON_NETWORK_AGREE, seats: { asked: seats, answered: bySeat.size - 1 } });
+    // a round left out of the merge counts in the `leftOut` of a window its start (as a seat handed it in) falls inside; one named by no id
+    // or no start in ms is left out of every window, as before
+    const startOf = new Map();
+    for (const rounds of bySeat.values()) for (const r of rounds || []) {
+      if (!r || typeof r !== 'object' || typeof r.roundId !== 'string' || typeof r.startMs !== 'bigint') continue;
+      const id = r.roundId.toLowerCase(); if (!startOf.has(id)) startOf.set(id, r.startMs);
+    }
+    return { rounds: m.rounds, leftOutAt: m.excluded.map((e) => (e.round && startOf.has(e.round) ? startOf.get(e.round) : null)),
+      asked, answered: bySeat.size - 1 };
   };
-  const seasonNetworkNow = async (ids, w) => {
-    const q = `${ids.join(',')}|${w.days}`;
+  const seasonNetworkNow = async (ids) => {
+    const q = ids.join(',');
     const had = seasonNetKept.get(q);
-    if (had && had.json && Date.now() - had.at <= SEASON_KEEP_MS) return had;
+    if (had && had.net && Date.now() - had.at <= SEASON_KEEP_MS) return had;
     // THE LAST BOARD WHILE THE NEXT IS BUILT (kanban #3289, measured 2026-11-22: a network season took 22-50 s to build, longer than the page
     // waited, so after each SEASON_KEEP_MS the board's next asker got nothing): a kept board up to SEASON_STALE_MS old is answered at once
     // and the new one built behind it. It is the same agreed account, only older.
-    const stale = !!(had && had.json && Date.now() - had.at <= SEASON_STALE_MS);
+    const stale = !!(had && had.net && Date.now() - had.at <= SEASON_STALE_MS);
     if (had && had.reading) return stale ? had : had.reading;
-    const reading = seasonNetwork(ids, w).then((json) => {
-      const kept = { at: Date.now(), json };
+    const reading = seasonNetwork(ids).then((net) => {
+      const kept = { at: Date.now(), net };
       seasonNetKept.set(q, kept);
       if (seasonNetKept.size > 32) seasonNetKept.delete(seasonNetKept.keys().next().value);
       return kept;
-    }, (e) => { if (had && had.json) seasonNetKept.set(q, had); else seasonNetKept.delete(q); throw e; });
+    }, (e) => { if (had && had.net) seasonNetKept.set(q, had); else seasonNetKept.delete(q); throw e; });
     seasonNetKept.set(q, { ...(had || {}), reading });
     if (stale) { reading.catch(() => {}); return had; }
     return reading;
+  };
+  // A WINDOW OF A KEPT NETWORK ACCOUNT (kanban #3570): its answer, kept beside the account it was built from (a new account, a new answer)
+  const seasonNetAnswers = new Map();   // `${ids}|${days}` -> { of: the kept account, json }
+  const seasonNetworkAnswer = (kept, ids, w) => {
+    const q = `${ids.join(',')}|${w.days}`;
+    const had = seasonNetAnswers.get(q);
+    if (had && had.of === kept) return { at: kept.at, json: had.json };
+    const from = BigInt(w.fromMs), to = BigInt(w.toMs);
+    const inside = (ms) => typeof ms === 'bigint' && ms >= from && ms < to;
+    const { net } = kept;
+    const s = season(net.rounds.filter((r) => inside(r.startMs)), { games: ids, fromMs: w.fromMs, toMs: w.toMs });
+    if (!s.ok) throw new Error(s.why);
+    const leftOut = net.leftOutAt.filter((ms) => ms === null || inside(ms)).length;
+    const json = JSON.stringify({ ...seasonBody(s, ids, w, { leftOut, unchecked: SEASON_NETWORK_UNCHECKED }),
+      scope: 'network', agree: SEASON_NETWORK_AGREE, seats: { asked: net.asked, answered: net.answered } });
+    seasonNetAnswers.delete(q); seasonNetAnswers.set(q, { of: kept, json });
+    if (seasonNetAnswers.size > 32) seasonNetAnswers.delete(seasonNetAnswers.keys().next().value);
+    return { at: kept.at, json };
   };
   const networkAppsTimer = setInterval(() => { networkAppsNow().catch((e) => console.error(`[plugins] network games: ${e.message}`)); }, NETWORK_APPS_MS);
   if (networkAppsTimer.unref) networkAppsTimer.unref();
@@ -5797,7 +5839,18 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         return { entryId: new Uint8Array(id), joinedMs: Number(body.joinedMs), entry: e, claimed, staked: body.staked === true };   // kanban #3369
       } catch { return null; }
     }));
-    return said.filter(Boolean);
+    // `staked` NOT ON ONE SEAT'S WORD (kanban #3566, audit gossip r1-1): a peer's `staked` is unsigned JSON, and one colluding seat that answered
+    // `staked: true` for a stranger's lower entry under a head-to-head player's key made every honest seat let the player's stake go for it
+    // (peerStakedLower skips the #3320 no-receipts rule). An entry now counts as staked elsewhere only when as many distinct seats of the round
+    // as can be faulty, plus one, say so (as #2680 for GET /outcome, #2843 for /cancels): n - threshold + 1 - 3 of a 7-seat committee, 1 of a
+    // 2-seat one, which tolerates none. The #3369 crossed locks still meet: when fewer seats than that took the lower entry first, at least a
+    // threshold of seats hold the higher one, and the round settles on it.
+    const n = peers.length + 1;
+    let faulty; try { faulty = n - roundThreshold(n); } catch { faulty = Math.floor((n - 1) / 3); }
+    const need = Math.max(1, faulty + 1);
+    const stakedBy = new Map();   // entry id -> how many distinct peers (peers are distinct endpoints above) said they hold it staked
+    for (const p of said) if (p && p.staked) { const k = toHex(p.entryId); stakedBy.set(k, (stakedBy.get(k) || 0) + 1); }
+    return said.filter(Boolean).map((p) => ({ ...p, staked: p.staked && (stakedBy.get(toHex(p.entryId)) || 0) >= need }));
   };
   // `atMs` (kanban #1805): the time the door (POST /lock, POST /fee-lock) checked the round's lock close, before any await; kept as the lock's
   // verified_ms. A repair from peers and a replayed order pass none: their rows carry the time they are written (or the vouched time, keepLockTimes).
@@ -10818,18 +10871,6 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const enteredOf = (read) => { const k = new Set();
         for (const r of read) for (const e of r.entries || []) if (e && e.player && BigInt(e.stakeMsat || 0) > 0n) k.add(String(e.player));
         return [...k].sort(); };
-      // kanban #2875: this seat's own season rounds of `ids` in window `w` (the raw read the seat's own /season keeps)
-      const seasonReadLocal = (ids, w) => {
-        const stored = storedSeasonGames(), held = ids.filter((id) => stored.has(id));
-        const rq = `raw|${held.join(',')}|${SEASON_DAYS_MAX}`;
-        let raw = seasonRaw.get(rq);
-        if (!raw || Date.now() - raw.at > SEASON_KEEP_MS) {
-          const wMax = seasonWindow({ nowMs: Date.now(), days: SEASON_DAYS_MAX });
-          raw = { at: Date.now(), read: held.length ? seasonRounds(round, { games: new Set(held), fromMs: wMax.fromMs, toMs: wMax.toMs, isMarket: (c) => !!attestedOf(c) }) : [] };
-          seasonRaw.set(rq, raw); if (seasonRaw.size > 32) seasonRaw.delete(seasonRaw.keys().next().value);
-        }
-        return raw.read.filter((r) => r.startMs >= BigInt(w.fromMs) && r.startMs < BigInt(w.toMs));
-      };
       if (req.method === 'GET' && url.pathname === '/season') {
         const asked = seasonQuery(url);
         if (!asked.ok) return text(res, asked.status, asked.why);
@@ -10850,7 +10891,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=30', ...CORS });
             return res.end(JSON.stringify({ ...seasonBody(s, ids, w), scope: 'network', agree: SEASON_NETWORK_AGREE, seats: { asked: 0, answered: 0 }, entered: [] }));
           }
-          try { kept = await seasonNetworkNow(netIds, w); } catch (e) { return text(res, 500, `that season could not be built: ${e.message}`); }
+          try { kept = seasonNetworkAnswer(await seasonNetworkNow(netIds), netIds, w); } catch (e) { return text(res, 500, `that season could not be built: ${e.message}`); }
           // WHO ENTERED A PAID ROUND, WHATEVER IT CAME TO (kanban #2875, the owner 2026-11-16): the season counts no VOID round and no refunded entry
           // (§18) - it is the signed leaderboard and badge account - so a player whose paid rounds were refused or void was "never played" for the
           // feedback bounty. Beside the account, unsigned and from this seat's own store: `entered`, the players with a locked entry in a paid

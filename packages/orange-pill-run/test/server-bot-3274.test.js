@@ -100,7 +100,7 @@ async function realRound() {
   return { opr, s2, link, r, play, clock: { add: (ms) => { t += ms; }, set: (ms) => { t = ms; } } };
 }
 
-test('#3274 near-identical inputs from two players flag both; a likely bot is held off the bounty list until its run is cleared', async () => {
+test('#3274 near-identical inputs from two players flag the later one (#3580); a likely bot is held off the bounty list until its run is cleared', async () => {
   const w = await realRound();
   const a = keypair(), b = keypair(), c = keypair(), d = keypair();
   for (const k of [a, b, c, d]) { w.link(k.pk); assert.equal((await w.opr.saveLnAddress(k.pk, `p${k.pk.slice(0, 6)}@walletofsatoshi.com`)).ok, true); }
@@ -119,7 +119,9 @@ test('#3274 near-identical inputs from two players flag both; a likely bot is he
   // the admin's runs view
   const res = await adminRuns(w.opr, w.r.id);
   const byId = new Map(res.runs.map((x) => [x.attempt, x]));
-  for (const id of [ra, rb]) assert.ok(byId.get(id).bot.reasons.some((x) => /nearly the same inputs as 1 other player's run/.test(x)), JSON.stringify(byId.get(id).bot));
+  // #3580: the later near copy is flagged, the original it copies is not
+  assert.ok(byId.get(rb).bot.reasons.some((x) => /nearly the same inputs as 1 other player's run/.test(x)), JSON.stringify(byId.get(rb).bot));
+  assert.ok(!byId.get(ra).bot.reasons.some((x) => /nearly the same inputs/.test(x)), JSON.stringify(byId.get(ra).bot));
   assert.ok(byId.get(rc).bot.score < 30, JSON.stringify(byId.get(rc).bot));
   assert.equal(byId.get(rd).bot.score, 100);
   assert.equal(byId.get(rd).bot.reasons.length, 3);

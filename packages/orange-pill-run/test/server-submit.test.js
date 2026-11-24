@@ -87,7 +87,9 @@ test('#3249 bot signals: too regular, identical logs across accounts, many accou
   for (const p of ps) { const s = await w.opr.startAttempt(p.pk, { round: r.id, ip: '203.0.113.9' }); w.lnd.pay(s.invoice); const c = await w.opr.checkAttempt(p.pk, s.attempt);
     w.clock.add(60000); assert.equal(w.opr.submit(p.pk, { attempt: s.attempt, token: c.token, log: logOf(10) }, { ip: '203.0.113.9' }).ok, true); }
   const rows = w.opr.db.prepare('SELECT player, flags, review FROM attempts WHERE round = ? ORDER BY submitted_ms').all(r.id).map((x) => ({ ...x, flags: JSON.parse(x.flags) }));
-  assert.ok(rows.every((x) => x.flags.sameLog && x.review === 'pending'));
+  // #3580: the first run of the identical log is the original - only the later ones are flagged sameLog (the original counts its copies)
+  assert.ok(!rows[0].flags.sameLog && rows[0].flags.copied === 2, JSON.stringify(rows[0]));
+  assert.ok(rows.slice(1).every((x) => x.flags.sameLog && x.review === 'pending'));
   assert.equal(rows[2].flags.ipCrowd, 3);
   assert.equal(w.opr.boardOf(r.id).length, 3);   // flagged runs stay on the board
 });

@@ -47,10 +47,14 @@ export const DEFAULTS = Object.freeze({
   verifyGraceMs: 60 * MIN_MS, bountySats: 2500,   // the play bounty in real sats (owner 2026-11-22: 2,500 - 5,000 earlier that day, 10,000 before; it was 2,000) - every round reads it here, none stores its own
   lnChecksPerMinAll: 60, xChecksPerMinAll: 15,   // kanban #3333, #3353: wallet asks and X lookups per minute of all keys of ONE caller address (ipKey)
   lnChecksPerMinNet: 600, xChecksPerMinNet: 150,   // kanban #3353: the whole service's backstop per minute; a key with a run in a round still listing is not held by it
+  // kanban #3597: X lookups waiting or running at once - per caller address and for the whole service (the X client answers one per 3 s); and how
+  // long (wall clock) the tick waits for the list-time follow re-check before it writes the lists with the answers it has
+  xInFlightPerCaller: 1, xInFlightMost: 5, followWaitMs: 5000,
   bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
   entryPayMs: 30000,   // kanban #3603: a paid run's entry settles within this of its start (and before its submit), or the run does not count
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], promoEnd: null, adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
+  ipUnplayedShare: 10,   // kanban #3598: an address's attempts that keep nothing, per round, at most this many times its kept-run share (100 in a daily round)
   refusedLogNetBytes: 2e6, refusedLogRoundBytes: 200e6,   // kanban #3355: refused logs kept per round from one network (IPv6 /48, IPv4 /24) and from all
 });
 // FREE ROUNDS (kanban #3273, owner 2026-11-22: "a free round - no testnet sats, but 2,000 real sats for the winner" - since 10,000, #3251): a round made now has
@@ -113,7 +117,17 @@ export function createOpr(o = {}) {
   const { sim, fetchCandles, checkLevel, invoices, chain = null } = o;   // o.s2 (the bounty book) is ignored since #3381
   const ceilingOf = o.ceilingOf || null;   // async (candles, seed, version) -> { total, timeS } (kanban #3332; none: the field measure only)
   const lnCheck = o.lnCheck || ((a) => checkLnAddress(a));
-  const xLookup = o.xLookup || null, botXHandles = o.botXHandles || botListFromEnv;
+  const xLookup0 = o.xLookup || null, botXHandles = o.botXHandles || botListFromEnv;
+  // X LOOKUPS IN FLIGHT ARE BOUNDED (kanban #3597, audit opr a7-3-2, high): the X client (bounty-verify.js xByName) answers one call per 3 s from a
+  // queue without end, and the minute caps let 15 calls a minute per caller address and 150 for all in - one stranger address's 15 POST /x queued
+  // 45 s, every honest POST /x waited behind them, and so did the tick at list time (no list, no round closed or made). Every lookup is counted
+  // while it waits or runs: POST /x is refused (429) while its caller address has xInFlightPerCaller waiting or the service xInFlightMost
+  let xBusy = 0;
+  const xBusyBy = new Map();
+  const xLookup = xLookup0 && (async (name, ck = null) => {
+    xBusy++; if (ck) xBusyBy.set(ck, (xBusyBy.get(ck) || 0) + 1);
+    try { return await xLookup0(name); } finally { xBusy--; if (ck) { const n = xBusyBy.get(ck) - 1; if (n > 0) xBusyBy.set(ck, n); else xBusyBy.delete(ck); } }
+  });
   const db = new DatabaseSync(o.dbPath || ':memory:');
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS rounds (id TEXT PRIMARY KEY, num INTEGER NOT NULL UNIQUE, test INTEGER NOT NULL, day TEXT, chart_day TEXT NOT NULL,
@@ -163,6 +177,8 @@ export function createOpr(o = {}) {
     CREATE TABLE IF NOT EXISTS x_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS x_checks_by_player ON x_checks (player, at_ms); CREATE INDEX IF NOT EXISTS x_checks_by_time ON x_checks (at_ms);`);
   // FOLLOWS @bitcoinarena_io (kanban #3534): follows 1 / 0 as X last answered (null: not asked yet), follows_ms when, follows_why X's words
   for (const col of ['follows INTEGER', 'follows_ms INTEGER', 'follows_why TEXT']) { try { db.exec(`ALTER TABLE x_links ADD COLUMN ${col}`); } catch { /* there already */ } }
+  // A MOVE KEEPS WHAT X SAID (kanban #3579): follows / follows_ms of the link as it was when it moved away (null: a move from before)
+  for (const col of ['follows INTEGER', 'follows_ms INTEGER']) { try { db.exec(`ALTER TABLE x_link_moves ADD COLUMN ${col}`); } catch { /* there already */ } }
   db.exec('CREATE TABLE IF NOT EXISTS ln_checks (player TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS ln_checks_by_player ON ln_checks (player, at_ms); CREATE INDEX IF NOT EXISTS ln_checks_by_time ON ln_checks (at_ms);');
   // THE CALLER'S ADDRESS OF A CHECK (kanban #3353): the minute caps of #3333 are counted per caller address, not for all callers together
   for (const tb of ['ln_checks', 'x_checks']) { try { db.exec(`ALTER TABLE ${tb} ADD COLUMN ip_key TEXT`); } catch { /* there already */ } db.exec(`CREATE INDEX IF NOT EXISTS ${tb}_by_ip ON ${tb} (ip_key, at_ms)`); }
@@ -288,8 +304,22 @@ export function createOpr(o = {}) {
   // behind a shared public IPv4 (CGNAT, cafe Wi-Fi) opened 10 attempts from two free keys, played none, and every other player there was refused
   // for the whole daily round. A key's first attempt of the round now counts only the address's PLAYED attempts (scored or refused at submit -
   // what #3283 bounds: the stored runs); its further attempts count every attempt of the address, as before
-  const ipFull = (r, key, { first = false } = {}) => !!key && q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state ${first ? "IN ('scored', 'rejected')" : "!= 'expired'"}`)
-    .get(r.id, key).n >= cfg.ipAttemptsShare * r.max_attempts;
+  // PLAYED MEANS A RUN THAT IS KEPT (kanban #3590, audit opr a7-2-1): a refusal costs nothing - a junk log sent right after the start is
+  // refused at once ('malformed', nothing stored) - so 10 throw-away refusals from two free keys locked the address again. A key's first attempt
+  // counts only the address's runs that are kept: scored ones ('awaiting': one waiting for its entry) and refusals that stored their log (what #3283
+  // bounds) - a refusal that kept nothing does not take another key's first attempt
+  // THE OTHER ATTEMPTS ARE BOUNDED TOO (kanban #3598, audit opr a7-3-1): counting only kept runs, one address opened one never-played attempt per
+  // fresh key without end (20,000 rows in 42 s, each read again by ipFull, ipCrowd and the board). A first attempt is also refused once the
+  // address has ipUnplayedShare x its kept-run share of attempts that keep nothing (never sent, timed out, refused with no log): 100 in a daily
+  // round - ten times the kept runs, so a few throw-away attempts never lock a shared address, and the rows of one address stay bounded
+  const KEPT = "(state IN ('scored', 'awaiting') OR (state = 'rejected' AND log IS NOT NULL))";
+  const ipFull = (r, key, { first = false } = {}) => {
+    if (!key) return false;
+    const share = cfg.ipAttemptsShare * r.max_attempts;
+    if (!first) return q("SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state != 'expired'").get(r.id, key).n >= share;
+    const c = q(`SELECT COALESCE(SUM(${KEPT}), 0) AS kept, COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state != 'expired'`).get(r.id, key);
+    return c.kept >= share || c.n - c.kept >= cfg.ipUnplayedShare * share;
+  };
   const IP_FULL = 'this address opened all the attempts it may in this round';
   const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
   const phaseOf = (r, t = now()) => (t >= r.end_ms || ['closed', 'listed'].includes(r.state) ? 'ended' : r.state !== 'ready' ? (r.state === 'posting' ? 'posting' : 'preparing')
@@ -489,9 +519,13 @@ export function createOpr(o = {}) {
     const logHash = sha(JSON.stringify(body.log.presses));
     const flags = runSignals(body.log, JC(JSON.stringify(body.client ?? null), null));
     const same = q("SELECT id, player FROM attempts WHERE round = ? AND log_hash = ? AND player != ? AND state = 'scored'").all(a.round, logHash, player);
+    // THE LATER COPY IS FLAGGED, NEVER THE ORIGINAL (kanban #3580, audit opr a7-1-2): every board row's best run is a public replay during the round
+    // (#3336), so a stranger submitted the leader's presses from a fresh key - and the leader's EARLIER run was flagged sameLog and put under review:
+    // the waiting bounty row went to the next player. Only the run sent later is flagged and reviewed; the earlier one only counts its copies
+    // (copied, shown to the admin) and keeps its review
     if (same.length) {
       flags.sameLog = true;
-      for (const s of same) { const f = J(q('SELECT flags FROM attempts WHERE id = ?').get(s.id).flags, {}); f.sameLog = true; q("UPDATE attempts SET flags = ?, review = CASE review WHEN 'cleared' THEN 'cleared' ELSE 'pending' END WHERE id = ?").run(JSON.stringify(f), s.id); }
+      for (const s of same) { const f = J(q('SELECT flags FROM attempts WHERE id = ?').get(s.id).flags, {}); f.copied = (Number(f.copied) || 0) + 1; q('UPDATE attempts SET flags = ? WHERE id = ?').run(JSON.stringify(f), s.id); }
     }
     if (ip) {
       const n = q('SELECT COUNT(DISTINCT player) AS n FROM attempts WHERE round = ? AND ip = ?').get(a.round, ip).n;
@@ -580,6 +614,21 @@ export function createOpr(o = {}) {
     return { ok: true, lnAddress: s.address };
   }
   function boardOf(round) { return bestPerPlayer(runsOf(round)).map((b) => ({ ...b, name: nameOf(b.player) })); }
+  // A ROUND'S BEST RUNS, BUILT ONCE PER STORE STATE (kanban #3581, audit opr a7-1-3): the unsigned GET /replay/<id> rebuilt the whole board per
+  // request (boardOf: every scored run parsed, a players read per row) only to ask whether the run is a board row's best - ~41 ms at 1,000
+  // players on the one thread. The set of each round's best attempt ids is kept while nothing was written to the store (SQLite total_changes)
+  // ONE BOARD PER ROUND AND STORE STATE FOR THE PUBLIC READS (kanban #3591): publicRound and publicBoard built it once each per answer; they share
+  // this one (read only - never changed by a caller)
+  const bestKept = new Map(), BEST_KEPT_MOST = 64;
+  function keptBoard(round) {
+    const n = q('SELECT total_changes() AS n').get().n, k = bestKept.get(round);
+    if (k && k.n === n) return k;
+    const board = boardOf(round), v = { n, board, ids: new Set(board.map((b) => b.attempt)) };
+    if (bestKept.size >= BEST_KEPT_MOST) bestKept.clear();
+    bestKept.set(round, v);
+    return v;
+  }
+  const bestRunsOf = (round) => keptBoard(round).ids;
   /**
    * THE BOT LIKELIHOOD OF A ROUND (kanban #3274), admin and lists only: { runs: Map attempt -> { score, reasons, top }, players: Map player ->
    * { score, top, attempt } } - a player's is their most bot-like scored run. Across runs: near-identical inputs of other players and of the
@@ -606,7 +655,8 @@ export function createOpr(o = {}) {
       if (feat && feat.gridK === undefined) { const lg = J(q('SELECT log FROM attempts WHERE id = ?').get(a.id).log); Object.assign(feat, gridOf(lg && lg.presses)); }   // stored before #3332
       if (!feat && rr) { try { feat = runFeatures(sim, levelOf(rr), J(q('SELECT log FROM attempts WHERE id = ?').get(a.id).log)); q('UPDATE attempts SET bot_feat = ? WHERE id = ? AND bot_feat IS NULL').run(JSON.stringify(feat), a.id); } catch { feat = {}; } }
       const g = groups.get(a.near_rep || a.id);
-      const othersN = g.size - (g.has(a.player) ? 1 : 0), repeatOwn = (g.get(a.player) || 0) >= 2;
+      // kanban #3580: a near group's first run (its own rep) is the original - near copies sent after it do not count against it
+      const othersN = (a.near_rep || a.id) === a.id ? 0 : g.size - (g.has(a.player) ? 1 : 0), repeatOwn = (g.get(a.player) || 0) >= 2;
       const f0 = firsts.get(a.player);
       let near = 0;   // new players together from one address
       if (a.ip && f0 != null) for (const p of ipPlayers.get(a.ip) || []) { const m = firsts.get(p); if (p !== a.player && m != null && Math.abs(m - f0) <= 10 * MIN_MS) near++; }
@@ -649,9 +699,13 @@ export function createOpr(o = {}) {
     if (first == null) return null;
     const last = lastRunOf(r.id, pk);
     const m = q('SELECT * FROM x_link_moves WHERE from_pubkey = ? AND from_linked_ms <= ? AND at_ms > ? ORDER BY at_ms DESC LIMIT 1').get(String(pk), first, last);
-    return m ? { user_id: m.user_id, username: m.username, linked_ms: m.from_linked_ms } : null;
+    if (!m) return null;
+    // kanban #3579 (audit opr a7-1-1): the held link's follows answer is the one it had when it moved - read from the account's current row, a
+    // stranger who moved the winner's account to a throwaway key and linked that key to another account emptied it, and the winner fell off the
+    // waiting bounty list ('not checked yet'). A move from before this column keeps the old read
+    return { user_id: m.user_id, username: m.username, linked_ms: m.from_linked_ms, ...(m.follows == null ? {} : { follows: m.follows, follows_ms: m.follows_ms }) };
   };
-  // kanban #3534: what X last said about the account behind a link (a moved account's: its current row's)
+  // kanban #3534: what X last said about the account behind a link (a moved account's: as it moved, #3579; a move from before: its current row's)
   const followSinceMs = cfg.followSince == null || cfg.followSince === '' ? null : Date.parse(String(cfg.followSince));
   const followRuleOn = (r) => followSinceMs !== null && Number(r.end_ms) > followSinceMs;
   function followsOf(g) {
@@ -699,9 +753,10 @@ export function createOpr(o = {}) {
     if (last.n >= X_CHECKS_PER_HOUR) return { ok: false, code: 429, why: 'Too many checks - try again in an hour' };
     const ck = checkKeyOf(player, ip);
     if (checkCapped('x_checks', player, ck, t, cfg.xChecksPerMinAll, cfg.xChecksPerMinNet)) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
+    if ((xBusyBy.get(ck) || 0) >= cfg.xInFlightPerCaller || xBusy >= cfg.xInFlightMost) return { ok: false, code: 429, why: 'X is being asked for others right now - try again in a few seconds' };   // kanban #3597
     q('INSERT INTO x_checks (player, at_ms, ip_key) VALUES (?, ?, ?)').run(player, t, ck);
     let a;
-    try { a = await xLookup(name); } catch (e) { a = { userId: null, why: String(e && e.message || e) }; }
+    try { a = await xLookup(name, ck); } catch (e) { a = { userId: null, why: String(e && e.message || e) }; }
     if (a && !a.userId && /no such X account/i.test(String(a.why || ''))) return { ok: false, code: 404, why: 'no such X account', username: name };
     if (!a || !a.userId) { log(`x check for ${player.slice(0, 8)} not answered: ${a && a.why}`); return { ok: false, code: 503, why: 'X could not be checked right now - try again in a minute' }; }
     const userId = String(a.userId), username = String(a.username || name).replace(/^@/, '');
@@ -722,7 +777,8 @@ export function createOpr(o = {}) {
     db.exec('BEGIN');
     try {
       if (held && held.pubkey !== player) {
-        q('INSERT INTO x_link_moves (user_id, username, from_pubkey, from_linked_ms, to_pubkey, at_ms) VALUES (?, ?, ?, ?, ?, ?)').run(userId, held.username, held.pubkey, held.linked_ms, player, at);
+        q('INSERT INTO x_link_moves (user_id, username, from_pubkey, from_linked_ms, to_pubkey, at_ms, follows, follows_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+          .run(userId, held.username, held.pubkey, held.linked_ms, player, at, held.follows ?? null, held.follows_ms ?? null);   // kanban #3579
         q('UPDATE x_links SET user_id = ?, checked_ms = ? WHERE pubkey = ?').run(`released-${at}-${userId}`, at, held.pubkey);
         log(`x @${username} moved from ${held.pubkey.slice(0, 8)} to ${player.slice(0, 8)} (#3382)`);
       }
@@ -772,7 +828,7 @@ export function createOpr(o = {}) {
   function publicBoard(round, viewer = null) {
     const r = roundRow(round);
     const used = new Map(q('SELECT player, COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL GROUP BY player').all(round).map((x) => [x.player, x.n]));
-    return boardOf(round).map((b) => ({ rank: b.rank, name: b.name, key: rowKeyOf(b.player), player: b.player, score: b.total, timeS: b.timeS, attempts: used.get(b.player) || 0,
+    return keptBoard(round).board.map((b) => ({ rank: b.rank, name: b.name, key: rowKeyOf(b.player), player: b.player, score: b.total, timeS: b.timeS, attempts: used.get(b.player) || 0,
       placed: xOf(b.player, r).placed, replay: `/replay/${b.attempt}` }));   // #3336: every row's best run is public, during the round too (owner 2026-11-22)
   }
 
@@ -967,6 +1023,16 @@ export function createOpr(o = {}) {
   }
   let ticking = false, followJob = null;
   const alertedDays = new Set(), followAsked = new Map();
+  // THE TICK NEVER WAITS ON X FOR LONG (kanban #3597): the list-time re-check runs as a job of its own; the tick waits for it followWaitMs (wall
+  // clock) at most, then writes the lists with the follows answers it has - the job goes on, and an answer it changes rebuilds the waiting list
+  function listRecheck(r) {
+    followAsked.set(r.id, now());
+    const job = recheckRound(r).then((res) => { followAsked.set(r.id, now()); if (res.changed.length) refreshLists(r.id); return res; })
+      .catch((e) => log(`follow re-check of ${r.id} failed: ${e.message}`));
+    if (!followJob) followJob = job.finally(() => { followJob = null; });
+    let timer;
+    return Promise.race([job, new Promise((ok) => { timer = setTimeout(ok, cfg.followWaitMs); })]).finally(() => clearTimeout(timer));
+  }
   async function tick() {
     if (ticking) return; ticking = true;
     try {
@@ -990,7 +1056,7 @@ export function createOpr(o = {}) {
       for (const r of q("SELECT * FROM rounds WHERE ceiling IS NULL AND seed IS NOT NULL AND state IN ('posting', 'ready', 'closed', 'listed') AND end_ms > ? ORDER BY start_ms DESC LIMIT 3").all(now() - 8 * DAY_MS)) ensureCeiling(r);
       for (const r of q("SELECT * FROM rounds WHERE state = 'closed' AND end_ms + ? <= ?").all(cfg.verifyGraceMs, now())) {
         await ensureCeiling(r);
-        if (followRuleOn(r)) { await recheckRound(r); followAsked.set(r.id, now()); }   // kanban #3534: a fresh X answer for the list
+        if (followRuleOn(r)) await listRecheck(r);   // kanban #3534: a fresh X answer for the list (#3597: waited for followWaitMs at most)
         makeLists(roundRow(r.id), now());
       }
       // kanban #3534: while a list waits for sign-off its best keys are asked again every followEveryMs (in the background; an unfollow loses the place)
@@ -1022,7 +1088,7 @@ export function createOpr(o = {}) {
   const publicKept = new Map(), PUBLIC_KEPT_MOST = 256;
   function publicRound(r, t = now()) {
     if (!r) return null;
-    const board = boardOf(r.id), best = board[0];
+    const board = keptBoard(r.id).board, best = board[0];
     return { id: r.id, number: r.num, test: !!r.test, chartDay: r.chart_day, startMs: r.start_ms, endMs: r.end_ms, phase: phaseOf(r, t), lastCallMs: r.end_ms - cfg.lastCallMs,
       entrySats: r.entry_sats, free: isFree(r), maxAttempts: r.max_attempts, split: [...SPLIT], potSats: potOf(r), bountySats: r.test ? 0 : cfg.bountySats,
       gameVersion: r.game_version, levelHash: r.level_hash, players: board.length,
@@ -1129,7 +1195,12 @@ export function createOpr(o = {}) {
       // requests a second from a stranger stalled every start and submit. The answer is kept and served again while nothing was written to the
       // store (SQLite total_changes) and the service's clock is in the same second; at most PUBLIC_KEPT_MOST answers are held
       if (req.method === 'GET' && (path === '/board' || path === '/round' || path === '/rounds')) {
-        const stamp = `${q('SELECT total_changes() AS n').get().n}|${Math.floor(now() / 1000)}`, k = `${path}?${url.searchParams.toString()}`;
+        // kanban #3591 (audit opr a7-2-2): keyed by the route and the round it answers (the one it names, else the current one; '-' for none) - the
+        // whole query text let a junk parameter that changes per request (/board?z=1, ?z=2, ... or ?round=<junk>) miss the kept answer every time,
+        // rebuild the board as before #3354 and push the honest answers out of the kept map
+        const arg = path === '/board' ? url.searchParams.get('round') : path === '/round' ? url.searchParams.get('id') : null;
+        const rr = path === '/rounds' ? null : arg ? roundRow(arg) : currentRound();
+        const stamp = `${q('SELECT total_changes() AS n').get().n}|${Math.floor(now() / 1000)}`, k = `${path}|${rr ? rr.id : '-'}`;
         const kept = publicKept.get(k);
         if (kept && kept.stamp === stamp) { res.writeHead(kept.code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(kept.body); return; }
         const sendKept = (code, body) => { const b = JSON.stringify(body); if (publicKept.size >= PUBLIC_KEPT_MOST) publicKept.clear(); publicKept.set(k, { stamp, code, body: b }); res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(b); };
@@ -1144,7 +1215,7 @@ export function createOpr(o = {}) {
         if (req.headers.authorization) { const w = authOf(req, path, raw); if (w.ok) viewer = w.pubkey; }
         // #3336 (owner 2026-11-22: "Und wir wollen alle Replays sehen"): the best run of every board row is public at any time, also while the
         // round runs; any other run (an older, weaker one; a disqualified player's) only to its own player
-        const onBoard = boardOf(r.id).some((b) => b.attempt === a.id);
+        const onBoard = bestRunsOf(r.id).has(a.id);   // #3581: kept per store state
         if (!onBoard && viewer !== a.player) return send(403, { ok: false, why: 'only the best run of each leaderboard row is public; your own runs always' });
         return send(200, { ok: true, attempt: a.id, name: nameOf(a.player), log: J(a.log), score: J(a.score), level: levelFor(r) });
       }
