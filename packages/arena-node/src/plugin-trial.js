@@ -133,13 +133,16 @@ function trialCases(box, manifest, left) {
 }
 
 function trialRunLength(source, manifest, { ms, name, configs }) {
-  if (lingeringCores(TRIAL_NAME)) return { ok: false, retry: true, cases: 0, why: 'an earlier trial\'s core thread is still ending: tried again later' };
+  // 2.0 (kanban #3604): the lingering trial threads are counted by the names they were loaded under, as trialRun's own (kanban #1694) -
+  // the 1.9 TRIAL_NAME label this was ported with (#2807) is not defined here, so every run-length trial threw a ReferenceError
+  if (trialLingers()) return { ok: false, retry: true, cases: 0, why: 'an earlier trial\'s core thread is still ending: tried again later' };
   const coreFiles = source && typeof source === 'object' && source.files instanceof Map ? { files: source.files, entry: source.entry }
     : { files: new Map([[SINGLE_ENTRY, String(source)]]), entry: SINGLE_ENTRY };
   const until = Date.now() + ms;
   const left = () => until - Date.now();
   let box;
-  try { box = loadCore(coreFiles, { name, lingerAs: TRIAL_NAME, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET, oneThread: true }); }
+  if (trialNames.size < 256) trialNames.add(name);
+  try { box = loadCore(coreFiles, { name, loadMs: ms, askMs: ms, until, liveCap: ARRAY_BUDGET, oneThread: true }); }
   catch (e) { return { ok: false, cases: 0, why: `it does not load in the sandbox: ${String(e.message).slice(0, 300)}` }; }
   let cases = 0;
   try {
