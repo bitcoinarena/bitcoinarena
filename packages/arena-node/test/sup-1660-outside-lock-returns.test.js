@@ -56,7 +56,7 @@ test('#1660 (1.9): the player left outside the two seats of a head-to-head round
     skipTo(Number(w.c.entryCloseMs) + 2500);
     for (const x of ps) await Promise.all(w.nodes.map((d) => fetch(`${base(d)}/reveal?entry=${toHex(x.p.eid)}`, { method: 'POST', body: JSON.stringify({ move: x.move, salt: toHex(x.s) }) })));
     await closeRound(w);
-    const settled = await untilSettled(w, 30000);
+    const settled = await untilSettled(w, 30000, { every: true });   // kanban #3662: the forfeit needs both nodes' settlement ACCEPTED
     // both seats' own settlement ACCEPTED (the forfeit is signed by both; each judges on its own record)
     for (const stop = Date.now() + 30000; Date.now() < stop; await new Promise((r) => setTimeout(r, 250)))
       if (w.nodes.every((d) => { const x = d.round.lockSettlement(w.rid); return x && x.state === 'ACCEPTED'; })) break;

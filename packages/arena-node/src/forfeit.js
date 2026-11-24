@@ -263,12 +263,15 @@ export class Forfeit {
         // AN ENTRY LEFT OUTSIDE THE SEATS GETS ITS FEE LOCK BACK WITH ITS STAKE (kanban #2430): a paying head-to-head entry that got no
         // seat is signed VOID, its fee lock never claimed (lock-settlement.js), and its stake comes back at settlement (#1582) - so does
         // its fee lock, on the same conditions read for this fee lock: no seat here, the settlement ACCEPTED here, the lock not among its claims
+        let waiting = null;   // kanban #3662: outside the seats, its settlement not yet ACCEPTED here - said as such, not as a lock that waits for its expiry
         if (!back.ok && this.round.stakeLock(entryIdBytes)) {
           const out = this.#outsideTheSeats(roundIdBytes, entryIdBytes, contract, fl);
           if (out.ok) back = out;
+          else if (out.pending) waiting = out.why;
         }
         // kanban #2872: a final-VOID head-to-head round's fee lock back with its stake - no round was played, no fee earned (§23.2, §0A.7)
         if (!back.ok) { const v = this.h2hVoidReturn(roundIdBytes, entryIdBytes, contract); if (v.ok) back = v; }
+        if (!back.ok && waiting) return refuse(`that entry ${waiting}`);
         if (!back.ok)
           return refuse('a fee lock comes back at once only for a cancelled order or a refunded market (or with a protocol-27 entry\'s voided stake): '
             + `this one is claimed at resolution, or expires back to its player${back.why ? ` (${back.why})` : ''}`);
@@ -386,6 +389,10 @@ export class Forfeit {
         // kanban #2872: a final-VOID head-to-head round's stake back at once (§23.2 VOID: "forfeit at once"), not after its settlement
         const v = this.h2hVoidReturn(roundIdBytes, entryIdBytes, contract);
         const back = v.ok ? v : this.nobodyWonReturn(roundIdBytes, entryIdBytes, lock, result);
+        // kanban #3662: AN ENTRY OUTSIDE THE SEATS WHOSE SETTLEMENT IS NOT YET ACCEPTED HERE is refused as not yet - the other seat of the
+        // forfeit finds the settlement in the federation a moment after the one that submitted it, and asked in between it answered that the
+        // lock is not forfeited at all. Only the refusal's words: every path that returns the lock is read above, as before
+        if (!back.ok && out.pending) return refuse(`that entry ${out.why}`);
         if (!back.ok)
           return refuse(`that run is ${result.outcome} with score ${result.score} and this round's minimum is `
             + `${contract.minScore}: not a qualifier, so its stake lock is not forfeited (${back.why})`);
@@ -454,7 +461,7 @@ export class Forfeit {
     const g = pluginForRound(contract, this.round.plugins);
     if (!g.ok || !g.headToHead) return { ok: false };
     if (this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat).some((e) => toHex(e.entryId) === toHex(entryIdBytes))) return { ok: false };
-    if (this.#settled(roundIdBytes) !== 'ACCEPTED') return { ok: false, why: 'it got no seat; it comes back once the round\'s settlement is ACCEPTED here' };
+    if (this.#settled(roundIdBytes) !== 'ACCEPTED') return { ok: false, pending: true, why: 'got no seat; its lock comes back once the round\'s settlement is ACCEPTED at this signer node (not yet: ask again)' };
     const moves = this.round.lockSettlementMoves ? this.round.lockSettlementMoves(roundIdBytes) : null;
     if (!moves) return { ok: false, why: 'this signer node keeps no record of what its settlement moved' };
     if ((moves.claims || []).includes(String(lock.outpoint))) return { ok: false, why: 'its lock was claimed in the settlement' };

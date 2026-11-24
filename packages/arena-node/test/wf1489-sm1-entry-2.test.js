@@ -77,7 +77,7 @@ test('#1489 sm1-entry-2 a stake lock that seats nobody in a head-to-head round c
     skipTo(Number(w.c.entryCloseMs) + 500);
     await reveal(w, a, ROCK, s1); await reveal(w, b, SCISSORS, s2); await reveal(w, c, PAPER, s3);
     await closeRound(w);
-    const settled = await untilSettled(w);
+    const settled = await untilSettled(w, 30000, { every: true });   // kanban #3662: the forfeit needs both nodes' settlement ACCEPTED
     assert.equal(settled.state, 'ACCEPTED', `${settled.why} ${JSON.stringify({ lock: lockAns, seats, a: short(a), b: short(b), c: short(c) })}`);
     // EVERY SEAT'S OWN SETTLEMENT ACCEPTED FIRST (2.0: the second seat reads its settlement ACCEPTED a moment after the first - SUBMITTING
     // in between, measured - and each seat returns an outside lock only once its own settlement is ACCEPTED without claiming it)
