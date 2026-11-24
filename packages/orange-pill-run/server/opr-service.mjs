@@ -56,6 +56,7 @@ export const DEFAULTS = Object.freeze({
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
   ipUnplayedShare: 10,   // kanban #3598: an address's attempts that keep nothing, per round, at most this many times its kept-run share (100 in a daily round)
   refusedLogNetBytes: 2e6, refusedLogRoundBytes: 200e6,   // kanban #3355: refused logs kept per round from one network (IPv6 /48, IPv4 /24) and from all
+  // (kanban #3582: the network budget counts the logs of scored runs too - every log a round keeps from that network)
 });
 // FREE ROUNDS (kanban #3273, owner 2026-11-22: "a free round - no testnet sats, but 2,000 real sats for the winner" - since 10,000, #3251): a round made now has
 // entry_sats 0. A free run starts at once (no invoice, no lnd), counts as paid (paid_ms = its start), is scored at submit; the round has no pot
@@ -321,6 +322,25 @@ export function createOpr(o = {}) {
     return c.kept >= share || c.n - c.kept >= cfg.ipUnplayedShare * share;
   };
   const IP_FULL = 'this address opened all the attempts it may in this round';
+  // ONE NETWORK'S KEPT LOGS, SCORED RUNS COUNTED (kanban #3582, audit opr a7-1-4): the #3355 budget counted refused logs only. Every log a round
+  // keeps is now counted against its network's refusedLogNetBytes, but a scored run is never refused for it and always keeps its log (ruling
+  // 2026-11-24: an IPv4 /24 is shared by honest players, so a full budget must not lock the network out of the round). A scored run that does
+  // not fit takes the room from that network's oldest kept logs of refused runs, which are dropped first; a refused run past the budget keeps
+  // no log (#3355). Scored runs - the round's best runs among them - are never dropped
+  const netOf = (ik, player) => (ik && ipNetsOf(ik)[0]) || ik || `key:${player}`;
+  const netLogBytes = (round, net) => q('SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net = ?').get(round, net).n;
+  const dropRefusedLogs = (round, net, need) => {
+    let held = netLogBytes(round, net);
+    if (held + need <= cfg.refusedLogNetBytes) return 0;
+    let dropped = 0;
+    for (const x of q("SELECT id, log_bytes, flags FROM attempts WHERE round = ? AND log_net = ? AND state = 'rejected' AND log IS NOT NULL ORDER BY submitted_ms, rowid").all(round, net)) {
+      if (held + need <= cfg.refusedLogNetBytes) break;
+      const f = J(x.flags, {}) || {}; f.logDropped = true;
+      q('UPDATE attempts SET log = NULL, log_net = NULL, log_bytes = NULL, flags = ? WHERE id = ?').run(JSON.stringify(f), x.id);
+      held -= Number(x.log_bytes) || 0; dropped++;
+    }
+    return dropped;
+  };
   const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
   const phaseOf = (r, t = now()) => (t >= r.end_ms || ['closed', 'listed'].includes(r.state) ? 'ended' : r.state !== 'ready' ? (r.state === 'posting' ? 'posting' : 'preparing')
     : t < r.start_ms ? 'soon' : t >= r.end_ms - cfg.lastCallMs ? 'last-call' : 'open');
@@ -489,11 +509,11 @@ export function createOpr(o = {}) {
     // of refused logs from one network (its /48, or an IPv4 /24) and refusedLogRoundBytes from all; past that the refusal and its reason only
     const reject = (why, extra = {}) => {
       let text = extra.keepLog ? JSON.stringify(body.log) : null;
-      const net = (a.ip_key && ipNetsOf(a.ip_key)[0]) || a.ip_key || `key:${a.player}`;
+      const net = netOf(a.ip_key, a.player);
       if (text != null) {
         const held = (sql, ...args) => q(sql).get(...args).n;
-        if (held('SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net = ?', a.round, net) + text.length > cfg.refusedLogNetBytes
-          || held('SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net IS NOT NULL', a.round) + text.length > cfg.refusedLogRoundBytes) {
+        if (netLogBytes(a.round, net) + text.length > cfg.refusedLogNetBytes
+          || held("SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net IS NOT NULL AND state = 'rejected'", a.round) + text.length > cfg.refusedLogRoundBytes) {
           text = null; extra = { ...extra, keepLog: false };
         }
       }
@@ -533,12 +553,17 @@ export function createOpr(o = {}) {
     }
     let feat = null;
     try { feat = runFeatures(sim, levelOf(r), body.log); } catch (e) { log(`attempt ${a.id.slice(0, 8)}: no bot features (${String(e.message).slice(0, 80)})`); }
+    // kanban #3582: a scored run always keeps its log; past its network's budget the room comes from that network's oldest refused logs
+    const net = netOf(a.ip_key, a.player);
+    const text = JSON.stringify(body.log);
+    dropRefusedLogs(a.round, net, text.length);
     const review = Object.keys(flags).length ? 'pending' : 'none';
     // a run whose entry is not paid yet is kept with its score, waiting: it is placed only if the entry settled before this submit, within the
     // entry's 30 s (#3265, #3603) - a payment after it never scores it
     const to = from === 'started' ? 'scored' : 'awaiting';
-    const done = q(`UPDATE attempts SET state = ?, submitted_ms = ?, log = ?, log_hash = ?, score = ?, flags = ?, client = ?, review = ?, bot_feat = ? WHERE id = ? AND state = ?`)
-      .run(to, t, JSON.stringify(body.log), logHash, JSON.stringify(score), JSON.stringify(flags), clientText(body.client), review, feat ? JSON.stringify(feat) : null, a.id, from);
+    const done = q(`UPDATE attempts SET state = ?, submitted_ms = ?, log = ?, log_hash = ?, score = ?, flags = ?, client = ?, review = ?, bot_feat = ?, log_net = ?, log_bytes = ? WHERE id = ? AND state = ?`)
+      .run(to, t, text, logHash, JSON.stringify(score), JSON.stringify(flags), clientText(body.client), review, feat ? JSON.stringify(feat) : null,
+        text != null ? net : null, text != null ? text.length : null, a.id, from);
     if (!done.changes) return { ok: false, why: 'that token was used already' };
     placeNear(a.id);
     if (to === 'scored' && r.state === 'listed') refreshLists(r.id);
@@ -1217,6 +1242,7 @@ export function createOpr(o = {}) {
         // round runs; any other run (an older, weaker one; a disqualified player's) only to its own player
         const onBoard = bestRunsOf(r.id).has(a.id);   // #3581: kept per store state
         if (!onBoard && viewer !== a.player) return send(403, { ok: false, why: 'only the best run of each leaderboard row is public; your own runs always' });
+        if (a.log == null) return send(404, { ok: false, why: 'that run has no stored log' });   // kanban #3582: a run past its network's log budget
         return send(200, { ok: true, attempt: a.id, name: nameOf(a.player), log: J(a.log), score: J(a.score), level: levelFor(r) });
       }
       // signed-in doors
