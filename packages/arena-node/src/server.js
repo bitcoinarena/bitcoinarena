@@ -1385,6 +1385,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // kanban #1533: POST /address-announcement takes only a node of the census last read for addresses (none read yet: bounded by the book)
   let addressCensus = null;
   const seatsLocalOk = () => process.env.ARENA_LOCAL_SEATS === '1' || !chain || chain === 'bitcoin-regtest';
+  let lastAnnounce = null, reachView = null;   // kanban #3565: the owner page's view of how the network learns this node's address
   const addressBook = createAddressBook({ db, verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
     isCensusNode: (hex) => (addressCensus ? addressCensus.has(String(hex)) : null), censusKeys: () => addressCensus, ownKey: (() => { try { return toHex(round.pubkey); } catch { return null; } })(),
     // kanban #2856: a peer on a loopback / private address only where this node runs local seats - no public chain (a regtest chain, a node with
@@ -9535,7 +9536,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           let st = {}; try { st = JSON.parse(rf(jn(home, 'state.json'), 'utf8')); } catch { st = {}; }
           let progress = null; try { progress = JSON.parse(rf(jn(home, 'reach-switch.json'), 'utf8')); } catch { progress = null; }
           const r = st.reach || {};
+          // kanban #3565: how the network learns the address - the seats that took this node's signed announcement (at once), the census's
+          // address(es) for it, the advertisement update on its way (about 12 blocks), and the old tunnel kept until the census switched
+          let follow = reachView;
+          if (!follow) { try { const { viewOf } = await import('../../arena-installer/src/reach-follow.js'); follow = viewOf(st); } catch { follow = null; } }
           const now = { ok: true, mode: r.mode || null, url: r.url || null, stable: !!r.mode && r.mode !== 'quick', serving: publicEndpoint || null, progress,
+            follow, announced: lastAnnounce,
             modes: { direct: 'your own address: the port open to the internet (checked from outside)', permanent: 'a named Cloudflare tunnel on your own domain (log in to Cloudflare)',
               workers: 'a free workers.dev address on your Cloudflare account (an API token)', tailscale: 'Tailscale Funnel (Tailscale installed and logged in)',
               quick: 'an anonymous tunnel: no account, but a new address at every restart' } };
@@ -14453,12 +14459,36 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const announceAddress = async () => {
     const list = await censusForAddresses();
     await pullAddresses(list);
+    await followReachNow(list);   // kanban #3565
     if (!publicEndpoint) return null;
     const a = addressBook.own({ node: toHex(round.pubkey), endpoint: publicEndpoint, sign: (d) => schnorr.sign(d, round.identity.secret) });
     const post = async (u, body) => (await fetch(u, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(15000) })).ok;
     const r = await announceOwn({ announcement: a, entries: list || [], book: addressBook, ownKey: toHex(round.pubkey), post });
     if (r.took) console.log(`[address] ${publicEndpoint} announced to ${r.took} of ${r.roots} seat(s)`);
+    // kanban #3565: what the owner page says of it - how many seats took the address it is reached at now
+    lastAnnounce = { endpoint: publicEndpoint, took: r.took, roots: r.roots, atMs: Date.now() };
     return r;
+  };
+  // A NEW WAY IN, FOLLOWED THROUGH (kanban #3565, reach-follow.js): on an installed node, on the address clock - the switch's progress finished,
+  // the advertisement update naming the new address posted while the census names another, the kept old tunnel taken away once it names the new
+  const SEAT_STARTED_MS = Date.now();
+  let followBusy = null;   // one pass at a time: two clocks at once must not post the update twice
+  const followReachNow = (list) => { if (!followBusy) followBusy = followReachOnce(list).finally(() => { followBusy = null; }); return followBusy; };
+  const followReachOnce = async (list) => {
+    const home = process.env.ARENA_HOME;
+    if (!home) return null;
+    try {
+      const { followReach } = await import('../../arena-installer/src/reach-follow.js');
+      const own = toHex(round.pubkey);
+      const mine = (list || []).filter((e) => e && e.pubkey && toHex(e.pubkey) === own && e.advert).map((e) => String(e.advert.endpoint || ''));
+      const release = fileURLToPath(new URL('../../../', import.meta.url));
+      const f = await followReach({ home, publicEndpoint, censusRead: !!(list && list.length), ownEndpoints: mine, startedMs: SEAT_STARTED_MS,
+        refresh: async (o) => (await import('../../arena-installer/src/change-roles.js')).refreshEndpoint({ ...o, release }),
+        removeTunnel: async () => (await import('../../arena-installer/src/service.js')).removeProgram({ id: 'tunnel', home }) });
+      for (const d of f.did) console.log(`[address] ${d}`);
+      reachView = f.view;
+      return f;
+    } catch (e) { console.log(`[address] following the new address: ${e.message}`); return null; }
   };
   // STARTED AND STOPPED FROM THE OWNER PAGE, AND AT BOOT ONLY IF THE OWNER LEFT IT ON (kanban #563): the announcements and the P2P
   // tunnel run inside the node, so the node switches them; their "at boot" kept in its store (service-settings.js)
@@ -14484,10 +14514,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // made now; each tick skips only while announceTimer runs (announceAddress reads the census and pulls itself then).
   let pullTimer = null;
   if (process.env.ARENA_ADDRESS_PULL !== '0') {
-    pullTimer = setInterval(() => { if (!announceTimer) censusForAddresses().then(pullAddresses).catch(() => {}); }, Number(process.env.ARENA_ADDRESS_ANNOUNCE_MS || 600000));
+    pullTimer = setInterval(() => { if (!announceTimer) censusForAddresses().then(async (l) => { await pullAddresses(l); await followReachNow(l); }).catch(() => {}); }, Number(process.env.ARENA_ADDRESS_ANNOUNCE_MS || 600000));
     pullTimer.unref();
-    setTimeout(() => { if (!announceTimer) censusForAddresses().then(pullAddresses).catch(() => {}); }, Number(process.env.ARENA_ADDRESS_PULL_FIRST_MS || 60000)).unref();
+    setTimeout(() => { if (!announceTimer) censusForAddresses().then(async (l) => { await pullAddresses(l); await followReachNow(l); }).catch(() => {}); }, Number(process.env.ARENA_ADDRESS_PULL_FIRST_MS || 60000)).unref();
   }
+  // kanban #3565: and once a minute after start whatever the announcements do - a switch's restart is followed through within a minute or two
+  if (process.env.ARENA_HOME) setTimeout(() => { censusForAddresses().then(followReachNow).catch(() => {}); }, Number(process.env.ARENA_ADDRESS_PULL_FIRST_MS || 60000)).unref();
   const p2pTunnels = (guardian || guardianNext) && process.env.ARENA_P2P_TUNNEL !== '0' ? createP2pTunnels({ ownKey: round.pubkey, say: (m) => console.log(m) }) : null;
   const p2pTunnelSync = async () => {
     let list = null;

@@ -13,6 +13,7 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { nodeState, defaultHome } from '../src/state.js';
 import { createWizard } from '../src/wizard.js';
+import { switchPlan } from '../src/reach-follow.js';
 
 const args = process.argv.slice(2);
 const i = args.indexOf('--home');
@@ -51,8 +52,15 @@ for (let t = 0; t < (mode === 'permanent' ? 120 : 1); t++) {
   await new Promise((r) => setTimeout(r, 5000));
 }
 if (!saved || !saved.ok) fail(saved ? saved.why : 'not saved');
+// THE OLD WAY STAYS UNTIL THE CENSUS NAMES THE NEW ONE (kanban #3565): the census, and every page and seat reading it, name the tunnel's
+// address until an advertisement update naming the new one is about 12 blocks deep - the seat posts that update after its restart and
+// takes the kept tunnel away once the census switched (reach-follow.js followReach)
+const plan = switchPlan(s.reach, mode);
+if (plan.previous) state.merge('reach', { previous: plan.previous });
 // THE SERVICE STEP AGAIN: arena.conf with the new address, the units, the seat restarted and tested at its public address
-const r = await wizard['POST /api/service']({ boot: !(s.service && s.service.boot === false) });
+// (on Linux this runner ends here: the seat's restart stops every process of its unit, this one too - the restarted seat finishes the
+// switch's progress, kanban #3565)
+const r = await wizard['POST /api/service']({ boot: !(s.service && s.service.boot === false), keepTunnel: plan.keepTunnel });
 if (!r.ok) fail(r.why);
 const after = state.read();
 say({ state: 'done', mode, url: after.reach && after.reach.url });

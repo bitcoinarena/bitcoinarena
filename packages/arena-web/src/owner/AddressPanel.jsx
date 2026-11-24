@@ -54,6 +54,23 @@ export class AddressPanel extends React.Component {
     if (p.state === 'done') return <p className="ok">Switched to {p.mode}: {p.url}</p>;
     return <p className="err">The switch to {p.mode} failed: {p.why}</p>;
   }
+  // HOW THE NETWORK LEARNS THE ADDRESS (kanban #3565): the seats at once (the node's signed announcement), the census only through an
+  // advertisement update about 12 blocks deep - until then the census, and what reads it, name the old address, which stays on meanwhile
+  follow(r) {
+    const f = r.follow, a = r.announced, lines = [];
+    const hours = (m) => (m >= 90 ? `about ${Math.round(m / 60)} hours` : `about ${m} minutes`);
+    if (a && a.roots) lines.push(<p key="a" className="sub">{a.took} of {a.roots} seats know this address (the node's signed announcement).</p>);
+    if (f && f.censusRead && r.stable) {
+      if (f.censusNamesNew) lines.push(<p key="c" className="ok">The census names this address.</p>);
+      else if (f.bonded) {
+        lines.push(<p key="c" className="warnline">The census still names {(f.advertised || []).join(', ') || 'another address'}: pages and seats that read it go there until it names this one.</p>);
+        if (f.update && f.update.txid) lines.push(<p key="u" className="sub">An advertisement update naming this address is on its way ({String(f.update.txid).slice(0, 12)}…): the census takes it about {f.takesBlocks} blocks after it is sent ({hours(f.takesMinutes)}).</p>);
+        else if (f.update && f.update.why) lines.push(<p key="u" className="err">The advertisement update naming this address could not be posted yet: {f.update.why}. The node tries again every 10 minutes.</p>);
+      }
+    }
+    if (f && f.previous) lines.push(<p key="p" className="sub">The old address {f.previous.url} stays on until the census names the new one, then it is turned off.</p>);
+    return lines.length ? <div className="addr-follow">{lines}</div> : null;
+  }
   copy(url) { try { navigator.clipboard.writeText(url); this.setState({ copied: true }); } catch { /* no clipboard */ } }
   render() {
     const { loaded, answer: r, mode, busy, message, copied } = this.state;
@@ -72,6 +89,7 @@ export class AddressPanel extends React.Component {
         </div>
         {r.stable ? null : <p className="warnline">This address changes when the node restarts. The node tells the network its new one by itself, but a stable address is better: choose one below.</p>}
         {this.progress(r.progress)}
+        {this.follow(r)}
         {running(r.progress) ? null : (
           <div>
             <h3 className="sh">How others reach this node</h3>
@@ -89,6 +107,7 @@ export class AddressPanel extends React.Component {
                 </label>);
             })}</div>
             <Button primary disabled={busy || !mode || mode === r.mode} onClick={this.go}>{busy ? 'Switching…' : mode && mode !== r.mode ? `Switch to ${(MODE[mode] || [mode])[0]}` : 'Choose another way'}</Button>
+            {mode && mode !== r.mode && mode !== 'quick' ? <p className="sub">The node tells the seats its new address at once. On chain it posts an advertisement update from its wallet (a small fee): the census names the new address about 12 blocks (about 2 hours) after the switch{['quick', 'permanent', 'workers'].includes(r.mode) && ['tailscale', 'direct'].includes(mode) ? ', and the old address keeps working until then' : ''}.</p> : null}
             {message ? <p className="err">{message}</p> : null}
           </div>
         )}
