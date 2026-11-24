@@ -608,6 +608,18 @@ export function createOpr(o = {}) {
     return { ok: true, lnAddress: s.address };
   }
   function boardOf(round) { return bestPerPlayer(runsOf(round)).map((b) => ({ ...b, name: nameOf(b.player) })); }
+  // A ROUND'S BEST RUNS, BUILT ONCE PER STORE STATE (kanban #3581, audit opr a7-1-3): the unsigned GET /replay/<id> rebuilt the whole board per
+  // request (boardOf: every scored run parsed, a players read per row) only to ask whether the run is a board row's best - ~41 ms at 1,000
+  // players on the one thread. The set of each round's best attempt ids is kept while nothing was written to the store (SQLite total_changes)
+  const bestKept = new Map(), BEST_KEPT_MOST = 64;
+  function bestRunsOf(round) {
+    const n = q('SELECT total_changes() AS n').get().n, k = bestKept.get(round);
+    if (k && k.n === n) return k.ids;
+    const ids = new Set(bestPerPlayer(runsOf(round)).map((b) => b.attempt));
+    if (bestKept.size >= BEST_KEPT_MOST) bestKept.clear();
+    bestKept.set(round, { n, ids });
+    return ids;
+  }
   /**
    * THE BOT LIKELIHOOD OF A ROUND (kanban #3274), admin and lists only: { runs: Map attempt -> { score, reasons, top }, players: Map player ->
    * { score, top, attempt } } - a player's is their most bot-like scored run. Across runs: near-identical inputs of other players and of the
@@ -1183,7 +1195,7 @@ export function createOpr(o = {}) {
         if (req.headers.authorization) { const w = authOf(req, path, raw); if (w.ok) viewer = w.pubkey; }
         // #3336 (owner 2026-11-22: "Und wir wollen alle Replays sehen"): the best run of every board row is public at any time, also while the
         // round runs; any other run (an older, weaker one; a disqualified player's) only to its own player
-        const onBoard = boardOf(r.id).some((b) => b.attempt === a.id);
+        const onBoard = bestRunsOf(r.id).has(a.id);   // #3581: kept per store state
         if (!onBoard && viewer !== a.player) return send(403, { ok: false, why: 'only the best run of each leaderboard row is public; your own runs always' });
         return send(200, { ok: true, attempt: a.id, name: nameOf(a.player), log: J(a.log), score: J(a.score), level: levelFor(r) });
       }
