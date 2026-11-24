@@ -286,6 +286,7 @@ if (process.env.ARENA_ATTACH_PROOF_DIR) {
 }
 if (url) {
   const call = bitcoindRpc({ url, cookiePath });
+  const pendingCall = Object.assign((method, params) => call(method, params, { label: 'pending' }), { batch: call.batch });
   // GET /headers KEPT UP WITH THE CHAIN: the attach proof's headers.bin was written once (to 156046 on
   // 2026-10-11), and a client that builds a committee itself needs headers past each round's beacon. The file stays the
   // start - it begins at the network's anchor - and every new block's header is appended from this node's bitcoind,
@@ -543,11 +544,16 @@ if (url) {
         let hash; try { hash = await call('getblockhash', [height]); } catch { return null; }
         return outpointInBlock(fromHex(String(await call('getblock', [hash, 0]))), outpoint);
       },
-      // AND THE DEPARTURE NOTICES ANCHORED IN A BLOCK (kanban #2612): the whole notice is in its anchor, so each seat reads them off its chain
-      departuresAt: async (height, hash) => {
-        const raw = fromHex(String(await call('getblock', [hash || await call('getblockhash', [height]), 0])));
-        return departuresInBlock(raw, height);
-      },
+      // AND THE DEPARTURE NOTICES ANCHORED IN A BLOCK (kanban #2612): the whole notice is in its anchor, so each seat reads them off its chain.
+      // ITS READS LABELLED 'departure' (the request id), AND SWITCHED OFF BY ARENA_DEPARTURE_SCAN=0 (kanban #3541; on by default): without
+      // departuresAt server.js starts no scan - a test that counts the chain view's block reads runs without it
+      ...(process.env.ARENA_DEPARTURE_SCAN === '0' ? {} : {
+        departuresAt: async (height, hash) => {
+          const raw = fromHex(String(await call('getblock', [hash || await call('getblockhash', [height], { label: 'departure' }), 0], { label: 'departure' })));
+          return departuresInBlock(raw, height);
+        },
+        departureHashAt: async (height) => { try { return String(await call('getblockhash', [height], { label: 'departure' })); } catch { return null; } },
+      }),
       censusAt: async (networkIdHex, height) => {
         const census = await chainRead(networkIdHex, height);
         if (!census.ok) { console.error(`[ballot] no census at ${height}: ${census.why}`); return null; }
@@ -613,10 +619,11 @@ if (url) {
     chainMempoolAncestors: async (txid) => { try { return (await call('getmempoolancestors', [txid])).map(String); } catch { return []; } },
     // AND THE MINUTE AFTER A FAILED BLOCK READ (f554a896): the waiting list reads no block in it - its pass says the list is partial
     // this time - and a failed read starts it (main-process.test.js (c): this list read 12 blocks inside the minute since b7c6a3263)
+    // (its block reads labelled 'pending', the request id - kanban #3541: a test's bitcoind tells them from the chain view's; a batch keeps its numbered ids)
     chainRecentBlocks: async (from, to) => {
       if (Date.now() - blocksFailedAtMs < 60000) throw new Error('a block read failed less than a minute ago: read again after it');
       let v;
-      try { v = await blocksOver(call, from, to, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; }
+      try { v = await blocksOver(pendingCall, from, to, { cache: blocksKept }); } catch (e) { blocksFailedAtMs = Date.now(); throw e; }
       return v.blocks.map((b, i) => ({ height: from + i, transactions: b.transactions }));
     },
     // THE CHAIN'S TIPS NEAR THE TOP (2026-10-20, "Mining view mismatch, what is true": the seats followed our own block at 157,133
