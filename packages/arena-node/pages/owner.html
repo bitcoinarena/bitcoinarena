@@ -1053,11 +1053,20 @@ function showNode(key) {
   };
   chip.append(k, c, b); w.append(chip);
 }
+// A NODE THAT MOVED (kanban #3565, an outside operator 2026-11-24: switched to Tailscale Funnel, and the site found only the quick tunnel's old
+// address - "This node did not answer: Failed to fetch" and nothing more): on the site, where it was looked for and what to do now
+function movedHint() {
+  if (!ON_SITE || document.getElementById('moved-hint')) return;
+  const p = document.createElement('p'); p.id = 'moved-hint'; p.className = 'sub';
+  p.textContent = 'It was asked at ' + BASE + ', the address it last announced to the seats. If you just changed how your node is reached, it tells the seats its new address within a few minutes of running on it: try again then. Or open the owner page on the node itself: its new address followed by /Dashboard/owner?here, and log in there with your owner key.';
+  const again = document.createElement('button'); again.type = 'button'; again.textContent = 'Try again'; again.onclick = () => location.reload();
+  $('who').after(p, again);
+}
 async function start() {
   areaProps = null; needs.clear();   // a new start draws no old area again
   $('public-line').hidden = !$('public').hasAttribute('href');
   try { state = await (await fetch(at('/owner'), { cache: 'no-store' })).json(); }
-  catch (e) { $('who').textContent = 'This node did not answer: ' + e.message; loadEnd(); return; }
+  catch (e) { movedHint(); $('who').textContent = 'This node did not answer: ' + e.message; loadEnd(); return; }
   boot(90, 'Signing in');
   showNode(state.node);
   // THE OWNER'S LOGIN IS ON THE ARENA SITE (kanban #687, the owner's playtest 2026-10-26 on 1.9.7: "the owner page still points to

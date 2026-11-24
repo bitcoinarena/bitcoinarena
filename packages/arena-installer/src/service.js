@@ -93,7 +93,7 @@ const run = (cmd, args) => new Promise((resolve) => execFile(cmd, args, { timeou
  * (injectable: the tests start the seat without systemd). `onStage('start')` once the services are in and the wait for the seat
  * begins (the wizard's progress, kanban #651). Answers { ok, why, ms, boot, linger }.
  */
-export async function installService({ node = process.execPath, release, home, port, bridgePort = null, tunnel = null, tunnelArgs = null, boot = true,
+export async function installService({ node = process.execPath, release, home, port, bridgePort = null, tunnel = null, tunnelArgs = null, boot = true, keepTunnel = false,
   env = process.env, sh = run, fetcher = fetch, waitMs = 90000, platform = process.platform, onStage = () => {} }) {
   if (platform === 'darwin' || platform === 'win32') {
     // THE CHAIN BRIDGE FIRST (Electrum mode): its own service, so the node finds its chain when it starts - on Linux it is the
@@ -103,7 +103,9 @@ export async function installService({ node = process.execPath, release, home, p
     // A WAY TO BE REACHED THAT RUNS NO TUNNEL TAKES THE OLD ONE AWAY (kanban #734, measured 2026-10-29 on the VM's arena-vm-734: reach moved
     // from a quick tunnel to Tailscale Funnel, and arena-tunnel--3 - cloudflared to the node's port - kept running beside it, the node still
     // reachable at its old random trycloudflare address): Funnel and direct run no tunnel, so one left from before is removed
-    if (!tunnel && !tunnelArgs) await removeProgram({ id: 'tunnel', home, env, sh, platform });
+    // KEPT UNTIL THE CENSUS NAMES THE NEW ADDRESS (kanban #3565): an owner-page switch passes keepTunnel - the seat takes it away later
+    // (reach-follow.js), since the census and every page reading it still name the tunnel's address for an hour or two
+    if (!tunnel && !tunnelArgs && !keepTunnel) await removeProgram({ id: 'tunnel', home, env, sh, platform });
     if (bridgePort) {
       const b = await installProgram({ id: 'chain-bridge', description: 'Bitcoin Arena: chain bridge (Electrum + Esplora, testnet4)',
         args: [node, join(release, 'packages', 'arena-installer', 'bin', 'chain-bridge.mjs'), String(bridgePort), home], home, boot, env, sh, platform });
@@ -119,7 +121,7 @@ export async function installService({ node = process.execPath, release, home, p
   if (bridgePort) { writeFileSync(join(dir, BRIDGE_UNIT), bridgeUnit({ node, release, home, bridgePort })); units.unshift(BRIDGE_UNIT); }
   else await removeProgram({ id: 'chain-bridge', home, env, sh, platform });
   if (tunnel) { writeFileSync(join(dir, TUNNEL_UNIT), tunnel); units.push(TUNNEL_UNIT); }
-  else await removeProgram({ id: 'tunnel', home, env, sh, platform });   // Funnel and direct run no tunnel: one left from before goes (kanban #734)
+  else if (!keepTunnel) await removeProgram({ id: 'tunnel', home, env, sh, platform });   // Funnel and direct run no tunnel: one left from before goes (kanban #734), unless kept until the census switched (#3565)
   const t0 = Date.now();
   for (const args of [['--user', 'daemon-reload'], ['--user', boot ? 'enable' : 'disable', ...units], ['--user', 'restart', ...units]]) {
     const r = await sh('systemctl', args);

@@ -69,7 +69,8 @@ export async function changeRolesOnNode({ home, release, roles, custody, post = 
       const u = built.update;
       // the owner's own choice of the audit role stands from now on: no later update adds it again (auditGrantDue)
       return { ok: true, tip: built.tip, txs: [{ name: 'funding', hex: u.funding.hex }, { name: 'update', hex: u.update.hex }],
-        ops: [{ op: 'set', key: 'roles', value: next }, { op: 'set', key: 'auditGranted', value: true }, { op: 'set', key: 'rolesUpdate', value: { txid: u.update.txid, advertId: u.advertId, before, after, atMs: nowMs } }],
+        ops: [{ op: 'set', key: 'roles', value: next }, { op: 'set', key: 'auditGranted', value: true }, { op: 'set', key: 'rolesUpdate', value: { txid: u.update.txid, advertId: u.advertId, before, after, atMs: nowMs } },
+          ...(s2.reach && s2.reach.url ? [{ op: 'set', key: 'advertEndpoint', value: s2.reach.url }] : [])],   // kanban #3565: the address it names too
         result: { plan: planOf(s2, u), txid: u.update.txid } };
     } });
   if (!r.ok) return r;
@@ -173,9 +174,48 @@ export async function refreshHostedGames({ home, release, post = false, chainKit
       const u = built.update;
       return { ok: true, tip: built.tip, txs: [{ name: 'funding', hex: u.funding.hex }, { name: 'update', hex: u.update.hex }],
         ops: [{ op: 'set', key: 'hostedGames', value: now }, { op: 'set', key: 'advertProtocols', value: protocols }, ...(grantAudit ? [{ op: 'set', key: 'roles', value: rolesNow }, { op: 'set', key: 'auditGranted', value: true }] : []),
+          ...(s2.reach && s2.reach.url ? [{ op: 'set', key: 'advertEndpoint', value: s2.reach.url }] : []),   // kanban #3565
           { op: 'set', key: 'gamesUpdate', value: { txid: u.update.txid, advertId: u.advertId, before: had.length, after: now.length, protocols: Math.max(...protocols), atMs: nowMs } }],
         result: { plan: planOf(u), txid: u.update.txid } };
     } });
   if (!r.ok) return r;
+  return { ok: true, plan: r.result.plan, update: { txid: r.result.txid } };
+}
+
+/**
+ * THE NODE'S NEW ADDRESS IN ITS ADVERTISEMENT (kanban #3565, an outside operator 2026-11-24: switched from a quick tunnel to Tailscale Funnel on
+ * the owner page, and the census - which only an advertisement changes - named the dead trycloudflare address hours later): an update of its
+ * bond naming `reach.url`, the roles, games and keys as they are, paid from the node's own wallet. Once per address (state advertEndpoint,
+ * and the on-chain action's key). The census takes it 6 deep, at its next 6-block step: about CENSUS_TAKES_BLOCKS blocks after it is sent.
+ * Answers { ok, unchanged } / { ok, plan } / { ok, plan, update } or { ok: false, why }.
+ */
+export async function refreshEndpoint({ home, release, post = false, chainKit = { coinsOf, broadcast, seen: txSeen }, state = null, nowMs = Date.now() }) {
+  const st = state || nodeState(home);
+  await resumeOpen(st, { chainKit });   // kanban #1165
+  const s = st.read();
+  if (!s.bond || !s.bond.txid) return { ok: false, why: 'no bond yet: its advertisement will name this address when it is posted' };
+  const endpoint = s.reach && s.reach.url;
+  if (!endpoint) return { ok: false, why: 'this node names no public address yet' };
+  if (s.advertEndpoint === endpoint) return { ok: true, unchanged: true };
+  const { CENSUS_TAKES_BLOCKS } = await import('./reach-follow.js');
+  const planOf = (u) => ({ endpoint, before: s.advertEndpoint || null, feeSats: String(u.fees.funding + u.fees.update), countsAfter: CENSUS_TAKES_BLOCKS });
+  if (!post) {
+    const built = await advertUpdateOf({ st, s, release, roles: s.roles || [], nowMs, chainKit });
+    return built.ok ? { ok: true, plan: planOf(built.update) } : built;
+  }
+  const r = await onchainAction({ state: st, kind: 'endpoint', key: endpoint, chainKit,
+    build: async (s2) => {
+      if (!s2.bond || s2.bond.txid !== s.bond.txid) return { ok: false, why: 'the bond changed meanwhile: ask again' };
+      if (!s2.reach || s2.reach.url !== endpoint) return { ok: false, why: 'the address changed meanwhile: ask again' };
+      const built = await advertUpdateOf({ st, s: s2, release, roles: s2.roles || [], nowMs, chainKit });
+      if (!built.ok) return built;
+      const u = built.update;
+      return { ok: true, tip: built.tip, txs: [{ name: 'funding', hex: u.funding.hex }, { name: 'update', hex: u.update.hex }],
+        ops: [{ op: 'set', key: 'advertEndpoint', value: endpoint },
+          { op: 'set', key: 'endpointUpdate', value: { txid: u.update.txid, advertId: u.advertId, endpoint, tip: built.tip ?? null, atMs: nowMs } }],
+        result: { plan: planOf(u), txid: u.update.txid } };
+    } });
+  if (!r.ok) return r;
+  if (r.already) { st.save({ advertEndpoint: endpoint }); return { ok: true, unchanged: true }; }
   return { ok: true, plan: r.result.plan, update: { txid: r.result.txid } };
 }

@@ -370,7 +370,7 @@ const serviceRun = async (b) => {
       try { s = state.save({ identityFromSeed: adoptIdentity(db, nodeKeyOf(fromHex(state.readSecret('seed.hex').trim()))) }); } finally { db.close(); }
     }
     stage('services');
-    const r = await install({ release, home: state.home, port, bridgePort: s.chain.kind === 'electrum' ? bridgePort : null, tunnel, tunnelArgs, boot, onStage: stage });
+    const r = await install({ release, home: state.home, port, bridgePort: s.chain.kind === 'electrum' ? bridgePort : null, tunnel, tunnelArgs, boot, keepTunnel: b.keepTunnel === true, onStage: stage });
     if (!r.ok) return { ok: false, why: r.why };
     // THE RELEASE THE NODE RUNS, RECORDED AT THE INSTALL as an update records it (node-services.js nodeOf: its version, the auto update)
     s = state.save({ release: { path: release, atMs: Date.now() } });

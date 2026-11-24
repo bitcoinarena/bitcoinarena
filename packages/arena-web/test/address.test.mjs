@@ -74,3 +74,27 @@ test('a failed first read is asked again: the address shows without a reload', a
   await bad.read(); await new Promise((r) => setTimeout(r, 60));
   assert.equal(k, 3); assert.match(renderToStaticMarkup(bad.render()), /the node did not answer/);
 });
+
+// kanban #3565 (an outside operator, 2026-11-24: switched to Tailscale Funnel, the census named the dead quick tunnel for hours, and nothing on
+// the page said how the network learns the new address): the seats that took it, the census's address, the update on its way and how long it
+// takes, the old tunnel kept until the census switched - and before the switch, what it costs and how long it takes
+test('after a switch: the seats that know the new address, the census still on the old one, the update and its blocks, the old tunnel kept', () => {
+  const NEW = 'https://op-node.tail1234.ts.net:8443', OLD = 'https://realistic-ecology-municipal-modified.trycloudflare.com';
+  const base = { ...quick, mode: 'tailscale', url: NEW, stable: true, announced: { endpoint: NEW, took: 7, roots: 7, atMs: 1 } };
+  const follow = { censusRead: true, advertised: [OLD], censusNamesNew: false, bonded: true, takesBlocks: 12, takesMinutes: 120,
+    update: { txid: 'ab'.repeat(32), endpoint: NEW, atMs: 1 }, previous: { mode: 'quick', url: OLD, atMs: 1 } };
+  const html = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: { ...base, follow } } }));
+  assert.match(html, /7 of 7 seats know this address/);
+  assert.match(html, new RegExp(`The census still names ${OLD.replace(/\./g, '\\.')}`));
+  assert.match(html, /advertisement update naming this address is on its way \(abababababab…\)/);
+  assert.match(html, /about 12 blocks after it is sent \(about 2 hours\)/);
+  assert.match(html, new RegExp(`The old address ${OLD.replace(/\./g, '\\.')} stays on until the census names the new one`));
+  const failed = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: { ...base, follow: { ...follow, update: { endpoint: NEW, why: 'no coins for the fee', atMs: 1 } } } } }));
+  assert.match(failed, /could not be posted yet: no coins for the fee/);
+  const switched = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: { ...base, follow: { ...follow, advertised: [NEW], censusNamesNew: true, previous: null } } } }));
+  assert.match(switched, /The census names this address/);
+  assert.doesNotMatch(switched, /still names/);
+  const before = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: quick, mode: 'tailscale' } }));
+  assert.match(before, /the census names the new address about 12 blocks \(about 2 hours\) after the switch/);
+  assert.match(before, /the old address keeps working until then/);
+});
