@@ -818,8 +818,7 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
           const read = new Map();
           for (const row of b.rows || []) if (Number(row.rounds) > 0 && /^[0-9a-f]{64}$/i.test(String(row.player || ''))) {
             const k = String(row.player).toLowerCase(); read.set(k, (read.get(k) || 0) + Number(row.rounds)); }
-          answers.push(read);
-          if (answers.length === 1 && Array.isArray(b.entered)) enteredLast.set(`network|${g}`, new Set(b.entered.filter(keyOk).map((k) => String(k).toLowerCase())));
+          answers.push(read);   // its `entered` is that seat's own store's list, read below from every seat (kanban #3587: never taken as the network's)
         } catch { /* that seat does not answer: the next one */ }
       }
       if (answers.length < needAnswers) return;
@@ -838,8 +837,16 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
         if (Array.isArray(b.entered)) enteredLast.set(`${seat}|${g}`, new Set(b.entered.filter(keyOk).map((k) => String(k).toLowerCase())));
       } catch { /* that seat does not answer: its last list stays */ }
     })));
-    const ent = new Set(); for (const s of enteredLast.values()) for (const k of s) ent.add(k);
-    entered = ent;
+    // NO ONE SEAT'S `entered` DECIDES EITHER (kanban #3587, audit faucet a7-2-1, the #2818 rule for the field #2875 added): the lists are unsigned,
+    // and any one seat's list was unioned into the played list - one seat (even the last configured, which the rows read never reaches) named a
+    // never-played key a player. A key counts only when more than half of up to PLAYED_READS of the seats with a list name it: with two or
+    // more seats answering, at least two seats. Not a majority of every seat: a seat holds only its committees' rounds, so an honest entry is
+    // on its round's committee seats, not on all of them. A seat that does not answer keeps its last list (#2565), as before.
+    const bySeat = new Map();   // seat -> every key it lists in any game
+    for (const [sg, set] of enteredLast) { const seat = sg.slice(0, sg.lastIndexOf('|')); const all = bySeat.get(seat) || new Set(); for (const k of set) all.add(k); bySeat.set(seat, all); }
+    const need = Math.floor(Math.min(PLAYED_READS, bySeat.size) / 2) + 1, seen = new Map();
+    for (const all of bySeat.values()) for (const k of all) seen.set(k, (seen.get(k) || 0) + 1);
+    entered = new Set([...seen].filter(([, n]) => n >= need).map(([k]) => k));
     for (const g of games) for (const [k, n] of lastOf.get(g) || []) {
       next.add(k); const m = counts.get(k) || {}; m[g] = (m[g] || 0) + n; counts.set(k, m); }
     keys = next; perGame = counts; at = Date.now();
