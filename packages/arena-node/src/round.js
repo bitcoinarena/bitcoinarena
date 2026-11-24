@@ -1839,6 +1839,9 @@ export class Round {
       marks: ok.marks,
       dropped: marks.length - live,
       throughTick: ok.throughTick,
+      // WHERE THE COMMITTED INPUTS END (kanban #3567): the tick after the last tick of the batches the last carried mark commits to
+      // (null: none). A mark may name an earlier head than the ticks below its own tick, so this can be short of throughTick.
+      inputsThroughTick: (() => { let end = null; for (const b of batches) { const at = batchTicks(b); if (at.length) end = at[at.length - 1] + 1; } return end; })(),
     };
   }
 

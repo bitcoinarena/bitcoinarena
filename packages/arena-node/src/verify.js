@@ -1748,8 +1748,13 @@ export class Verifier {
    * submitted to the same pool - and when there are none the answer stands.
    */
   async #atLastMark(roundIdBytes, entryId, entry, answer, canonical, options) {
-    const last = canonical.throughTick;
-    if (!Number.isInteger(last)) return answer;
+    if (!Number.isInteger(canonical.throughTick)) return answer;
+    // AND NOT PAST THE INPUTS THAT MARK COMMITTED TO (kanban #3567, audit play-a7-1-2, high): a last mark may name an earlier batch head
+    // than the ticks below its own tick, and those uncommitted ticks - sent one way to one seat, another way to the next - split the
+    // signed result over one canonical transcript. The replay ends at whichever comes first: the mark's tick or the committed inputs.
+    const inputs = canonical.inputsThroughTick === undefined ? canonical.throughTick
+      : (Number.isInteger(canonical.inputsThroughTick) ? canonical.inputsThroughTick : entry.joinTick);
+    const last = Math.min(canonical.throughTick, inputs);
     const full = this.round.transcript(roundIdBytes, entryId);
     const reach = full.ticks.length ? full.ticks[full.ticks.length - 1].tick + 1 : entry.joinTick;
     if (reach <= last) return answer;
@@ -2373,7 +2378,7 @@ export class Verifier {
         }
         // A RE-RUN IS AFTER THE CLOSE TOO: a run LIVE at its last receipted
         // mark is the same FAILED the close signed (§15, ruled 2026-09-12).
-        let scored = canonical   // every run at its last carried mark, as the close (kanban #3372)
+        let scored = canonical   // every run at its last carried mark and its committed inputs, as the close (kanban #3372, #3567)
           ? await this.#atLastMark(roundIdBytes, entryIdBytes, found.entry, answer, canonical, { roundRandomness: beacon.hash })
           : answer;
         // §13B AT ANY TICK HOLDS IN A RE-RUN TOO (audit): an entry this seat holds a proven fork of is re-run as
