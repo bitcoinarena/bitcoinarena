@@ -22,7 +22,9 @@
  *              HW_GATEWAY_MOVES (ops/gateway-moves.json) is our own move: a plain "moved ... gw-c -> gw-b" line, not red (2026-11-21)
  *   FIX     what has a safe runbook, each behind guards and a rate limit, and rechecked on the next pass before it is ever done again:
  *           - a test host seat down two passes: restart that one unit (load1 < 12, :03-:08 of a quarter only - never across a seating,
- *             memory seat-roll-seating-window -, one seat per 10 min, the same seat once per hour)
+ *             memory seat-roll-seating-window -, one seat per 10 min, the same seat once per hour; kanban #3551: never while the host is
+ *             short on memory - MemAvailable under HW_RESTART_MEM_MIN_MB, or the swap all but full and MemAvailable under
+ *             HW_RESTART_SWAPFULL_MEM_MIN_MB: a starting seat's first minute on a host with no swap left took the load from 10 to 25)
  *           - old pending txids missing from miner C's list: appended, the miner stopped so its loop restarts it with them (ops/minerc-727.sh)
  *           - a next hour no one can join, or a day without posting: NOT fixed - an emergency grid posted by a machine crashed every seat on
  *             10-25. The alert carries the runbook command; emergencyGrid() is the hook to automate it later.
@@ -65,6 +67,9 @@ export function config(env = process.env, argv = []) {
     unitOf: (base) => { const m = /:(\d+)$/.exec(base); const p = m ? Number(m[1]) : 0; return testHost.includes(base) && p > 31211 && (p - 31211) % 10 === 0 ? `blwp-tn4-node@${(p - 31211) / 10}.service` : null; },
     statePath: dry ? state.replace(/\.json$/, '') + '.dry.json' : state,
     loadMax: n('HW_LOAD_MAX', 12),
+    // kanban #3551 (outage 2026-11-23): a seat restart needs room for the start (~1 GB malloc heap and ~1 GB V8 pages in its first minute)
+    restartMemMinMb: n('HW_RESTART_MEM_MIN_MB', 2048),            // MemAvailable under this: held
+    restartSwapFullMemMinMb: n('HW_RESTART_SWAPFULL_MEM_MIN_MB', 4096), // the swap under 5 % free and MemAvailable under this: held
     confirm: n('HW_CONFIRM_PASSES', 2),                 // a problem counts once it is seen on this many passes in a row
     notOpenPasses: n('HW_NOT_OPEN_PASSES', 5),          // "seated, none open" alerts only after this many passes (about 15 min)
     repeatMs: n('HW_REPEAT_MIN', 60) * 60000,           // the same alert again at most this often
@@ -100,12 +105,28 @@ export function config(env = process.env, argv = []) {
 const hm = (ms) => new Date(Number(ms)).toISOString().slice(11, 16);
 const mins = (ms) => Math.round(ms / 60000);
 const short = (s) => String(s).replace(/^https?:\/\//, '');
+/** kanban #3551: /proc/meminfo's text in MB ({ availMb, swapTotalMb, swapFreeMb }), null when it has no MemAvailable. */
+export function meminfoOf(text) {
+  const kb = (k) => { const m = new RegExp(`^${k}:\\s+(\\d+) kB`, 'm').exec(String(text)); return m ? Number(m[1]) : null; };
+  const avail = kb('MemAvailable');
+  if (avail == null) return null;
+  return { availMb: Math.round(avail / 1024), swapTotalMb: Math.round((kb('SwapTotal') || 0) / 1024), swapFreeMb: Math.round((kb('SwapFree') || 0) / 1024) };
+}
+/** kanban #3551: why the host is too short on memory for a seat to start (the words for the log), or '' when it is not or is not known. */
+export function memShortOf(mem, cfg) {
+  if (!mem || !Number.isFinite(mem.availMb)) return '';
+  const swapFull = mem.swapTotalMb > 0 && mem.swapFreeMb < mem.swapTotalMb * 0.05;
+  const words = `${mem.availMb} MB available, swap ${mem.swapFreeMb} of ${mem.swapTotalMb} MB free`;
+  if (mem.availMb < cfg.restartMemMinMb) return `${words} (under ${cfg.restartMemMinMb} MB)`;
+  if (swapFull && mem.availMb < cfg.restartSwapFullMemMinMb) return `${words} (swap full, under ${cfg.restartSwapFullMemMinMb} MB)`;
+  return '';
+}
 /** :03-:08 of each quarter hour - the only minutes a seat may restart (memory seat-roll-seating-window: the seating runs ~:13 to past :15). */
 export const inRestartMinutes = (nowMs) => { const s = Math.floor(Number(nowMs) / 1000) % 900; return s >= 180 && s < 540; };
 
 // ---------------------------------------------------------------- THE READ: every fact of one pass, through `io` (faked in the tests)
 export async function gather(io, cfg, state, nowMs) {
-  const f = { nowMs, load: await io.loadavg(), seats: [], units: {}, lists: [], games: [], duty: [], pending: [], answering: null, minerc: null };
+  const f = { nowMs, load: await io.loadavg(), mem: io.meminfo ? await io.meminfo() : null, seats: [], units: {}, lists: [], games: [], duty: [], pending: [], answering: null, minerc: null };
   // b. every seat's /identity, four at once
   const all = [...cfg.testHost.map((b) => ({ base: b, machine: 'testHost' })), ...cfg.mac.map((b) => ({ base: b, machine: 'mac' }))];
   for (let i = 0; i < all.length; i += 4) {
@@ -173,6 +194,7 @@ export function assess(f, prev, cfg) {
   const seen = new Set();
   const streak = (key, on) => { if (on) { st.streak[key] = (st.streak[key] || 0) + 1; seen.add(key); } return st.streak[key] || 0; };
   const [l1, l5, l15] = f.load;
+  const memShort = memShortOf(f.mem, cfg);
 
   // a. THE NEXT HOUR'S ROUNDS (#757/#758)
   const postedToday = postedApps(f.duty, 'today');
@@ -239,6 +261,7 @@ export function assess(f, prev, cfg) {
       if (fx && fx.recheck === 'failed') tried.push(`restarted ${hm(fx.atMs)} UTC, still down`);
       const blocked = [], held = [];   // blocked: the log's words; held: the alert's
       if (!(l1 < cfg.loadMax)) { blocked.push(`1-min load ${l1} >= ${cfg.loadMax}`); held.push(`load ${l1} >= ${cfg.loadMax}`); }
+      if (memShort) { blocked.push(`memory short: ${memShort}`); held.push('memory short'); }
       if (!inRestartMinutes(nowMs)) { blocked.push(`${hm(nowMs)} UTC is not :03-:08 of a quarter (seating)`); held.push('seating minutes'); }
       if (st.lastSeatRestartMs && nowMs - st.lastSeatRestartMs < cfg.restartGapMs) { blocked.push(`a seat was restarted ${mins(nowMs - st.lastSeatRestartMs)} min ago (one at a time, ${mins(cfg.restartGapMs)} min apart)`); held.push('another seat just restarted'); }
       if (fx && nowMs - fx.atMs < cfg.restartSameMs) { blocked.push(`${s.unit} was restarted ${mins(nowMs - fx.atMs)} min ago (once per ${mins(cfg.restartSameMs)} min)`); held.push('once per hour'); }
@@ -576,6 +599,7 @@ export function realIo(cfg) {
   return {
     now: () => Date.now(),
     loadavg: async () => readFileSync('/proc/loadavg', 'utf8').split(' ').slice(0, 3).map(Number),
+    meminfo: async () => { try { return meminfoOf(readFileSync('/proc/meminfo', 'utf8')); } catch { return null; } },
     topProcs: async () => { try { return topLine(await run('ps', ['-eo', 'pcpu,args', '--sort=-pcpu', '--no-headers'])); } catch { return null; } },
     get,
     identity: async (base, timeoutMs = 8000) => {
@@ -675,6 +699,7 @@ export function saveState(path, st) { mkdirSync(dirname(path), { recursive: true
 /** What a pass did, for the log: one JSON line, and in --dry each alert written out. */
 export function report(r, cfg) {
   const out = [JSON.stringify({ hw: 'pass', at: new Date(r.facts.nowMs).toISOString(), dry: cfg.dry, load: r.facts.load,
+    ...(r.facts.mem ? { mem: `${r.facts.mem.availMb} MB available, swap ${r.facts.mem.swapFreeMb}/${r.facts.mem.swapTotalMb} MB free` } : {}),
     seats: `${r.facts.seats.filter((s) => s.ok).length}/${r.facts.seats.length}`, lists: `${r.facts.lists.filter(Boolean).length}/${r.facts.lists.length}`,
     problems: r.problems.map((p) => `${p.alert ? '!' : '-'} ${p.key}: ${p.title}`),
     ...(r.planned && r.planned.length ? { planned: r.planned.map((w) => `${w.what} until ${new Date(Number(w.untilMs)).toISOString().slice(11, 16)}${w.auto ? ' (roll seen)' : ''}`) } : {}),
