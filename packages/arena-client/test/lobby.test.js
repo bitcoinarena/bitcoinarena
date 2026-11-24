@@ -167,9 +167,9 @@ test('2 of 2: Join only where both of the round\'s signer nodes signed it open a
   assert.deepEqual(byName.freeOpen.said.map((c) => `${c.joined}/${c.playing}`), ['2/1', '2/2'], 'both nodes\' counts are carried, each as that node\'s');
   const line = lobbyLine(byName.freeOpen, NOW);
   console.log(`  ${line}`);
-  assert.match(line, /^free - no wallet, no Lightning · entry open, closes in 2:55 · 2 signer nodes agree \(2 needed\) · /);
-  //: "N signer nodes agree (M needed)", never "7 of 5"
-  assert.match(lobbyLine(byName.oneSignerNode, NOW), /1 signer node agrees \(2 needed\) - waiting for 1 more/);
+  assert.match(line, /^free - no wallet, no Lightning · entry open, closes in 2:55 · 2 seats agree \(2 needed\) · /);
+  //: "N seats agree (M needed)", never "7 of 5"
+  assert.match(lobbyLine(byName.oneSignerNode, NOW), /1 seat agrees \(2 needed\) - waiting for 1 more/);
   assert.match(lobbyLine(byName.payingOpen, NOW), /stake 100 sat - a federation stake lock .* listed it as free$/);
   // ITS FEDERATION AND LOAD (§23A.3): named beside the stake; the load once the page holds that federation's status
   const fid = Buffer.from(byName.payingOpen.contract.federationId).toString('hex');
