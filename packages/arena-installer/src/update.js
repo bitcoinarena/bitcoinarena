@@ -325,8 +325,17 @@ export const SEAT_DATA_FILES = Object.freeze(['node.db', 'node.db-wal', 'node.db
 /** Never put back by a rollback: the update does not change them, and the state may hold what another process recorded meanwhile (kanban #1165). */
 const NEVER_RESTORED = new Set(['state.json', 'seed.hex']);
 
+/**
+ * THE OWNER'S STOP SURVIVES AN UPDATE (kanban #3606, state audit 2026-11-12 sm1-node-1): moveNode stopped every unit naming the old release and
+ * started all of them again, plus their PartOf companions (#3272) - a liquidity provider, gateway or LND the owner had stopped on the owner page
+ * ran again, paying from the owner's channels, after every auto update. The units found `inactive` before the stop are on the journal
+ * (oldStopped, written before anything stops); every start of the move, its rollback and the resume leaves them out. The seat always starts:
+ * the update checks it answers. Their files still move to the new release. Where no run state can be read (macOS, Windows) the list is empty.
+ */
+const runAgain = (svc, fs, oldStopped = []) => fs.filter((f) => f === svc.seatFile || !oldStopped.includes(f));
+
 /** THE ROLLBACK: the old service files, the backup (as `keepDb` says), the old release started. { put, back, dbKept } */
-async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, backup, keepDb, from = null, to, port, fetcher, waitMs, sleep, note = () => {}, decided = false }) {
+async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, backup, keepDb, from = null, to, port, fetcher, waitMs, sleep, note = () => {}, decided = false, oldStopped = [] }) {
   // started whatever the restore says (measured in the Windows VM: copying the backup back threw while the stopped seat still held its
   // database, and the node was left with nothing running)
   try { await svc.stop(moving, to); } catch { /* the start below is what matters */ }
@@ -363,7 +372,8 @@ async function rollBack({ svc, home, moving, oldTexts, migrating, confFile, back
     catch (e) { notPut.push(`state.json release: ${e.code || e.message}`); }
   }
   if (notPut.length) put = { ok: false, failed: [...(put.ok ? [] : put.failed), ...notPut] };
-  try { await svc.start(moving); } catch { /* the answer below says whether it runs */ }
+  // the run state the update found (kanban #3606): what the owner had stopped stays stopped
+  try { await svc.start(runAgain(svc, moving, oldStopped), oldStopped); } catch { /* the answer below says whether it runs */ }
   const back = await waitHealthy({ port, fetcher, waitMs });
   return { put, back, dbKept: !!keepDb };
 }
@@ -383,7 +393,7 @@ export async function resumeUpdate({ home, env = process.env, sh = run, fetcher 
   let served = !!j.served, keep = false, why = `the update stopped at ${j.phase}`;
   if (j.phase === U.UNITS_WRITTEN || j.phase === U.STARTED) {
     // the new units are written: the new release may run, or may not have been started
-    if (j.phase === U.UNITS_WRITTEN) { await svc.start(moving).catch(() => null); journalStep(home, j.id, U.STARTED); }
+    if (j.phase === U.UNITS_WRITTEN) { await svc.start(runAgain(svc, moving, j.oldStopped || []), j.oldStopped || []).catch(() => null); journalStep(home, j.id, U.STARTED); }
     const after = await waitHealthy({ port: j.port, fetcher, waitMs });
     const same = after.ok && (!j.identityBefore || after.identity === j.identityBefore);
     if (same) served = true;
@@ -419,7 +429,7 @@ export async function resumeUpdate({ home, env = process.env, sh = run, fetcher 
   else if (!served && dbChangedSince(home, j.backup)) { served = true; why += '; node.db changed since the backup: kept'; }
   if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served, why });
   const r = await rollBack({ svc, home, moving, oldTexts: j.oldTexts || {}, migrating: j.migrating, confFile: join(home, 'arena.conf'), backup: j.backup, keepDb: served,
-    from: j.from, to: j.to, port: j.port, fetcher, waitMs, sleep, note: (x) => journalNote(home, j.id, x), decided });
+    from: j.from, to: j.to, port: j.port, fetcher, waitMs, sleep, note: (x) => journalNote(home, j.id, x), decided, oldStopped: j.oldStopped || [] });
   // the backup was put back (by the rollback that died after it): not a kept database
   const dbKept = r.dbKept && !alreadyBack;
   journalStep(home, j.id, U.ROLLED_BACK, { restored: r.back.ok, dbKept });
@@ -572,7 +582,17 @@ function servicesOf({ platform, env, sh, home, port, node, selfPid = process.pid
     bridgeFor: (release, state) => bridgeUnit({ node, release, home, bridgePort: bridgePortOf(home, state) }),
     stop: async (fs) => { const r = await sh('systemctl', ['--user', 'stop', ...fs.map(unit)]); return r.ok ? { ok: true } : { ok: false, why: `the node did not stop: ${r.err.trim().slice(0, 200)}` }; },
     // and the units PartOf one of them (kanban #3272): systemd stopped them with it, but PartOf= never starts them again
-    start: async (fs) => { await sh('systemctl', ['--user', 'daemon-reload']); const r = await sh('systemctl', ['--user', 'start', ...[...fs, ...partOfCompanions(fs, files())].map(unit)]); return r.ok ? { ok: true } : { ok: false, why: (r.err || '').trim().slice(0, 200) }; },
+    // ... but not a companion the owner had stopped before the update (kanban #3606: `skip`, the update's oldStopped)
+    start: async (fs, skip = []) => { await sh('systemctl', ['--user', 'daemon-reload']); const r = await sh('systemctl', ['--user', 'start', ...[...fs, ...partOfCompanions(fs, files()).filter((f) => !skip.includes(f))].map(unit)]); return r.ok ? { ok: true } : { ok: false, why: (r.err || '').trim().slice(0, 200) }; },
+    // THE UNITS THE OWNER HAD STOPPED (kanban #3606): of `fs` and their PartOf companions, the ones systemd says are `inactive` (one line per
+    // unit from is-active; an answer of another length is no answer, and nothing counts as stopped). A failed unit is not an owner's stop.
+    stopped: async (fs) => {
+      const all = [...fs, ...partOfCompanions(fs, files())];
+      if (!all.length) return [];
+      const r = await sh('systemctl', ['--user', 'is-active', ...all.map(unit)]);
+      const lines = String(r.out || '').trim().split(/\r?\n/).map((x) => x.trim());
+      return lines.length === all.length ? all.filter((f, i) => lines[i] === 'inactive') : [];
+    },
     prepare: async () => {},
   };
 }
@@ -819,7 +839,11 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
   const room = roomForUpdate(home, { freeBytes });
   step(`free disk space: ${room.free === null ? 'not said by this system' : `${mbText(room.free)}, the backup needs ${mbText(room.need)}`}`);
   if (!room.ok) return { ok: false, why: room.why };
-  let journal = beginJournal(home, { from, to: newRelease, port, platform, migrating, identityBefore: before.ok ? before.identity : null, oldTexts: Object.fromEntries(oldTexts) });
+  // the units the owner had stopped, read before anything stops and written with the journal (kanban #3606)
+  let oldStopped = [];
+  try { oldStopped = svc.stopped ? await svc.stopped(moving) : []; } catch { oldStopped = []; }
+  if (oldStopped.length) step(`stopped by the owner before the update, left stopped: ${oldStopped.map((f) => f.split(/[\\/]/).pop()).join(', ')}`);
+  let journal = beginJournal(home, { from, to: newRelease, port, platform, migrating, identityBefore: before.ok ? before.identity : null, oldTexts: Object.fromEntries(oldTexts), oldStopped });
   let backup = null;
   // ANY FAILURE AFTER THE JOURNAL BEGAN IS ROLLED BACK (kanban #1440, audit 8 O8-1: a backup that threw on a full disk left the node stopped, its
   // journal at `stopping`; the next check 30 min later started the old release and stopped it again, for good): the old service files, the
@@ -834,7 +858,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     const bk = backup || j.backup || null;
     const keepDb = !!j.served || dbChangedSince(home, bk);
     try { if (j.phase !== U.ROLLING_BACK) journalStep(home, j.id, U.ROLLING_BACK, { served: keepDb, why: e.message }); } catch { /* the resume finishes it */ }
-    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup: bk, keepDb, from, to: newRelease, port, fetcher, waitMs, sleep, note: (x) => journalNote(home, j.id, x) });
+    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup: bk, keepDb, from, to: newRelease, port, fetcher, waitMs, sleep, note: (x) => journalNote(home, j.id, x), oldStopped });
     try { journalStep(home, j.id, U.ROLLED_BACK, { restored: back.ok, dbKept }); } catch { /* the resume finishes it */ }
     step(`rolled back after the failure: the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}${put.ok ? '' : `; not put back: ${put.failed.join(', ')}`}`);
     return { ok: false, rolledBack: true, from, to: newRelease, backup: bk ? bk.dir : null, failedAt: failedStep, dbKept,
@@ -848,7 +872,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     if (!stop.ok) {
       // the old services start again: nothing was changed
       journal = journalStep(home, journal.id, U.ROLLING_BACK, { why: stop.why });
-      await svc.start(moving).catch(() => null);
+      await svc.start(runAgain(svc, moving, oldStopped), oldStopped).catch(() => null);
       journalStep(home, journal.id, U.ROLLED_BACK);
       return { ok: false, why: stop.why };
     }
@@ -919,12 +943,12 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     // and the advert its bond posts named a host that no longer answers). The tunnel starts first, its new name is read from its log,
     // the settings take the new host, and only then the seat starts - no second restart (on Windows stopping one launcher ends them all).
     const isTunnel = (f) => { const b = f.split(/[\\/]/).pop(); return b === TUNNEL_UNIT || b === `${LAUNCHD_LABEL}.tunnel.plist` || b === 'arena-tunnel.cmd'; };
-    const tunnels = state.reach && state.reach.mode === 'quick' && state.reach.url ? moving.filter(isTunnel) : [];
+    const tunnels = state.reach && state.reach.mode === 'quick' && state.reach.url ? runAgain(svc, moving, oldStopped).filter(isTunnel) : [];
     let reachUrl = null, tunnelStarted = { ok: true };
     if (tunnels.length) {
       say(40, 'Starting the tunnel');
       const startAt = Date.now();
-      tunnelStarted = await svc.start(tunnels);
+      tunnelStarted = await svc.start(tunnels, oldStopped);
       const url = await quickUrl({ unit: TUNNEL_UNIT, home, platform, sh, sinceMs: startAt });
       step(`the quick tunnel started first: ${url ? `it answers as ${url}${url !== state.reach.url ? `, not ${state.reach.url}: the files follow it` : ''}` : 'its new name was not read'}`);
       if (url && url !== state.reach.url) {
@@ -941,7 +965,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
       }
     }
     say(42, 'Starting your node');
-    const rest = await svc.start(moving.filter((f) => !tunnels.includes(f) && !(noBridge && isBridge(f))));
+    const rest = await svc.start(runAgain(svc, moving, oldStopped).filter((f) => !tunnels.includes(f) && !(noBridge && isBridge(f))), oldStopped);
     const started = !tunnelStarted.ok ? tunnelStarted : rest;
     journal = journalStep(home, journal.id, U.STARTED, reachUrl ? { reachUrl } : {});
     step(`started: ${started.ok ? 'ok' : started.why}; waiting up to ${Math.round(waitMs / 1000)} s for the seat to answer on port ${port}`);
@@ -1043,7 +1067,7 @@ async function moveNode({ home, newRelease, port, node = process.execPath, asset
     // lose them, and a nonce put back after its use could sign twice
     const written = !sameKey && dbChangedSince(home, backup);
     journal = journalStep(home, journal.id, U.ROLLING_BACK, { served: sameKey || written });
-    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup, keepDb: sameKey || written, from, to: newRelease, port, fetcher, waitMs, sleep, note: (x) => journalNote(home, journal.id, x) });
+    const { put, back, dbKept } = await rollBack({ svc, home, moving, oldTexts: Object.fromEntries(oldTexts), migrating, confFile, backup, keepDb: sameKey || written, from, to: newRelease, port, fetcher, waitMs, sleep, note: (x) => journalNote(home, journal.id, x), oldStopped });
     journalStep(home, journal.id, U.ROLLED_BACK, { restored: back.ok, dbKept });
     step(`rolled back: the backup ${put.ok ? 'put back' : `not all put back (${put.failed.join(', ')})`}${dbKept ? (sameKey ? ' (its database kept: the new release had answered as this node)' : ' (its database kept: the new release wrote it since the backup)') : ''}; the old release ${back.ok ? 'answers' : `does not answer (${back.why})`}`);
     return { ok: false, rolledBack: true, from, to: newRelease, backup: backup.dir, failedAt: failedStep, dbKept,
