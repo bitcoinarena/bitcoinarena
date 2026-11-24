@@ -1629,7 +1629,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       };
       let tries = 0; const wait = setInterval(() => { if (send() || ++tries > 60) clearInterval(wait); }, 1000);
       // EVERY EVENT SAYS WHO PLAYED (2026-10-31: "Bei jedem event Nostr / normalen Usern")
-      const kind = () => { try { return window.localStorage.getItem('arena.nostr') ? 'nostr' : 'normal'; } catch { return 'normal'; } };
+      const kind = () => { try { return window.ARENA_BROWSER_STORE().getItem('arena.nostr') ? 'nostr' : 'normal'; } catch { return 'normal'; } };
       return (name, data) => { held.push([name, { ...(data || {}), user: kind(), ...(window.ARENA_SOURCE ? { source: window.ARENA_SOURCE } : {}) /* source: kanban #1458 */ }]); if (held.length > MOST) held.shift(); keep(); send(); };
     })();
     window.ARENA_TRACK_SIZE = (sat) => { const n = Number(sat); return n < 1000 ? 'under 1k' : n < 10000 ? '1k-10k' : n < 100000 ? '10k-100k' : 'over 100k'; };
@@ -1951,7 +1951,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // optional, remembered in this browser for the next report
       const ln = el('input', { type: 'text', maxlength: '200', autocomplete: 'off', placeholder: 'Lightning address for a bounty (optional), e.g. you@walletofsatoshi.com', 'aria-label': 'Bounty Lightning address' });
       ln.className = 'fb-ln';
-      try { ln.value = localStorage.getItem('arena.feedback.ln') || ''; } catch { /* this visit only */ }
+      try { ln.value = window.ARENA_BROWSER_STORE().getItem('arena.feedback.ln') || ''; } catch { /* this visit only */ }
       const lnOk = (v) => !v || /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(v) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(v);
       // THE ADDRESS CHECKED AS IT IS TYPED (the owner 2026-11-10: "er sagt mir nicht das test@test.de keine valid lightning addresse ist"): 0.7 s after the last key the
       // faucet asks the address's wallet (GET /feedback/lnaddress), and the line under it says whether it takes payments; Send waits while it is known not to
@@ -2036,7 +2036,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (t.value.trim().length < 50) { recount(); return; }
         const lnAddress = ln.value.trim();
         if (!lnOk(lnAddress)) { say.textContent = 'That is not a Lightning address (name@wallet.com) or an LNURL.'; ln.focus(); return; }
-        try { if (lnAddress) localStorage.setItem('arena.feedback.ln', lnAddress); } catch { /* not remembered */ }
+        try { if (lnAddress) window.ARENA_BROWSER_STORE().setItem('arena.feedback.ln', lnAddress); } catch { /* not remembered */ }
         send.disabled = true; say.textContent = 'Sending …';
         const build = ((document.getElementById('arena-build') || {}).textContent || '').replace(/\s*·.*$/, '').trim();
         const game = window.ARENA_SITE_GAME || '', round = ctx.round || (window.ARENA_JOIN && window.ARENA_JOIN.round) || '';
@@ -2168,7 +2168,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     window.addEventListener('DOMContentLoaded', () => { if (!window.ARENA_FAUCET_URL) for (const a of document.querySelectorAll('a.arena-nav-mine')) a.remove(); });
     window.ARENA_OPPONENT_URL = window.ARENA_FAUCET_URL ? window.ARENA_FAUCET_URL.replace(/\/player$/, '/opponent') : '';
     // LET BOTS JOIN THE GAMES (kanban #926): on unless a player turned it off, kept in this browser; off, the page names no table to the test opponent
-    window.ARENA_BOTS_ON = () => { try { return localStorage.getItem('arena.bots') !== 'off'; } catch { return true; } };
+    window.ARENA_BOTS_ON = () => { try { return window.ARENA_BROWSER_STORE().getItem('arena.bots') !== 'off'; } catch { return true; } };
     // THE ADMIN FLAG (kanban #1092, the owner 2026-11-03: "Practice nur dann anzeigen wenn es ein bestaetigter Admin ist ueber das Frontend Flag"):
     // opened once with ?admin=<code>, the code is checked against its SHA-256 here and kept in this browser; ?admin=off takes it back. Unity
     // asks window.ARENA_ADMIN (arena.jslib ArenaIsAdmin) and shows PRACTICE only to an admin. The code itself is never in the page.
@@ -2176,9 +2176,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     window.ARENA_ADMIN = false;
     (async () => {
       const hex = async (t) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t))), (b) => b.toString(16).padStart(2, '0')).join('');
-      const store = (() => { try { return window.localStorage; } catch { return null; } })();
+      const store = window.ARENA_BROWSER_STORE();
       // KEPT TWICE, AND HELD FOR THIS PAGE EITHER WAY (the owner 2026-11-10 on the iPad: "wenn ich neu lade ohne link ist er weg"): a browser whose
-      // storage the round wallets fill refuses the write (Safari gives half of Chrome's room), so the code goes to localStorage and to IndexedDB
+      // storage the round wallets fill refuses the write (Safari gives half of Chrome's room), so the code goes to the browser's store (ARENA_BROWSER_STORE) and to IndexedDB
       // (a store of its own), each write on its own; a page opened with the right code is an admin page even when neither write goes in
       const idb = (mode, value) => new Promise((done) => { try { const o = indexedDB.open('arena-admin', 1);
         o.onupgradeneeded = () => o.result.createObjectStore('kv');
@@ -2300,7 +2300,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const row = document.createElement('div'); row.id = 'arena-bots';
       const label = document.createElement('label');
       const input = document.createElement('input'); input.type = 'checkbox'; input.checked = window.ARENA_BOTS_ON();
-      input.addEventListener('change', () => { try { localStorage.setItem('arena.bots', input.checked ? 'on' : 'off'); } catch { /* this visit only */ } });
+      input.addEventListener('change', () => { try { window.ARENA_BROWSER_STORE().setItem('arena.bots', input.checked ? 'on' : 'off'); } catch { /* this visit only */ } });
       label.append(input, ' Let bots join the games');
       const tip = document.createElement('span'); tip.className = 'tip'; tip.tabIndex = 0; tip.setAttribute('role', 'note'); tip.textContent = 'i';
       tip.dataset.tip = 'Bots are here so you can test the platform better, because there are very few players right now. If two of you want to play each other, turn this off.';
@@ -2309,7 +2309,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     window.ARENA_MONEY_ALERT = (() => {
       let nextWords = null;
       const lost = new Map(); let full = false, tight = false, creditedMsat = 0n, okTimer = null, wasStuck = false; const creditedSats = new Set();
-      const store = () => (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || localStorage;
+      const store = () => window.ARENA_BROWSER_STORE();
       const paint = () => {
         const el = document.getElementById('arena-money-alert'); if (!el) return;
         // ONE DEPOSIT, ONE AMOUNT (2026-10-31: 14,400 shown for 7,200): a deposit keeps an invoice per gateway, all made within seconds, so what was waiting at once counts once
@@ -2328,7 +2328,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const fix = () => {
         const el = document.getElementById('arena-money-alert');
         try {
-          const S = (window.ARENA_BROWSER_STORE && window.ARENA_BROWSER_STORE()) || localStorage;
+          const S = window.ARENA_BROWSER_STORE();
           S.removeItem('arena.slowtx'); S.removeItem('arena.clientlog');
           const freed = ARENACLIENT.packWallets(S);
           if (window.ARENA_TIDY_STORAGE) window.ARENA_TIDY_STORAGE(800000);
@@ -2339,7 +2339,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       return { lost: (fed, p) => { lost.set(String(p.operation), { msat: String(p.msat), atMs: p.atMs }); console.error('[arena] deposit not collected: ' + p.msat + ' msat, federation ' + String(fed).slice(0, 8) + ', operation ' + String(p.operation).slice(0, 12)); paint(); },
         full: () => { if (!full) console.error('[arena] the browser\u2019s storage refused a wallet write: deposits cannot be collected'); full = true;
           // every deposit still waiting, in every federation: with a full store the wallet may not open at all, so none of them reports itself
-          try { const S = localStorage; for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k && k.startsWith('arena.deposit.pending.')) for (const d of JSON.parse(S.getItem(k) || '[]')) lost.set(String(d.operation), { msat: String(d.msat), atMs: d.atMs }); } } catch { /* unreadable: not summed */ }
+          try { const S = window.ARENA_BROWSER_STORE(); for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k && k.startsWith('arena.deposit.pending.')) for (const d of JSON.parse(S.getItem(k) || '[]')) lost.set(String(d.operation), { msat: String(d.msat), atMs: d.atMs }); } } catch { /* unreadable: not summed */ }
           paint(); },
         // WHAT WAS STUCK AND CAME IN AFTER ALL (2026-10-31: "eine Meldung nach dem reload das XXX Satoshi credited worden sind die stuck waren"), summed over the deposits of this load
         // AND EVERY OTHER CREDIT (kanban #909, 2026-10-31: 600 sat came in on the desktop with no message): a deposit claimed in a window this
@@ -2766,7 +2766,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     <script>
       // FROM THE LOADING SCREEN'S FIRST FRAME (kanban #1033): the client that can read the wallet comes ~2 s later, so a wallet not known to be backed up says it now, in the
       // same words, and the first paint corrects it. `arena.backup.quiet` is what that paint found last time, nothing more: it is not the backup's record.
-      try { if (localStorage.getItem('arena.backup.quiet') !== '1') { document.getElementById('arena-backup-notice').textContent = 'This wallet has no backup. Lose this browser and the money in it is gone - write your 24 words down now.'; document.getElementById('arena-backup-warn').style.display = 'flex'; } } catch (e) { /* no storage: the first paint says it */ }
+      try { if (window.ARENA_BROWSER_STORE().getItem('arena.backup.quiet') !== '1') { document.getElementById('arena-backup-notice').textContent = 'This wallet has no backup. Lose this browser and the money in it is gone - write your 24 words down now.'; document.getElementById('arena-backup-warn').style.display = 'flex'; } } catch (e) { /* no storage: the first paint says it */ }
     </script>
     <div class="build-line" id="boot-build" title="Page version (UI build). Please name it when you report a bug.">UI {{{ UI_VERSION }}}</div>
     <div id="arena-deposit"></div>
@@ -3294,7 +3294,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       let ref = null;
       try { ref = new URLSearchParams(location.search).get('ref'); } catch { ref = null; }
       ref = ref && /^0[23][0-9a-f]{64}$/i.test(ref) ? ref.toLowerCase() : null;
-      const store = (() => { try { return window.localStorage; } catch { return null; } })();
+      const store = window.ARENA_BROWSER_STORE();
       try {
         if (ref && store) store.setItem('arena.referral', JSON.stringify({ key: ref, atMs: Date.now() }));
         const kept = !ref && store ? JSON.parse(store.getItem('arena.referral') || 'null') : null;
@@ -3935,8 +3935,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // move could never be shown and the entry forfeits. KEPT WITH THE PHRASE, NOT THE TAB (kanban #2037, state audit 2026-11-12): the salt was in
     // sessionStorage while the phrase that staked it (arena.seeds), its stake lock and its collect are kept in the browser - a tab closed between the
     // move and the close left a committed entry no later tab of the same phrase could reveal, and its stake forfeited. Now each move is kept in
-    // localStorage under the phrase's first 16 hex (phrase16, as arena.wallet.last.<phrase16>), read only by a tab holding that phrase, and dropped an
-    // hour after its result stands (endMs). A tab with no phrase, or a browser refusing localStorage, keeps it in the tab as before; moves a tab kept
+    // the browser's store (ARENA_BROWSER_STORE) under the phrase's first 16 hex (phrase16, as arena.wallet.last.<phrase16>), read only by a tab holding that phrase, and dropped an
+    // hour after its result stands (endMs). A tab with no phrase, or a browser refusing its store, keeps it in the tab as before; moves a tab kept
     // there before this fix are still read
     const HIDDEN_KEY = 'arena.h2h.moves';
     const HIDDEN_KEEP_MS = 3600000;
@@ -3948,7 +3948,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     const hiddenList = (st) => { try { const a = JSON.parse(st.getItem(HIDDEN_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } };
     function readHidden() {
       const ph = hiddenPhrase(), out = [];
-      if (ph) { try { for (const x of hiddenList(window.localStorage)) if (x && x.phrase16 === ph) out.push(x); } catch { /* none kept in the browser */ } }
+      if (ph) { try { for (const x of hiddenList(window.ARENA_BROWSER_STORE())) if (x && x.phrase16 === ph) out.push(x); } catch { /* none kept in the browser */ } }
       try { for (const x of hiddenList(window.sessionStorage)) if (x && !out.some((y) => y.roundIdHex === x.roundIdHex)) out.push(x); } catch { /* none in the tab */ }
       for (const x of hiddenInPage.values()) if (!out.some((y) => y.roundIdHex === x.roundIdHex)) out.push(x);
       return out;
@@ -3960,10 +3960,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (ph) {
         try {
           const now = Date.now();
-          const all = hiddenList(window.localStorage).filter((x) => x && !(x.phrase16 === ph && x.roundIdHex === h.roundIdHex)
+          const all = hiddenList(window.ARENA_BROWSER_STORE()).filter((x) => x && !(x.phrase16 === ph && x.roundIdHex === h.roundIdHex)
             && !(Number(x.endMs) > 0 && Number(x.endMs) + HIDDEN_KEEP_MS < now));
           all.push(Object.assign({}, h, { phrase16: ph }));
-          window.localStorage.setItem(HIDDEN_KEY, JSON.stringify(all.slice(-200)));
+          window.ARENA_BROWSER_STORE().setItem(HIDDEN_KEY, JSON.stringify(all.slice(-200)));
           return;
         } catch { /* the browser keeps nothing: kept in the tab below */ }
       }
@@ -3974,7 +3974,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     function forgetHidden(roundIdHex) {
       hiddenInPage.delete(roundIdHex);
       const ph = hiddenPhrase();
-      if (ph) { try { window.localStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenList(window.localStorage).filter((x) => !(x && x.phrase16 === ph && x.roundIdHex === roundIdHex)))); } catch { /* none kept in the browser */ } }
+      if (ph) { try { window.ARENA_BROWSER_STORE().setItem(HIDDEN_KEY, JSON.stringify(hiddenList(window.ARENA_BROWSER_STORE()).filter((x) => !(x && x.phrase16 === ph && x.roundIdHex === roundIdHex)))); } catch { /* none kept in the browser */ } }
       try { window.sessionStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenList(window.sessionStorage).filter((x) => x.roundIdHex !== roundIdHex))); }
       catch { /* kept for this page only */ }
     }
@@ -5995,7 +5995,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // IN THE LOADING SCREEN, ALWAYS, NOT OVER THE LOBBY: the box sits in #boot, so it goes with the loading screen
       const warn = document.getElementById('arena-backup-warn');
       if (warn) warn.style.display = line ? 'flex' : 'none';
-      try { localStorage.setItem('arena.backup.quiet', line ? '0' : '1'); } catch { /* the next loading screen waits for the client */ }
+      try { window.ARENA_BROWSER_STORE().setItem('arena.backup.quiet', line ? '0' : '1'); } catch { /* the next loading screen waits for the client */ }
       if (!window.ArenaBits) return;
       // AND AGAIN IN THE DEPOSIT AND THE WITHDRAW POPUP (2026-10-19: "When doing a deposit the popup in there shows the
       // warning again", "Withdrawal screen also gets the warning"): a wallet with no backup is lost with this browser; its button closes the
@@ -6637,7 +6637,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     let welcomeRunning = false;
     function browserHoldsAnotherWallet(mine) {
       try {
-        const S = window.localStorage;
+        const S = window.ARENA_BROWSER_STORE();
         let kept = []; try { kept = JSON.parse(S.getItem('arena.seeds') || '[]'); } catch { kept = []; }
         return !!(ARENACLIENT.phraseWalletEntries && Array.isArray(kept) && kept.some((x) => x && x.hex && x.hex !== mine && ARENACLIENT.phraseWalletEntries(S, x.hex) > 0));
       } catch { return false; /* the check could not read the browser's wallets: the faucet still pays one welcome per account */ }
@@ -6675,15 +6675,15 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       return said;
     }
     async function welcomeSats() {
-      // KANBAN #3077 (feedback #355): kept in localStorage, not sessionStorage - a browser closed before the welcome landed asked the faucet
+      // KANBAN #3077 (feedback #355): kept in the browser's store (ARENA_BROWSER_STORE), not sessionStorage - a browser closed before the welcome landed asked the faucet
       // never again; the faucet answers a repeated ask with the same note (#1426), and the key is cleared once it is paid or refused
-      let pending = null; try { pending = localStorage.getItem('arena.welcome.pending'); } catch { return; }
+      let pending = null; try { pending = window.ARENA_BROWSER_STORE().getItem('arena.welcome.pending'); } catch { return; }
       if (!pending || !window.ARENA_FAUCET_URL || welcomeRunning) return;
       // A BROWSER THAT ALREADY HOLDS A WALLET GETS NO WELCOME (kanban #1091, the owner's playtest 2026-11-03 15:33Z: "die Meldung ueber 500 sat
       // kommt obwohl ich sie schon habe" - a new tab with no phrase made a new wallet beside the one with 1,600 sat, and said 500 sat were coming):
       // any phrase this browser keeps with a wallet entry (money or history) means the player is not new - no grant, no green line
       if (browserHoldsAnotherWallet(typeof walletSeed === 'function' && walletSeed() ? ARENACLIENT.toHex(walletSeed()) : null)) {
-        try { localStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ }
+        try { window.ARENA_BROWSER_STORE().removeItem('arena.welcome.pending'); } catch { /* no storage */ }
         console.log('[faucet] no welcome sats: this browser already holds a wallet');
         return;
       }
@@ -6717,7 +6717,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           window.ARENA_WELCOME_ASKING = true;
           try { said = await welcomeEcash({ seed, open, federationId, onKept: show }); } finally { window.ARENA_WELCOME_ASKING = false; }
           if (said) {
-            if (said.ok || said.refused) { try { localStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } }
+            if (said.ok || said.refused) { try { window.ARENA_BROWSER_STORE().removeItem('arena.welcome.pending'); } catch { /* no storage */ } }
             welcomeLanded(); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE();
             if (!said.ok && !said.retry) throw new Error('the welcome e-cash was not received: ' + (said.why || said.state));
             if (!said.ok) console.log('[faucet] the welcome e-cash is kept and received again later: ' + said.why);
@@ -6726,7 +6726,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         }
         await loadWasm();
         const offer = await ARENACLIENT.walletDepositOffer({ federationId, invite: into, seed, LockClient: wasm.LockClient, storage: vault(), gateways: window.ARENA_LEDGER_GATEWAYS || [],
-          onClaimed: (d) => { try { if (/^pending:/.test(localStorage.getItem('arena.welcome.pending') || '')) localStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } welcomeLanded(); if (d && d.amountMsat) window.ARENA_MONEY_ALERT.credited(d.amountMsat, true); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
+          onClaimed: (d) => { try { if (/^pending:/.test(window.ARENA_BROWSER_STORE().getItem('arena.welcome.pending') || '')) window.ARENA_BROWSER_STORE().removeItem('arena.welcome.pending'); } catch { /* no storage */ } welcomeLanded(); if (d && d.amountMsat) window.ARENA_MONEY_ALERT.credited(d.amountMsat, true); paintHistory(); if (window.ARENA_READ_BALANCE) window.ARENA_READ_BALANCE(); } });
         if (offer.client && window.ARENA_KEEP_WALLET) window.ARENA_KEEP_WALLET(ARENACLIENT.toHex(federationId), offer.client);
         const grant = ARENACLIENT.FAUCET_GRANTS.welcome;
         const d = await offer.invoice(grant.invoiceMsat);
@@ -6736,11 +6736,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // off the book if it FAILS; the flag is kept as "pending:<hash>" until this offer is claimed (onClaimed), and the welcome is asked again in
         // 3 min (and at the next load) - refused "already has" while the faucet's row is pending, given once the sweep dropped it
         if (paid && paid.pending) {
-          try { localStorage.setItem('arena.welcome.pending', 'pending:' + String(paid.hash || '')); } catch { /* no storage */ }
+          try { window.ARENA_BROWSER_STORE().setItem('arena.welcome.pending', 'pending:' + String(paid.hash || '')); } catch { /* no storage */ }
           setTimeout(() => { welcomeRunning = false; welcomeSats(); }, 180000);
-        } else { try { localStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } }
+        } else { try { window.ARENA_BROWSER_STORE().removeItem('arena.welcome.pending'); } catch { /* no storage */ } }
         window.ARENA_TRACK('faucet-welcome');
-      } catch (e) { welcomeRunning = false; welcomeLanded(); if (/already has/.test(String(e && e.message)) && !/^pending:/.test(pending)) { try { localStorage.removeItem('arena.welcome.pending'); } catch { /* no storage */ } } window.ARENA_MONEY_ALERT.nextWords(null); window.ARENA_MONEY_ALERT.notComing(); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
+      } catch (e) { welcomeRunning = false; welcomeLanded(); if (/already has/.test(String(e && e.message)) && !/^pending:/.test(pending)) { try { window.ARENA_BROWSER_STORE().removeItem('arena.welcome.pending'); } catch { /* no storage */ } } window.ARENA_MONEY_ALERT.nextWords(null); window.ARENA_MONEY_ALERT.notComing(); console.log('[faucet] no welcome sats: ' + (e && e.message ? e.message : e)); }
     }
     // AT THE START (a Nostr login reloads the page with its seed), and at once when the wallet is made in this page
     window.ARENA_WELCOME = welcomeSats;
@@ -7047,7 +7047,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         return ARENACLIENT.referralOf({ storage: window.sessionStorage, random: () => { throw new Error('no wallet'); }, curve: window.ARENA_CURVE, origin: location.origin });
       } catch { return null; }
     };
-    const referralStore = () => { try { return window.ARENA_BROWSER_STORE ? window.ARENA_BROWSER_STORE() : window.localStorage; } catch { return null; } };
+    const referralStore = () => { try { return window.ARENA_BROWSER_STORE(); } catch { return null; } };
     const keptReferral = () => { try { const k = JSON.parse(referralStore().getItem('arena.referral.mine') || 'null'); return k && /^0[23][0-9a-f]{64}$/.test(k.key || '') ? k.key : null; } catch { return null; } };
     const myReferral = () => {
       const own = ownReferral(), kept = keptReferral();
@@ -8275,7 +8275,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         oprReadPayable(parts);
         const pv = window.ARENA_OPR_PAYABLE;
         return { sats: spend, total: Number(b.sats || 0), coming, best, payable: pv && pv.best === best ? pv.sats : null }; },
-      welcomeComing: () => { if (window.ARENA_WELCOME_WAIT || window.ARENA_WELCOME_ASKING) return true; try { return !!localStorage.getItem('arena.welcome.pending'); } catch { return false; } },
+      welcomeComing: () => { if (window.ARENA_WELCOME_WAIT || window.ARENA_WELCOME_ASKING) return true; try { return !!window.ARENA_BROWSER_STORE().getItem('arena.welcome.pending'); } catch { return false; } },
       // THE FAUCET'S TOP-UP FROM THE GAME (kanban #3251): the foot's "Get 300 sats" - the same flow, its deposit window over the game
       topUp: () => { const b = document.getElementById('arena-foot-topup'); if (!b || b.disabled || !window.ARENA_FAUCET_URL) return false; window.ARENA_OPR_TOPUP_AT = Date.now(); b.click(); return true; },
       canTopUp: () => { const b = document.getElementById('arena-foot-topup'); return !!(b && window.ARENA_FAUCET_URL && document.body.classList.contains('arena-topup-on')); },
@@ -8320,7 +8320,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         console.log('[arena] #3273 orange pill run: the round is ' + (paid ? 'paid - the wallet opens' : 'free - no wallet'));
         if (!paid) return;
         document.body.classList.remove('arena-opr-free');
-        if (window.ARENA_OPR_FRESH) { window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { localStorage.setItem('arena.welcome.pending', '1'); } catch { /* no welcome */ } if (window.ARENA_WELCOME) window.ARENA_WELCOME(); }
+        if (window.ARENA_OPR_FRESH) { window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { window.ARENA_BROWSER_STORE().setItem('arena.welcome.pending', '1'); } catch { /* no welcome */ } if (window.ARENA_WELCOME) window.ARENA_WELCOME(); }
         if (window.ARENA_OPEN_WALLET_EARLY) window.ARENA_OPEN_WALLET_EARLY(window.ARENA_LEDGER_LOBBY);
       }).catch((e) => { window.ARENA_OPR_FREE = true; console.log('[arena] #3273 orange pill run: the round not read (' + ((e && e.message) || e) + ') - no wallet'); });
       const frame = document.createElement('iframe');
@@ -9666,14 +9666,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // label slow tx"): an order placed after more than SLOW_TX_MS keeps the page's log (ARENA_CLIENT_LOGS, secrets taken out) under its
       // transaction id - the last SLOW_TX_MOST, each cut to SLOW_TX_BYTES; the history marks its row "slow tx" with a Copy log button
       const SLOW_TX_KEY = 'arena.slowtx', SLOW_TX_MS = 2000, SLOW_TX_MOST = 2, SLOW_TX_BYTES = 8000;   // kanban #883: 300 KB of a phone's 5 MB for a debug trace
-      const slowTxs = () => { try { return JSON.parse((window.ARENA_BROWSER_STORE() || localStorage).getItem(SLOW_TX_KEY) || '[]'); } catch { return []; } };
+      const slowTxs = () => { try { return JSON.parse(window.ARENA_BROWSER_STORE().getItem(SLOW_TX_KEY) || '[]'); } catch { return []; } };
       window.ARENA_SLOW_TX_MS = SLOW_TX_MS;
       window.ARENA_KEEP_SLOW_TX = (idHex, ms) => {
         try {
           let log = window.ARENA_CLIENT_LOGS ? window.ARENA_CLIENT_LOGS() : '';
           if (log.length > SLOW_TX_BYTES) log = log.slice(log.length - SLOW_TX_BYTES);
           const all = slowTxs().filter((x) => x.id !== idHex).concat([{ id: idHex, ms: Math.round(ms), at: new Date().toISOString(), log }]).slice(-SLOW_TX_MOST);
-          (window.ARENA_BROWSER_STORE() || localStorage).setItem(SLOW_TX_KEY, JSON.stringify(all));
+          window.ARENA_BROWSER_STORE().setItem(SLOW_TX_KEY, JSON.stringify(all));
           console.log('[arena] tx ' + idHex + ': slow (' + Math.round(ms) + ' ms) - its log kept in this browser');
           if (window.ARENA_PAINT_HISTORY) window.ARENA_PAINT_HISTORY();
         } catch (e) { console.log('[arena] tx ' + idHex + ': its log could not be kept: ' + (e && e.message ? e.message : e)); }
@@ -9980,11 +9980,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (!client || typeof client.warmBlockCount !== 'function' || WARMED.has(client)) return;
         WARMED.add(client);
         try {
-          const kept = fid ? JSON.parse((window.ARENA_BROWSER_STORE() || localStorage).getItem(COUNT_KEY(fid)) || 'null') : null;
+          const kept = fid ? JSON.parse(window.ARENA_BROWSER_STORE().getItem(COUNT_KEY(fid)) || 'null') : null;
           if (kept && kept.count > 0 && Date.now() - kept.at < 300000 && typeof client.keepBlockCount === 'function') client.keepBlockCount(kept.count, kept.at);
         } catch { /* read fresh */ }
         const warm = () => client.warmBlockCount().then(() => {
-          try { if (fid && typeof client.keptBlockCount === 'function') { const k = client.keptBlockCount(); if (k && k !== 'null') (window.ARENA_BROWSER_STORE() || localStorage).setItem(COUNT_KEY(fid), k); } } catch { /* this page only */ }
+          try { if (fid && typeof client.keptBlockCount === 'function') { const k = client.keptBlockCount(); if (k && k !== 'null') window.ARENA_BROWSER_STORE().setItem(COUNT_KEY(fid), k); } } catch { /* this page only */ }
         }).catch(() => { /* the lock reads it itself */ });
         warm(); const t = setInterval(() => { if (!(window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY())) warm(); }, 45000); if (t && t.unref) t.unref();   // #3335
       };
@@ -10215,12 +10215,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       window.ARENA_KEEP_FED_LOADS = (all) => {
         try {
           const rows = [...all.entries()].filter(([, v]) => v && v.status).map(([k, v]) => [k, { status: v.status, load: typeof v.load === 'number' ? v.load : null }]);
-          if (rows.length) localStorage.setItem(FED_KEPT_KEY, JSON.stringify({ at: Date.now(), rows }));
+          if (rows.length) window.ARENA_BROWSER_STORE().setItem(FED_KEPT_KEY, JSON.stringify({ at: Date.now(), rows }));
         } catch { /* kept only where the browser keeps it */ }
       };
       const keptFedStatus = (fed) => {
         try {
-          const k = JSON.parse(localStorage.getItem(FED_KEPT_KEY) || 'null');
+          const k = JSON.parse(window.ARENA_BROWSER_STORE().getItem(FED_KEPT_KEY) || 'null');
           if (!k || Date.now() - k.at > 48 * 3600000) return null;
           const row = (k.rows || []).find(([f]) => f === fed);
           return row ? { ...row[1], keptAt: k.at } : null;
@@ -10334,10 +10334,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         const show = (key) => {
           for (const b of tabs.children) { const on = b.dataset.tab === key; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); }
           for (const [k, p] of Object.entries(panes)) p.style.display = k === key ? '' : 'none';
-          try { localStorage.setItem(WALLET_TAB_KEY, key); } catch { /* this viewer's choice only */ }
+          try { window.ARENA_BROWSER_STORE().setItem(WALLET_TAB_KEY, key); } catch { /* this viewer's choice only */ }
         };
         tabs.addEventListener('click', (e) => { const b = e.target.closest('button[data-tab]'); if (b) { e.stopPropagation(); show(b.dataset.tab); } });
-        let first = 'tx'; try { if (localStorage.getItem(WALLET_TAB_KEY) === 'fed') first = 'fed'; } catch { first = 'tx'; }
+        let first = 'tx'; try { if (window.ARENA_BROWSER_STORE().getItem(WALLET_TAB_KEY) === 'fed') first = 'fed'; } catch { first = 'tx'; }
         show(first);
         window.ARENA_WALLET_TAB = show;
       }
@@ -11978,7 +11978,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (window.ARENA_SEED_KEEPER) window.ARENA_SEED_KEEPER.beat();
         window.ARENA_WALLET_SCREEN.made = 'new';
         window.ARENA_TRACK('wallet-new');
-        window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { localStorage.setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ }
+        window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { window.ARENA_BROWSER_STORE().setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ }
         setTimeout(() => { if (window.ARENA_WELCOME) window.ARENA_WELCOME(); }, 0);   // at once (kanban #1381)
         done();
         // THE SEED AT ONCE (kanban #1033, the owner 2026-11-02: "Beim neuen wallet nach create new wallet muss der seed direkt angezeigt werden und auch 3 Woerter verifiziere
@@ -12016,7 +12016,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         try { await signer.close(); } catch { /* gone */ }
         busy(got.created ? 'Your wallet is made and kept on Nostr - opening it…' : 'Your wallet is back - opening it…');
         window.ARENA_TRACK(got.created ? 'nostr-wallet-create' : 'nostr-wallet-join', { how });
-        if (got.created) { window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { localStorage.setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ } }
+        if (got.created) { window.ARENA_NEW_WALLET = true; window.ARENA_BALANCE_TRIED = true; try { window.ARENA_BROWSER_STORE().setItem('arena.welcome.pending', '1'); } catch { /* no storage, no welcome */ } }
         const r = window.ARENA_RESTORE_SEED ? window.ARENA_RESTORE_SEED(hex) : { ok: false, why: 'the page is still loading' };
         if (!r.ok) throw new Error(r.why);
       }
@@ -12100,7 +12100,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // the deposits use, on every screen, until closed (60 s)
     (function () {
       const said = new Set();
-      try { for (const k of JSON.parse(localStorage.getItem('arena.result.said') || '[]')) said.add(k); } catch { /* none kept */ }
+      try { for (const k of JSON.parse(window.ARENA_BROWSER_STORE().getItem('arena.result.said') || '[]')) said.add(k); } catch { /* none kept */ }
       const sats = (msat) => { try { return (BigInt(msat || 0) / 1000n).toLocaleString('en-US') + ' sat'; } catch { return '? sat'; } };
       const big = (v) => { try { return BigInt(v || 0); } catch { return 0n; } };
       window.ARENA_ROUND_RESULT_LINE = (look, creditedMsat) => {
@@ -12127,7 +12127,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const key = rec.roundIdHex.slice(0, 16) + '.' + (rec.order || 0) + '.' + String(creditedMsat || 0);
           if (said.has(key)) return;
           said.add(key);
-          try { localStorage.setItem('arena.result.said', JSON.stringify([...said].slice(-60))); } catch { /* said again after a reload */ }
+          try { window.ARENA_BROWSER_STORE().setItem('arena.result.said', JSON.stringify([...said].slice(-60))); } catch { /* said again after a reload */ }
           const el = document.getElementById('arena-money-ok'); if (!el) return;
           el.textContent = 'Round ' + rec.roundIdHex.slice(0, 8) + ': ' + line;
           el.classList.add('show', 'result');
