@@ -8416,7 +8416,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               t.innerHTML = '<span class="play">Play →</span><div class="head"><div class="logo"><svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true">'
                 + '<rect x="6" y="22" width="52" height="20" rx="10" fill="#f7931a"/><rect x="32" y="22" width="26" height="20" rx="10" fill="#fff6dc"/><rect x="30" y="22" width="6" height="20" fill="#f7931a"/>'
                 + '<path d="M14 54 L24 44 L32 48 L44 34 L56 38" stroke="#4ade80" stroke-width="3" fill="none" stroke-linecap="round"/></svg></div><div><div class="name">Orange Pill Run</div>'
-                + '<span class="badge">Daily tournament · test</span></div></div><div class="desc">Run yesterday\'s Bitcoin chart. Tap to jump. Don\'t fall. Five attempts a day, the best three share the pot.</div>';
+                + '<span class="badge">Daily tournament · test</span></div></div><div class="desc">Run yesterday\'s Bitcoin chart. Tap to jump. Don\'t fall. Free to play, five attempts a day: the best player wins 2,500 real sats (linked X following @bitcoinarena_io and a Lightning address).</div>';
               t.addEventListener('click', () => { const q = new URLSearchParams(location.search.replace(/^\?/, '')); q.set('game', 'orange-pill-run'); location.search = q.toString(); });
               // THE SAME DETAILS AS THE OTHER TILES (owner 2026-11-22): the players and live rounds chips and the Leaderboard link, cloned from a
               // node game's tile so they look alike, filled from the round service (GET /api/opr/round); a tap on the leaderboard opens the game's board
