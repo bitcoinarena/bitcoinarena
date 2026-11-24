@@ -52,6 +52,7 @@ export const DEFAULTS = Object.freeze({
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], promoEnd: null, adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
   refusedLogNetBytes: 2e6, refusedLogRoundBytes: 200e6,   // kanban #3355: refused logs kept per round from one network (IPv6 /48, IPv4 /24) and from all
+  // (kanban #3582: the network budget counts the logs of scored runs too - every log a round keeps from that network)
 });
 // FREE ROUNDS (kanban #3273, owner 2026-11-22: "a free round - no testnet sats, but 2,000 real sats for the winner" - since 10,000, #3251): a round made now has
 // entry_sats 0. A free run starts at once (no invoice, no lnd), counts as paid (paid_ms = its start), is scored at submit; the round has no pot
@@ -291,6 +292,13 @@ export function createOpr(o = {}) {
   const ipFull = (r, key, { first = false } = {}) => !!key && q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state ${first ? "IN ('scored', 'rejected')" : "!= 'expired'"}`)
     .get(r.id, key).n >= cfg.ipAttemptsShare * r.max_attempts;
   const IP_FULL = 'this address opened all the attempts it may in this round';
+  // ONE NETWORK'S KEPT LOGS ARE BOUNDED, SCORED RUNS INCLUDED (kanban #3582, audit opr a7-1-4): the #3355 budget counted refused logs only, so one
+  // IPv6 /48 (65,536 /64s, 10 attempts each, free keys) kept ~64 KB tapping logs of scored runs without end - ~42 GB a round. Every log a round
+  // keeps is counted against its network's refusedLogNetBytes; a network that used it up opens no new attempt in the round, and a run sent past
+  // it is scored without its log and held for review (no log: no replay, no bot pass - it never reaches a list unseen)
+  const netOf = (ik, player) => (ik && ipNetsOf(ik)[0]) || ik || `key:${player}`;
+  const netLogBytes = (round, net) => q('SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net = ?').get(round, net).n;
+  const NET_FULL = 'this network sent all the runs a round keeps from it - try again in the next round';
   const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
   const phaseOf = (r, t = now()) => (t >= r.end_ms || ['closed', 'listed'].includes(r.state) ? 'ended' : r.state !== 'ready' ? (r.state === 'posting' ? 'posting' : 'preparing')
     : t < r.start_ms ? 'soon' : t >= r.end_ms - cfg.lastCallMs ? 'last-call' : 'open');
@@ -328,6 +336,7 @@ export function createOpr(o = {}) {
     const ik = ipKey(ip);
     const first = !q("SELECT 1 FROM attempts WHERE round = ? AND player = ? LIMIT 1").get(r.id, player);   // kanban #3374
     if (ipFull(r, ik, { first })) return { ok: false, why: IP_FULL };
+    if (netLogBytes(r.id, netOf(ik, player)) >= cfg.refusedLogNetBytes) return { ok: false, why: NET_FULL };   // kanban #3582
     // THE RUN OPENS AT ONCE (kanban #3265, the owner 2026-11-21: play at once with an empty new wallet): the level, a token and the entry invoice
     // together; the invoice lives exactly as long as the run's 10 minutes, so an entry paid after the deadline is impossible
     const deadline = Math.min(t + cfg.submitMs, r.end_ms);
@@ -459,11 +468,11 @@ export function createOpr(o = {}) {
     // of refused logs from one network (its /48, or an IPv4 /24) and refusedLogRoundBytes from all; past that the refusal and its reason only
     const reject = (why, extra = {}) => {
       let text = extra.keepLog ? JSON.stringify(body.log) : null;
-      const net = (a.ip_key && ipNetsOf(a.ip_key)[0]) || a.ip_key || `key:${a.player}`;
+      const net = netOf(a.ip_key, a.player);
       if (text != null) {
         const held = (sql, ...args) => q(sql).get(...args).n;
-        if (held('SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net = ?', a.round, net) + text.length > cfg.refusedLogNetBytes
-          || held('SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net IS NOT NULL', a.round) + text.length > cfg.refusedLogRoundBytes) {
+        if (netLogBytes(a.round, net) + text.length > cfg.refusedLogNetBytes
+          || held("SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net IS NOT NULL AND state = 'rejected'", a.round) + text.length > cfg.refusedLogRoundBytes) {
           text = null; extra = { ...extra, keepLog: false };
         }
       }
@@ -499,12 +508,17 @@ export function createOpr(o = {}) {
     }
     let feat = null;
     try { feat = runFeatures(sim, levelOf(r), body.log); } catch (e) { log(`attempt ${a.id.slice(0, 8)}: no bot features (${String(e.message).slice(0, 80)})`); }
+    // kanban #3582: the log is kept only within its network's budget; past it the run is scored without it and held for review
+    const net = netOf(a.ip_key, a.player);
+    let text = JSON.stringify(body.log);
+    if (netLogBytes(a.round, net) + text.length > cfg.refusedLogNetBytes) { text = null; flags.logNotKept = true; }
     const review = Object.keys(flags).length ? 'pending' : 'none';
     // a run whose entry is not paid yet is kept with its score, waiting: it is placed only if the entry settled before this submit, within the
     // entry's 30 s (#3265, #3603) - a payment after it never scores it
     const to = from === 'started' ? 'scored' : 'awaiting';
-    const done = q(`UPDATE attempts SET state = ?, submitted_ms = ?, log = ?, log_hash = ?, score = ?, flags = ?, client = ?, review = ?, bot_feat = ? WHERE id = ? AND state = ?`)
-      .run(to, t, JSON.stringify(body.log), logHash, JSON.stringify(score), JSON.stringify(flags), clientText(body.client), review, feat ? JSON.stringify(feat) : null, a.id, from);
+    const done = q(`UPDATE attempts SET state = ?, submitted_ms = ?, log = ?, log_hash = ?, score = ?, flags = ?, client = ?, review = ?, bot_feat = ?, log_net = ?, log_bytes = ? WHERE id = ? AND state = ?`)
+      .run(to, t, text, logHash, JSON.stringify(score), JSON.stringify(flags), clientText(body.client), review, feat ? JSON.stringify(feat) : null,
+        text != null ? net : null, text != null ? text.length : null, a.id, from);
     if (!done.changes) return { ok: false, why: 'that token was used already' };
     placeNear(a.id);
     if (to === 'scored' && r.state === 'listed') refreshLists(r.id);
@@ -1146,6 +1160,7 @@ export function createOpr(o = {}) {
         // round runs; any other run (an older, weaker one; a disqualified player's) only to its own player
         const onBoard = boardOf(r.id).some((b) => b.attempt === a.id);
         if (!onBoard && viewer !== a.player) return send(403, { ok: false, why: 'only the best run of each leaderboard row is public; your own runs always' });
+        if (a.log == null) return send(404, { ok: false, why: 'that run has no stored log' });   // kanban #3582: a run past its network's log budget
         return send(200, { ok: true, attempt: a.id, name: nameOf(a.player), log: J(a.log), score: J(a.score), level: levelFor(r) });
       }
       // signed-in doors
