@@ -332,14 +332,28 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
   try { marked = JSON.parse((keep && keep.getItem(ZAPS_COLLECTING_KEY)) || '[]'); } catch { marked = []; }
   const collecting = new Set(Array.isArray(marked) ? marked : []);
   const begun = new Set(collecting);   // marked by an earlier pass: this pass's own spent answer to its own first refund is not one
-  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...seen].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
+  // TWO TABS' PASSES MERGE, THE LAST WRITER NO LONGER WINS (kanban #3607, state audit #1489 sm1-page-8): `keep` is the browser's store,
+  // shared by every tab, and a pass wrote its own in-memory copy of these lists back whole. Two tabs (two phrases) whose passes overlapped:
+  // tab A wrote its mark and sent its refund, tab B - which read the list before A's mark - wrote its list over it, A's tab closed before
+  // the answer, and the reload filed A's accepted refund `spent`, never booked. Each write now reads the stored list again right before it
+  // and changes only this pass's own entries: the outpoints it settled are added (arena.zaps.collected), the marks it began are added and
+  // only the marks of the outpoints it settled leave (arena.zaps.collecting). No await lies between the read and the write.
+  const storedList = (k) => { try { const a = JSON.parse((keep && keep.getItem(k)) || '[]'); return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []; } catch { return []; } };
+  const keepSeen = () => { try { if (keep) keep.setItem(ZAPS_COLLECTED_KEY, JSON.stringify([...new Set([...storedList(ZAPS_COLLECTED_KEY), ...seen])].slice(-ZAPS_SEEN_KEPT))); } catch { /* not kept: asked again, then found spent */ } };
   // A MARK NAMES THE VERSION REFUNDED (kanban #2803, audit r21 client-1): a mark was the bare outpoint, so one seat listed a made-up outpoint whose
   // amount the refund could not even parse (the mark stayed), then the same outpoint with any amount: the refund found no contract, the mark said
   // "begun here" and the made-up row was booked as collected (a Referral of any size). A mark is now outpoint#hash(federation, amount, image, item);
   // only the same version's refund counts as begun. A bare outpoint (a mark from before) still counts for any version.
   const markOf = (d, image) => `${d.outpoint}#${toHex(sha256(new TextEncoder().encode(JSON.stringify([String(d.federationId).toLowerCase(), String(d.amountMsat), image, d.item || null])))).slice(0, 32)}`;
-  const dropMarks = (outpoint) => { for (const k of [...collecting]) if (k === outpoint || k.startsWith(`${outpoint}#`)) collecting.delete(k); };
-  const keepCollecting = () => { if (keep) putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...collecting].slice(-ZAPS_SEEN_KEPT))); };
+  const markedHere = new Set(), settledHere = new Set();   // kanban #3607: this pass's own marks, and the outpoints whose marks it drops
+  const outpointOfMark = (k) => String(k).split('#')[0];
+  const dropMarks = (outpoint) => { settledHere.add(outpoint); for (const k of [...collecting]) if (outpointOfMark(k) === outpoint) collecting.delete(k); };
+  const keepCollecting = () => {
+    if (!keep) return;
+    const merged = new Set(storedList(ZAPS_COLLECTING_KEY).filter((k) => !settledHere.has(outpointOfMark(k))));
+    for (const k of markedHere) if (collecting.has(k)) merged.add(k);
+    putRoomy(keep, ZAPS_COLLECTING_KEY, JSON.stringify([...merged].slice(-ZAPS_SEEN_KEPT)));
+  };
   let cursors = {};
   try { cursors = JSON.parse((keep && keep.getItem(ZAPS_CURSOR_KEY)) || '{}') || {}; } catch { cursors = {}; }
   if (typeof cursors !== 'object' || Array.isArray(cursors)) cursors = {};
@@ -444,8 +458,8 @@ export async function collectZaps({ storage, keep = storage, random, curve, clie
     const fields = JSON.stringify({ paymentImage: { kind: 'hash', bytes: image }, amountMsat: String(d.amountMsat), claimPk: pk, refundPk: pk, expiration: 0 });
     // kanban #2319: the intent is written ahead; a refund whose mark cannot be kept is not sent (its answer could be lost unbooked)
     if (!collecting.has(mark)) {
-      collecting.add(mark);
-      try { keepCollecting(); } catch (e) { collecting.delete(mark); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
+      collecting.add(mark); markedHere.add(mark);
+      try { keepCollecting(); } catch (e) { collecting.delete(mark); markedHere.delete(mark); return { ...d, why: `not collected: this browser cannot note it (${String(e && e.message || e)})` }; }
     }
     let said;
     try { said = JSON.parse(await client.refund(m[1], Number(m[2]), fields, toHex(secret))); } catch (e) { return { ...d, why: String(e && e.message || e) }; }
