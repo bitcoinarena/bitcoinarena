@@ -2610,5 +2610,33 @@
  "3609": {
   "text": "Other: a memory crash had no guard, and restart left tunnels missing",
   "kind": "bug"
+ },
+ "3610": {
+  "text": "Faucet and feedback: a node check reports no committees for an outside node that did serve",
+  "kind": "bug"
+ },
+ "3611": {
+  "text": "BTC Up/Down game: price to beat stays on the previous window briefly after a new window opens",
+  "kind": "bug"
+ },
+ "3612": {
+  "text": "Next Block game: a copied play can match another score, and the transcript stays readable during the round",
+  "kind": "bug"
+ },
+ "3613": {
+  "text": "Other: Orange Pill Run: a copied run with extra presses after the end is missed",
+  "kind": "bug"
+ },
+ "3614": {
+  "text": "BTC Up/Down game: a double tap on Buy can place two orders",
+  "kind": "bug"
+ },
+ "3664": {
+  "text": "Rock Paper Scissors game: paid rounds keep failing and the game goes offline",
+  "kind": "bug"
+ },
+ "3665": {
+  "text": "Federation: a wallet can keep notes already counted spent, so rounds that pick them void",
+  "kind": "bug"
  }
 }
