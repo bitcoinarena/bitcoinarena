@@ -2362,5 +2362,37 @@
  "3551": {
   "text": "Node software: heavy load and a full swap left most seats silent, so joins failed",
   "kind": "bug"
+ },
+ "3553": {
+  "text": "Node software: release signing material is readable by network-facing processes, so a breach can sign an operator update",
+  "kind": "bug"
+ },
+ "3554": {
+  "text": "Node software: mainnet wallet admin credentials are readable by other local services",
+  "kind": "bug"
+ },
+ "3555": {
+  "text": "Federation: seat, guardian, and attestor key shares sit together on one host under one account",
+  "kind": "bug"
+ },
+ "3556": {
+  "text": "Node software: a registered game core can freeze the seat main thread on each call",
+  "kind": "bug"
+ },
+ "3557": {
+  "text": "Website: game cores run inside the seat process that holds the keys",
+  "kind": "bug"
+ },
+ "3558": {
+  "text": "Node software: an oversized core answer can stall the seat on each decision",
+  "kind": "bug"
+ },
+ "3559": {
+  "text": "Other: public gateways listen on an outdated transport with published advisories and no firewall",
+  "kind": "bug"
+ },
+ "3560": {
+  "text": "Other: bitcoin nodes run a release with published peer-to-peer advisories already fixed upstream",
+  "kind": "bug"
  }
 }
