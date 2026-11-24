@@ -11478,7 +11478,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const key = itemsKey(); if (!key) return [];
       const k = gameName + '|' + ARENACLIENT.toHex(key.pubkey);
       if (!fresh && ownedCache && ownedCache.k === k && Date.now() - ownedCache.at < 60000) return ownedCache.items;
-      const items = await ARENACLIENT.ownedItems({ seats, player: key.pubkey, gameName, fetch: (u, o) => fetch(u, Object.assign({ cache: 'no-store' }, o || {})) });
+      // kanban #3575: seats behind one host count apart only when each proves a key of the checked census (curve.verify)
+      const items = await ARENACLIENT.ownedItems({ seats, player: key.pubkey, gameName, fetch: (u, o) => fetch(u, Object.assign({ cache: 'no-store' }, o || {})),
+        verify: window.ARENA_CURVE && window.ARENA_CURVE.verify ? (sg, m, k) => window.ARENA_CURVE.verify(sg, m, k) : null });
       ownedCache = { k, at: Date.now(), items };
       return items;
     }
