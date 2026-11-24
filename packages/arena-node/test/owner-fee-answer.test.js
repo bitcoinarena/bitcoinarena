@@ -29,7 +29,7 @@ const P = { networkId: new Uint8Array(32).fill(7), author: schnorr.getPublicKey(
   changes: [{ fee: 'roundDonationBps', value: 350 }], purpose: 'less for the developers' };
 const PID = toHex(feeProposalId(P));
 
-test('the owner page\'s dev answer: signed with the dev client\'s key, kept for a fee proposal this node holds, listed by GET /fees; refused otherwise', async () => {
+test('the owner page\'s dev answer: signed with the dev client\'s key and posted for a fee proposal this node holds; kept only for a key of the network\'s protocol developers (#3586); refused otherwise', async () => {
   const { m, store } = memory();
   const node = await serve(openStore(), { plugins: HOSTED, port: 0, owner: { store }, devClients });
   try {
@@ -50,16 +50,17 @@ test('the owner page\'s dev answer: signed with the dev client\'s key, kept for 
     const kept = await post('/funding', { kind: 'fee', hex });
     assert.equal(kept.status, 200, await kept.clone().text());
 
-    // the owner approves as dev a: signed here, kept
+    // the owner answers as dev a: signed here and posted, but kept only for a key of the network's protocol developers (kanban #3586). This
+    // node reads no developers' keys for the proposal's network (no donation set and no chain tip here), so it keeps nothing it cannot tell
+    // is a developer's and says to try again (503); GET /fees lists no answer. The kept path for a developer's key: audit-census-a7-2-1
     const ok = await answer({ slug: 'dev-a', proposalId: PID, approve: true });
-    assert.equal(ok.status, 200, await ok.clone().text());
+    assert.equal(ok.status, 503, await ok.clone().text());
+    assert.match((await ok.json()).why, /protocol developers' keys/);
     const fees = await (await fetch(`${base}/fees`)).json();
     const p = fees.proposals.find((x) => x.id === PID);
     assert.equal(p.needsDevs, true);
-    assert.deepEqual(p.devs, [{ dev: toHex(devPk).slice(2), approve: true }], 'the answer names the dev by the x of its 03 key');
+    assert.deepEqual(p.devs, [], 'an answer no developer key of the network signed is not listed');
     assert.deepEqual(p.changes, [{ fee: 'roundDonationBps', from: 400, to: 350, donation: true }]);
-    // and denies: the newer answer is listed beside it (the decision counts each developer once - funding-book.js devMajority)
-    assert.equal((await answer({ slug: 'dev-a', proposalId: PID, approve: false })).status, 200);
 
     // refused: another key than the owner's, a dev client this node does not run, no proposal id
     assert.equal((await answer({ slug: 'dev-a', proposalId: PID, approve: true }, seedB)).status, 403);
