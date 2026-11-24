@@ -13384,9 +13384,9 @@ const KNOWN_GOOD_GAMES = Object.freeze({
     periodMs: '900000',
     requiredProtocolVersion: 2,
   }),
-  '90d207d64b3c2ab565d43b0437b3ddf45a99f400f8fc104425174d059254e42e': Object.freeze({
+  'f8df58ed305a4f0ef36fcc9d6c8a2956ace5a85520c1ee69872d38e23fb8fc60': Object.freeze({
     name: 'btc-updown-15m',
-    // UP/DOWN VERSION 26 (kanban #3075, #3079, #3080; feedback #351, #358, #359): version 25 in every term, with a client that says when a locked order's window closes, shows no cancel past an order's expiry and no Buy in a window the seats have not got ready
+    // UP/DOWN VERSION 26 (kanban #3075, #3079, #3080, #3601; feedback #351, #358, #359, #429): version 25 in every term, with a client that says when a locked order's window closes, shows no cancel past an order's expiry and no Buy in a window the seats have not got ready, and never drops an order attempt without a word
     cores: Object.freeze({
 
     }),
