@@ -2347,6 +2347,30 @@
   "text": "Website: an embedded wallet can leave its seed readable by the host page",
   "kind": "bug"
  },
+ "3535": {
+  "text": "Next Block game: the page rejects its own core because the shipped template differs only in comments",
+  "kind": "bug"
+ },
+ "3536": {
+  "text": "Node software: an oversized body is rejected as bad JSON, and many handlers hide the real cause",
+  "kind": "bug"
+ },
+ "3538": {
+  "text": "Node software: player-facing copy says seat again, against the naming rule",
+  "kind": "bug"
+ },
+ "3541": {
+  "text": "Other: a main-process test counts a departure scan's block reads as the chain view's",
+  "kind": "bug"
+ },
+ "3542": {
+  "text": "Lightning payouts: funds can come from a federation that should be blocked",
+  "kind": "bug"
+ },
+ "3543": {
+  "text": "Website: the Arena page still mentions browser storage far past its allowed limit",
+  "kind": "bug"
+ },
  "3548": {
   "text": "Committees and bonds: a new bond can count in the census while recovery is already open",
   "kind": "bug"
@@ -2393,6 +2417,26 @@
  },
  "3560": {
   "text": "Other: bitcoin nodes run a release with published peer-to-peer advisories already fixed upstream",
+  "kind": "bug"
+ },
+ "3561": {
+  "text": "Other: merging an older browser wallet stays stuck, joins are refused, and the balance flickers with no history",
+  "kind": "bug"
+ },
+ "3562": {
+  "text": "Faucet and feedback: a short outage left a seat down, a window with no committee, and deposits stuck opening a wallet",
+  "kind": "bug"
+ },
+ "3563": {
+  "text": "Other: the Orange Pill Run card says the best three share a pot, but the round is free and one player wins",
+  "kind": "bug"
+ },
+ "3564": {
+  "text": "Rock Paper Scissors game: a fixed status line overlaps the round-cost line on a common desktop size",
+  "kind": "bug"
+ },
+ "3565": {
+  "text": "Committees and bonds: after a reach-mode switch the owner page keeps the old tunnel address and fails to load",
   "kind": "bug"
  }
 }
