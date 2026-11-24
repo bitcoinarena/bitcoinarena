@@ -22,6 +22,7 @@ import { itemsSecretFor } from '../../arena-protocol/src/player-key.js';
 import { entryItemDigest } from '../../arena-protocol/src/contracts.js';
 import { ITEMS_VERSION, RESERVES_VERSION } from '../../arena-protocol/src/constants.js';
 import { newestCheckedCensus } from './committee.js';
+import { seatsOf, seatVoice } from './seat-identity.js';
 import { PAID_PURCHASE_PREFIX, PAID_GIFT_PREFIX, paidRecordGet, paidRecordPut, paidRecordPutIf, paidRecordFind, paidRecordWallet, paidRecordDropIf, paidRecordMark, paidRecordKeys } from './paid-records.js';
 
 /**
@@ -252,8 +253,16 @@ export async function resendPaidRecords({ storage, fetch }) {
  */
 // kanban #2802 (audit r21 client-2): GET /items was read whole - one seat's 64 MiB answer was pulled and parsed on the page's only thread
 export const OWNED_ITEMS_BYTES_MAX = 4 * 1024 * 1024;
-export async function ownedItems({ seats, player, gameName = null, fetch }) {
-  const answers = await Promise.all((seats || []).map(async (s) => {
+// ONE SEAT, ONE ANSWER (kanban #3575, audit client-a7-1-2): every list entry was a seat - a link naming http://liar.test and http://liar.test/
+// gave one box the two answers `need` asks for, and its made-up purchase was signed into the entry (every honest seat refused the join). The
+// list is now grouped into seats (seat-identity.js seatsOf: each source once, one host one seat unless each of its URLs proves a distinct key of
+// the checked census - `keys`, default newestCheckedCensus; `verify` BIP-340), and a seat's answers are one answer, none when they disagree
+const censusKeyList = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
+const ownedRecordKey = (it) => JSON.stringify([it.id, String(it.itemId), String(it.gameName)]);
+export async function ownedItems({ seats, player, gameName = null, fetch, keys = null, verify = null }) {
+  const groups = await seatsOf(seats || [], { keys: keys || censusKeyList(), verify, fetcher: fetch, ms: 15000 });
+  const urls = groups.flatMap((g) => g.urls.map((u) => ({ g, u })));
+  const perUrl = await Promise.all(urls.map(async ({ u: s }) => {
     try {
       const r = await fetch(`${String(s).replace(/\/$/, '')}/items?player=${toHex(player)}${gameName ? `&game=${encodeURIComponent(gameName)}` : ''}`, { signal: AbortSignal.timeout(15000) });
       if (!r.ok) return null;
@@ -261,6 +270,11 @@ export async function ownedItems({ seats, player, gameName = null, fetch }) {
       return Array.isArray(items) ? items.slice(0, 1000) : [];
     } catch { return null; }
   }));
+  const answers = groups.map((g) => {
+    const said = perUrl.filter((_, i) => urls[i].g === g);
+    // the seat's word: its URLs' lists agree when they name the same records
+    return seatVoice(said, (items) => (items ? JSON.stringify([...new Set(items.filter((it) => it && typeof it.id === 'string').map(ownedRecordKey))].sort()) : null));
+  });
   const answered = answers.filter((a) => a);
   const need = answered.length >= 2 ? 2 : 1;
   const byRecord = new Map();
@@ -270,7 +284,7 @@ export async function ownedItems({ seats, player, gameName = null, fetch }) {
       if (!it || typeof it.id !== 'string' || seen.has(it.id)) continue;
       if (gameName && it.gameName !== gameName) continue;     // kanban #2421: only the game asked
       seen.add(it.id);
-      const k = JSON.stringify([it.id, String(it.itemId), String(it.gameName)]);
+      const k = ownedRecordKey(it);
       const e = byRecord.get(k);
       if (e) e.n++; else byRecord.set(k, { it, n: 1 });
     }
