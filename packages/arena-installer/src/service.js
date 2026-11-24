@@ -46,6 +46,10 @@ Wants=network-online.target
 [Service]
 WorkingDirectory=${join(release, 'packages/arena-node')}
 ExecStart=${node} src/run.js ${join(home, 'arena.conf')}
+# FREED MEMORY GOES BACK (kanban #3238): every socket read is a 64 KB malloc, under glibc's 128 KB mmap threshold, so large bodies at once
+# grew the brk heap to ~1 GB of which ~0.8 GB stayed free and resident for the seat's life (glibc trims only the top); at 16 KB they are
+# mappings of their own, unmapped when freed
+Environment=MALLOC_MMAP_THRESHOLD_=16384
 # EVERY START AND STOP IN THE SETUP LOG (kanban #2867, feedback #088: a seat restart left no line saying it stopped or why): systemd hands the
 # stop's result, exit code and status to ExecStopPost; the seat's own last lines come from its journal
 ExecStartPre=-/bin/sh -c 'mkdir -p %h/.cache && echo "$$(date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ) seat on port ${port} starting" >> %h/.cache/bitcoin-arena-node-setup.log'
