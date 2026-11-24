@@ -1026,8 +1026,14 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
     const body = page.slice(at, page.indexOf('\n    }\n', at));
     assert.doesNotMatch(body, spends, `${name}, on a timer, spends`);
   }
-  for (const f of ['redeemPayout', 'returnStake', 'refundKept', 'withdrawCollected', 'collectOwed'])
+  for (const f of ['redeemPayout', 'returnStake', 'refundKept', 'collectOwed'])
     assert.ok(!page.includes(`ARENACLIENT.${f}(`), `the page calls ${f} itself`);
+  // kanban #3265: one withdrawCollected, inside the Orange Pill Run's `pay` - the player's own paid entry, pressed in the game - and
+  // never on a timer (the timed functions above). Any other call is refused here
+  const wc = [...page.matchAll(/ARENACLIENT\.withdrawCollected\(/g)].map((m) => m.index);
+  const oprPay = page.indexOf("        pay: async (invoice) => {");
+  assert.equal(wc.length, 1, 'the page calls withdrawCollected more than once');
+  assert.ok(oprPay > 0 && wc[0] > oprPay && wc[0] < page.indexOf('\n        },\n', oprPay), 'withdrawCollected is called outside the Orange Pill Run entry payment');
   const calls = [...page.matchAll(/ARENACLIENT\.collectAndWithdraw\(/g)].map((m) => m.index);
   const withdrawAt = page.indexOf('window.ARENA_WITHDRAW = async function');
   assert.equal(calls.length, 1);
@@ -1949,7 +1955,7 @@ test('a wallet the lobby could not open is joined again at PLAY, and a join that
   const t0 = Date.now();
   const got = await playerWallet({ ...args, onStep: (s) => steps.push(s) });   // PLAY
   console.log('  FACTS:', JSON.stringify({ ms: Date.now() - t0, joins, steps }));
-  assert.equal(got, good);
+  assert.equal(got.tag, good.tag);   // #3237: the page hands the client inside freshWallet's wrapper, so the same client, not the same object
   assert.equal(joins, 2);
   // (since PLAY waits for the lobby's open until it is refused at joinWaitMs - never a second client beside a live one)
   assert.ok(steps.some((s) => /did not open \(.*did not open the player wallet in 0 s.*\) - joining the federation again/.test(s)), 'PLAY did not say the lobby wallet failed to open');
@@ -2302,8 +2308,9 @@ test('a slow wallet open is waited for, not joined twice: one client for every c
   const args = { round, invite: INVITE, seed: b32(0x95), LockClient, storage: tab, openWaitMs: 100, joinWaitMs: 5000 };
   const lobby = playerWallet(args);
   const play = await playerWallet({ ...args, onStep: (s) => steps.push(s) });
-  assert.equal(play, one);
-  assert.equal(await lobby, one);
+  // #3237: the client comes inside freshWallet's wrapper - one client, the same for both callers, joined once
+  const lob = await lobby;
+  assert.equal(play.tag, one.tag); assert.equal(lob.tag, one.tag);
   assert.equal(joins, 1, 'the federation was joined once - no second client over the same store');
   assert.ok(steps.some((s) => /still opening \(over 0 s\) - one wallet, waited for/.test(s)), steps.join(' | '));
   assert.ok(!steps.some((s) => /joining the federation again/.test(s)), steps.join(' | '));
