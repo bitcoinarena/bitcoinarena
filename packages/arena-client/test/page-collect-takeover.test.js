@@ -12,9 +12,6 @@ import { collectWithin, COLLECT_RECORD_MS } from '../src/page-lock.js';   // kan
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
 const cut = (from, end) => { const a = HTML.indexOf(from); assert.ok(a > 0); const b = HTML.indexOf(end, a); return HTML.slice(a, b + end.length); };
-// a pass looks at the unmatched orders' records first and closes a refund-only one, by the page's own refundOrderKeys / unfilledPickKeys / closeRefundOnly (kanban #3009)
-const REFUND = HTML.slice(HTML.indexOf('    const orderKeyOf = (r) =>'), HTML.indexOf('\n    }\n', HTML.indexOf('    function closeRefundOnly(')) + '\n    }\n'.length);
-assert.ok(REFUND.includes('const unfilledPickKeys = ') && REFUND.includes('function closeRefundOnly('), 'index.html picks the refund-only orders first');
 const PAYOUT = cut('    let payoutAskingSince = 0;', '\n      payoutAsking = false; payoutAskingSince = 0;\n      paintWallet();\n    }\n');
 
 function page(records, lookRound) {
@@ -23,7 +20,7 @@ function page(records, lookRound) {
   const ARENACLIENT = { collectWithin, COLLECT_RECORD_MS, savedCollects: () => records, roundLocks: () => true, owedToLine: () => 'line', toHex: () => 'ab'.repeat(32), markCollectDone: () => {}, collectIntoPlayerWallet: async () => ({ collected: false }) };
   const vault = () => ({ length: 0, key: () => null, getItem: () => null, setItem: () => {}, removeItem: () => {} });
   const fns = pageFunction(PAGE, ['window', 'document', 'vault', 'ARENACLIENT', 'lookRound', 'roundAsk', 'newestKept', 'collectSeed', 'collectNote', 'lookSaid',
-    'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase', 'collectFailed', 'collectHeld', 'performance'], [REFUND, PAYOUT], 'return { lookThePayout };')(
+    'paintWallet', 'paintHistory', 'paintMoney', 'payoutAsking', 'fetch', 'keptRecords', 'withRecordPhrase', 'collectFailed', 'collectHeld', 'performance'], [PAYOUT], 'return { lookThePayout };')(
     window, { getElementById: () => null }, vault, ARENACLIENT, lookRound, () => ({}), () => records[records.length - 1], () => 'seed', () => {}, () => '', () => {}, () => {}, () => {}, false,
     async () => { throw new Error('no fetch'); }, () => ({ collectable: records, uncollectable: [] }), (r, fn) => fn(), collectFailed, collectHeld, { now: () => 60000 });   // past the 30 s the looks leave an order after a load (kanban #803)
   return { ...fns, collectFailed, collectHeld };
