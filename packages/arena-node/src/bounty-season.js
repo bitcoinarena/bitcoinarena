@@ -205,6 +205,19 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
       INSERT OR IGNORE INTO link_names (platform, user_id, username) VALUES (new.platform, new.user_id, lower(new.username)); END;`);
   const namesOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ?');
   const firstNameOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ? ORDER BY rowid ASC LIMIT 1');   // kanban #3056
+  // EVERY ACCOUNT A KEY EVER LINKED (kanban #3595, audit faucet a7-3-1): the bot list was matched against the account a key links now, so a listed X
+  // bot made a fresh X account, posted a new link code from it, its key's link moved to the new account id and its approved, unpaid reports paid the
+  // human amount again. Each (key, platform, account id) a link ever held is kept - by triggers on links, filled at open from the links, the
+  // membership reads (checks) and the used codes - and the list is matched against every name of every X account the key ever linked
+  db.exec(`CREATE TABLE IF NOT EXISTS key_accounts (pubkey TEXT NOT NULL, platform TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (pubkey, platform, user_id));
+    INSERT OR IGNORE INTO key_accounts (pubkey, platform, user_id) SELECT pubkey, platform, user_id FROM links;
+    INSERT OR IGNORE INTO key_accounts (pubkey, platform, user_id) SELECT pubkey, platform, user_id FROM checks;
+    INSERT OR IGNORE INTO key_accounts (pubkey, platform, user_id) SELECT c.pubkey, u.platform, u.user_id FROM link_code_uses u JOIN link_codes c ON c.code = u.code WHERE u.user_id IS NOT NULL;
+    CREATE TRIGGER IF NOT EXISTS key_accounts_add AFTER INSERT ON links BEGIN
+      INSERT OR IGNORE INTO key_accounts (pubkey, platform, user_id) VALUES (new.pubkey, new.platform, new.user_id); END;
+    CREATE TRIGGER IF NOT EXISTS key_accounts_move AFTER UPDATE OF pubkey, user_id ON links BEGIN
+      INSERT OR IGNORE INTO key_accounts (pubkey, platform, user_id) VALUES (new.pubkey, new.platform, new.user_id); END;`);
+  const accountsOf = db.prepare('SELECT user_id FROM key_accounts WHERE pubkey = ? AND platform = ?');
   const seasonNow = (nowMs) => seasonAt(nowMs, startMs, s2EndMs);
 
   /** A ONE-TIME LINK CODE for a reporter's key (signed in with it): 24 hours, used once, at most LINK_CODES_OPEN_MOST open at a time. */
@@ -324,7 +337,9 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     // markieren, auch in Zukunft"): a key that links an X handle on the bot list (FAUCET_BOT_X_HANDLES file, read on every call) gets no flag -
     // not human, no social bonus - for every report, past and future
     const bots = botXHandles(), listed = (n) => bots.has(String(n || '').replace(/^@/, '').toLowerCase());
+    // - and a key that ever linked such an X account stays a bot after it links another one (kanban #3595)
     if (links.some((l) => l.platform === 'x' && (listed(l.username) || (bots.size && namesOf.all('x', String(l.userId)).some((r) => listed(r.username)))))) return { ...f, bot: true };
+    if (bots.size && accountsOf.all(String(pubkey), 'x').some((a) => namesOf.all('x', a.user_id).some((r) => listed(r.username)))) return { ...f, bot: true };
     for (const l of links) if (l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
     return f;
   }
