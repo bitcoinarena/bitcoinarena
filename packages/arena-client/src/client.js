@@ -1675,7 +1675,7 @@ export class Client {
     // `stakeCommitted` is the settlement signer nodes' own count (`watchStake`), not
     // this page's memory of having paid.
     if (this.stakeCommitted !== true)
-      return { ok: false, ...none, why: 'the stake is not in yet: no signer node has counted it, so no donation leaves the wallet' };
+      return { ok: false, ...none, why: 'the stake is not in yet: no seat has counted it, so no donation leaves the wallet' };
     if (!set || !Array.isArray(set.recipients)) return { ok: false, ...none, why: 'there is no donation set to pay' };
     if (round) {
       const named = donationSetMatchesRound(round, set.recipients);

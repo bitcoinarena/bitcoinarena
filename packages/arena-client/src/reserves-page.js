@@ -39,10 +39,10 @@ export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher
     });
   });
   const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (!best) return { ok: false, why: `none of the round's ${asked.length} signer nodes names a reserve key for federation ${fed.slice(0, 8)}` };
+  if (!best) return { ok: false, why: `none of the round's ${asked.length} seats names a reserve key for federation ${fed.slice(0, 8)}` };
   const rival = [...said.entries()].find(([k, n]) => k !== best[0] && n >= needed);
-  if (rival) return { ok: false, why: `the round's signer nodes name two reserve keys, ${best[0].slice(0, 16)} and ${rival[0].slice(0, 16)}, each at least ${needed} times - the reserves are not paid to either` };
-  if (best[1] < needed) return { ok: false, why: `only ${best[1]} of the round's signer nodes name reserve key ${best[0].slice(0, 16)}, and ${needed} must` };
+  if (rival) return { ok: false, why: `the round's seats name two reserve keys, ${best[0].slice(0, 16)} and ${rival[0].slice(0, 16)}, each at least ${needed} times - the reserves are not paid to either` };
+  if (best[1] < needed) return { ok: false, why: `only ${best[1]} of the round's seats name reserve key ${best[0].slice(0, 16)}, and ${needed} must` };
   return { ok: true, key: fromHex(best[0]), agreeing: best[1], asked: asked.length };
 }
 

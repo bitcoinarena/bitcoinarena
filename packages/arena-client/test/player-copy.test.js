@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE PLAYER IS NEVER TOLD "SEAT" (2026-09-15 16:22 and 19:56). The machines that sign a
-// round are signer nodes; the player's own place is "joined"; a round that asks no stake is a
-// "free round". Measured before this pass: the status chip read "1 player · waiting · free seat"
-// and "round named · not seated", the lobby line "2 of 2 seats agree · 0 seated", and the join,
-// stake, wallet and donation panels "no seat served a claim key", "asking the seats ...", "this
-// seat owes". Protocol field names (seatEntry, seatsAgree, seatedHere) are code, not copy.
+// THE PLAYER IS TOLD "SEAT", NEVER "SIGNER NODE" (the owner 2026-11-24, kanban #3538: "seat anstatt signer node überall"; it retires
+// the 2026-09-15 rule that said signer node). The machines that sign a round are seats in every line a player reads; the player's
+// own place is still "joined" and a round that asks no stake a "free round". Protocol field names are code, not copy.
 //
 // EVERY STRING LITERAL COUNTS, because a thrown message or a `why` in this library becomes a line
 // on the player's screen - the chip, the lobby hint, a refusal. Comments and the code inside a
@@ -14,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 
-const SEAT = /\bseat(s|ed|ing)?\b/i;
+const SIGNER_NODE = /\bsigner[ -]nodes?\b/i;
 // code, not copy: a module path and a node's door (`/seating?round=`) are never on a screen
 const CODE = (s) => /^\.\.?\/[\w./-]+\.js$/.test(s) || /^\s*\/[a-z-]+\?/.test(s);
 
@@ -78,35 +75,51 @@ test('the scanner reads string text and skips comments and template code', () =>
   assert.deepEqual(got, ['free seat', 'x   y', 'seated']);
 });
 
-test('no string the player can be shown says seat: the client library', () => {
+test('no string the player can be shown says signer node: the client library', () => {
   const dir = new URL('../src/', import.meta.url);
   const hits = [];
   // THE BIP-39 WORDLIST IS NOT COPY. It is the standard English list, fixed by
   // BIP-39 and verified against its published sha256, and one of its 2048 words
   // is "seat". Nobody is shown it as a sentence about a signer node, and it
   // cannot be reworded without breaking every seed phrase ever written down.
-  // Scanning it says "player-facing copy still says seat: bip39-wordlist.js:
+  // Scanning it says "player-facing copy still says signer node: bip39-wordlist.js:
   // \"seat\"", which is the scanner reading a dictionary.
   const NOT_COPY = new Set(['bip39-wordlist.js']);
   for (const f of readdirSync(dir).filter((x) => x.endsWith('.js') && !NOT_COPY.has(x))) {
-    for (const s of stringLiterals(readFileSync(new URL(f, dir), 'utf8'))) if (SEAT.test(s) && !CODE(s)) hits.push(`${f}: ${JSON.stringify(s.slice(0, 90))}`);
+    for (const s of stringLiterals(readFileSync(new URL(f, dir), 'utf8'))) if (SIGNER_NODE.test(s) && !CODE(s)) hits.push(`${f}: ${JSON.stringify(s.slice(0, 90))}`);
   }
-  assert.deepEqual(hits, [], `player-facing copy still says seat:\n${hits.join('\n')}`);
+  assert.deepEqual(hits, [], `player-facing copy still says signer node:\n${hits.join('\n')}`);
 });
 
-test('no string the player can be shown says seat: the page', () => {
+// EACH GAME'S PAGE PART (kanban #521): the code and markup lifted out of the page into packages/<game>/page/*-page.js; `apps` picks the games
+// placed from their own repositories (apps.lock.json) or the ones this repository holds
+function gamePageHits(apps) {
+  const games = new URL('../../', import.meta.url), hits = [];
+  let fromApps = new Set();
+  try { fromApps = new Set(Object.values(JSON.parse(readFileSync(new URL('../../../apps.lock.json', import.meta.url), 'utf8')).apps).map((a) => String(a.copy || '').replace(/^packages\//, ''))); } catch { /* none placed */ }
+  for (const g of readdirSync(games)) {
+    if (fromApps.has(g) !== apps) continue;
+    let names = []; try { names = readdirSync(new URL(`${g}/page/`, games)).filter((n) => /-page\.js$/.test(n)); } catch { continue; }
+    for (const n of names) for (const s of stringLiterals(readFileSync(new URL(`${g}/page/${n}`, games), 'utf8'))) if (SIGNER_NODE.test(s)) hits.push(`${g}/${n}: ${JSON.stringify(s.slice(0, 90))}`);
+  }
+  return hits;
+}
+
+test('no string the player can be shown says signer node: the page', () => {
   const html = readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const hits = [];
   const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
-  for (const js of scripts) for (const s of stringLiterals(js)) if (SEAT.test(s)) hits.push(`script: ${JSON.stringify(s.slice(0, 90))}`);
+  for (const js of scripts) for (const s of stringLiterals(js)) if (SIGNER_NODE.test(s)) hits.push(`script: ${JSON.stringify(s.slice(0, 90))}`);
   // AND EACH GAME'S PAGE PART (kanban #521): the code and markup lifted out of the page into packages/<game>/page/*-page.js
-  const games = new URL('../../', import.meta.url);
-  for (const g of readdirSync(games)) {
-    let names = []; try { names = readdirSync(new URL(`${g}/page/`, games)).filter((n) => /-page\.js$/.test(n)); } catch { continue; }
-    for (const n of names) for (const s of stringLiterals(readFileSync(new URL(`${g}/page/${n}`, games), 'utf8'))) if (SEAT.test(s)) hits.push(`${g}/${n}: ${JSON.stringify(s.slice(0, 90))}`);
-  }
+  for (const h of gamePageHits(false)) hits.push(h);
   const visible = html.replace(/<script[\s\S]*?<\/script>/g, ' ').replace(/<style[\s\S]*?<\/style>/g, ' ').replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/<[^>]+>/g, ' ');
-  if (SEAT.test(visible)) hits.push(`markup: ${JSON.stringify(visible.match(new RegExp('.{0,40}' + SEAT.source + '.{0,40}', 'i'))[0])}`);
-  assert.deepEqual(hits, [], `the page still says seat:\n${hits.join('\n')}`);
+  if (SIGNER_NODE.test(visible)) hits.push(`markup: ${JSON.stringify(visible.match(new RegExp('.{0,40}' + SIGNER_NODE.source + '.{0,40}', 'i'))[0])}`);
+  assert.deepEqual(hits, [], `the page still says signer node:\n${hits.join('\n')}`);
+});
+
+// AN APP FROM ITS OWN REPOSITORY (apps.lock.json `copy`, e.g. packages/nextblock) is reworded there, with its next version: listed here, not failed
+test('the apps\' own page parts say seat too (reworded in their own repositories)', (t) => {
+  const hits = gamePageHits(true);
+  if (hits.length) t.todo(`${hits.length} line(s) in app repositories still say signer node:\n${hits.join('\n')}`);
 });

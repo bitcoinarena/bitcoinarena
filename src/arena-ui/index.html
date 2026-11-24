@@ -2918,7 +2918,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (P.heard) return;
         P.heard = true; P.feed = !!feed;
         var held = P.held; P.held = {};
-        if (P.feed) { P.active = true; console.log('[arena] the signer nodes run the committee\'s price: this run plays attested samples only (the seeded tape until they come)'); return; }
+        if (P.feed) { P.active = true; console.log('[arena] the seats run the committee\'s price: this run plays attested samples only (the seeded tape until they come)'); return; }
         ['tape', 'sample'].forEach(function (k) { var h = held[k]; if (h) { try { h[0].apply(h[1], h[2]); } catch (e) { /* that core is gone */ } } });
       }
       P.heard_ = heard;
@@ -3888,7 +3888,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           throw new Error(ARENACLIENT.federationSays(window.ARENA_FED_STATUS.status));
         window.ARENA_COMMITTEE_LAST = { round: roundIdHex, ms: sn.derived.ms, headers: sn.derived.headers, census: { entries: sn.derived.census.entries },
           beacon: sn.derived.beacon.height, seats: sn.derived.seats.map((x) => ({ node: x.node, agrees: x.agrees })) };
-        console.log(`[arena] committee built by this client for ${roundIdHex.slice(0, 8)}: ${sn.signerNodes.length} settlement signer nodes, census of ${sn.derived.census.entries}, `
+        console.log(`[arena] committee built by this client for ${roundIdHex.slice(0, 8)}: ${sn.signerNodes.length} settlement seats, census of ${sn.derived.census.entries}, `
           + `beacon ${sn.derived.beacon.height}, ${sn.agreed} node(s) agree${sn.refused.length ? ', ' + sn.refused.length + ' differ: ' + sn.refused.join('; ') : ''} (${sn.derived.ms.total} ms)`);
         return sn;
       });
@@ -4265,7 +4265,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // 2026-10-06 05:31Z: round 49a50535 named serial 2 where serial 3 was in force; this step said "no donation" and the
         // join went on to lock 100 sat, which the session then refused - the stake back only after its expiry)
         else if (/donation set in force/.test(String(ds.why))) {
-          window.ARENA_JOIN_REFUSED = 'the signer nodes refuse this round: ' + String(ds.why).replace(/^not every signer node of this round serves its donation set: /, '').slice(0, 240);
+          window.ARENA_JOIN_REFUSED = 'the seats refuse this round: ' + String(ds.why).replace(/^not every signer node of this round serves its donation set: /, '').slice(0, 240);
           console.error('[arena] join refused before any lock: ' + window.ARENA_JOIN_REFUSED);
           return;
         }
@@ -4624,7 +4624,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             signerNodes: signerNodes.signerNodes, nodes: named.nodes, curve: window.ARENA_CURVE,
           }, {
             onWait: (short) => {
-              if (stageNow) window.ArenaText.say(stageNow, 'Waiting for the round\'s signer nodes to make its claim key: '
+              if (stageNow) window.ArenaText.say(stageNow, 'Waiting for the round\'s seats to make its claim key: '
                 + String(short.attested || 0) + ' of ' + String(short.needed || '?') + ' …');
             },
           });
@@ -4661,7 +4661,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // entry, lock and session key, its transcript replayed into the core, and it goes on from the tick the seats are owed.
         if (use.resumed === 'running') {
           window.ARENA_RESUME = { roundIdHex: named.roundIdHex, entryIdHex: String(use.kept.committedTo), closeMs: closeMsOf(), caughtUp: false };
-          console.log('[arena] the round started before this reload: its run is resumed from the signer nodes, entry '
+          console.log('[arena] the round started before this reload: its run is resumed from the seats, entry '
             + String(use.kept.committedTo).slice(0, 16) + ', no second deposit');
         }
         // NO ERROR FOR A ROUND ALREADY PLAYED (kanban #830, 2026-10-31: "das für eine gespielte runde keine fehlermeldung kommen kann"): the stake is in, the
@@ -4894,7 +4894,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // chip prints that rather than this page's assumption. Dealing is not funding, and a
         // page that printed "not paid" as a constant would be reporting its
         // own guess as the player's balance.
-        console.log('[arena] stake dealt to ' + signerNodes.signerNodes.length + ' settlement signer node(s), '
+        console.log('[arena] stake dealt to ' + signerNodes.signerNodes.length + ' settlement seat(s), '
           + put.accepted + ' accepted the handout. Paying it is M3.2; the chip says '
           + 'what the node holds.');
       } else {
@@ -5005,7 +5005,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           } catch (e) { console.log('[arena] #1263 no name record: ' + String(e && e.message || e).slice(0, 120)); }
         }
         const sent = await tookEntries;
-        all.then((done) => { if (done && done.lock) console.log('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': locks with ' + done.lock.committed + ' of ' + done.lock.needed + ' signer nodes'
+        all.then((done) => { if (done && done.lock) console.log('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': locks with ' + done.lock.committed + ' of ' + done.lock.needed + ' seats'
           + (done.why ? ' - ' + done.why : '')); }, (e) => console.error('[arena] hidden move ' + named.roundIdHex.slice(0, 16) + ': the locks were not handed: ' + e.message));
         console.log('[arena] hidden move in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status)));
         window.ARENA_ORDER_BUSY_UNTIL = 0;
@@ -5013,7 +5013,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // WHY, as the seats said it (2026-10-30: "the signer nodes refused the entry: undefined"): what onEntries hands has no `why` of its own
           const saidWhy = sent.why || [...new Set(sent.entries.map((x) => String(x.why || '').trim()).filter(Boolean))].sort((a, b) => (/not accepted/.test(a) ? 1 : 0) - (/not accepted/.test(b) ? 1 : 0)).slice(0, 2).join(' | ') || 'no seat said why';
           forgetHidden(named.roundIdHex);
-          window.ARENA_JOIN_REFUSED = 'the signer nodes refused the entry: ' + saidWhy; console.error('[arena] hidden move refused, each seat: ' + JSON.stringify(sent.entries.map((x) => [x.status, String(x.why || '').slice(0, 140)]))); return; }
+          window.ARENA_JOIN_REFUSED = 'the seats refused the entry: ' + saidWhy; console.error('[arena] hidden move refused, each seat: ' + JSON.stringify(sent.entries.map((x) => [x.status, String(x.why || '').slice(0, 140)]))); return; }
         // THE SAME TRANSACTION RECORD AS AN ORDER'S (2026-10-24: "Make sure that the other apps also get all these timing fixes"): the tx
         // id in the log, the page's signed timing to the seats (explorer), a slow one's log kept in this browser
         { const tookMs = performance.now() - (typeof pressAt === 'number' ? pressAt : (window.ARENA_ORDER_PRESSED_AT || performance.now()));
@@ -5107,7 +5107,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           if (early) { try { window.sessionStorage.setItem('arena.market.picks', JSON.stringify(readPicks().filter((x) => x.entryIdHex !== early))); } catch { /* this page only */ } }
           window.ARENA_ORDER_BUSY_UNTIL = 0;
           if (early && window.ARENA_KEEP_SLOW_TX) window.ARENA_KEEP_SLOW_TX(early, performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0));   // a refused order's log, kept
-          window.ARENA_JOIN_REFUSED = 'the signer nodes refused the pick: ' + sent.why; return;
+          window.ARENA_JOIN_REFUSED = 'the seats refused the pick: ' + sent.why; return;
         }
         window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick, state: sent.ok ? 'placed' : 'submitted' };
         { const from = window.ARENA_ORDER_PRESSED_AT || t0;
@@ -5435,7 +5435,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         for (const hex of seeds) {
           const mine = found.filter((f) => ARENACLIENT.toHex(f.seed) === hex);
           console.log('[arena] collect scan (' + (hex === tabHex ? 'this tab\'s phrase ' : 'kept phrase ') + hex.slice(0, 8) + '): the last 24 h settled rounds over '
-            + named.nodes.length + ' signer node(s), read once for ' + seeds.length + ' phrase(s) - ' + mine.length + ' new round(s) name its key'
+            + named.nodes.length + ' seat(s), read once for ' + seeds.length + ' phrase(s) - ' + mine.length + ' new round(s) name its key'
             + (mine.length ? ' (' + mine.map((f) => f.roundIdHex.slice(0, 8) + (f.payout ? ' payout' : '') + (f.lock ? ' lock' : '')).join(', ') + ')' : '')
             + ', ' + knownBySeed.get(hex).length + ' already kept');
         }
@@ -5848,7 +5848,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
                 rows.push({ key: backKey(r), text: name + ': ' + sat(look.stake.msat) + ' waiting - ' + (look.stake.how === 'refund' && look.stake.expiration
                   ? 'back to your key from block ' + look.stake.expiration
                   // kanban #3006: a stake no forfeit came for says when it comes back anyway
-                  : look.stake.how === 'forfeit' && look.stake.expiration ? 'no forfeit from the signer nodes yet; back to your key from block ' + look.stake.expiration + ' at the latest'
+                  : look.stake.how === 'forfeit' && look.stake.expiration ? 'no forfeit from the seats yet; back to your key from block ' + look.stake.expiration + ' at the latest'
                   : String(look.stake.why || 'its round has not decided yet').slice(0, 120)) });
               }
               return true;
@@ -7571,7 +7571,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             votes.set(fig, (votes.get(fig) || 0) + 1);
           }
           const best = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
-          if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), answered.length + ' of ' + (n.nodes || []).length + ' signer nodes answered /standing; '
+          if (typeof collectNote === 'function') collectNote('pending ' + String(n.roundIdHex).slice(0, 8), answered.length + ' of ' + (n.nodes || []).length + ' seats answered /standing; '
             + [...votes.entries()].map(([f, c]) => (f === null ? 'none' : f + ' msat') + ' x' + c).join(', ')
             + (answered[0] ? ' | ' + [answered[0].kind, answered[0].state, answered[0].outcome].filter(Boolean).join(' ') : ''));
           // A PAYOUT OWED WITH NO RECORD TO COLLECT IT (kanban #3086, feedback #365, measured 2026-11-20: round 67bba1aa FINAL DELIVERED 180000 msat
@@ -8543,7 +8543,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const said = await Promise.all(nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/h2h-want?game=' + game.id, { method: 'POST', signal: AbortSignal.timeout(5000) })
             .then((r) => r.status).catch(() => 0)));
           window.ARENA_H2H_WANT = { at: Date.now(), open: false, said };
-          console.log('[arena] no ' + game.name + ' round is open: asked the signer nodes for one (' + said.filter((x) => x === 200).length + ' of ' + nodes.length + ')');
+          console.log('[arena] no ' + game.name + ' round is open: asked the seats for one (' + said.filter((x) => x === 200).length + ' of ' + nodes.length + ')');
         };
         setTimeout(ask, 15000); window.ARENA_H2H_WANT_TIMER = setInterval(ask, 30000);
       }
@@ -11160,7 +11160,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             clearInterval(clock);
             join.cancelled = true;
             const silent = unanswered.length ? unanswered : named.nodes;
-            refuse('signer node' + (silent.length === 1 ? ' ' : 's ') + hosts(silent) + ' did not answer in ' + JOIN_ANSWER_S + ' s');
+            refuse('seat' + (silent.length === 1 ? ' ' : 's ') + hosts(silent) + ' did not answer in ' + JOIN_ANSWER_S + ' s');
           }, 1000);
           // THE ROUND SHOWN LOADED BEFORE ITS LOCK IS ACCEPTED (ARENA_JOIN_LOADED, called by the join once the player wallet
           // holds the locks), FOR ANY JOIN HELD TO ITS ROUND'S START, HOWEVER NEAR (2026-10-03: "A start under 20 s
@@ -11329,7 +11329,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // the nodes that did not answer 201 - and never asked for again.
     if (typeof ARENACLIENT !== 'undefined' && ARENACLIENT.resendWinnings)
       ARENACLIENT.resendWinnings({ storage: vault() })
-        .then((sent) => { for (const x of sent) if (x.posted.length) console.log('[arena] winnings address posted again to ' + x.posted.length + ' signer node(s); ' + x.acked.length + ' hold it'); })
+        .then((sent) => { for (const x of sent) if (x.posted.length) console.log('[arena] winnings address posted again to ' + x.posted.length + ' seat(s); ' + x.acked.length + ' hold it'); })
         .catch((e) => console.error('[arena] winnings: ' + e.message));
     // A ROUND LINK THAT CANNOT BE JOINED GOES BACK TO THE LOBBY (2026-09-25 21:13, phone: build 0.0.1866 put the
     // old title screen up under "the node refused the entry: the round is closed" - a tab brought back on a round's

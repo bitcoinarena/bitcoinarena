@@ -592,7 +592,7 @@ export function settlementSignerNodesFrom(got) {
   // NO ENTRY WITHOUT A CHECKED SEATING where the seats seat (§5A.7): the stake is dealt to who a certificate seats
   for (const role of ['game', 'settlement']) {
     const st = got.seating && got.seating[role];
-    if (st && st.missing) throw new Error(`that round has no signer nodes yet: no certificate naming its ${role} signer nodes stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
+    if (st && st.missing) throw new Error(`that round has no seats yet: no certificate naming its ${role} seats stands${st.refused.length ? ` (${st.refused[0]})` : ''} - nothing is entered (§5A.7)`);
   }
   const named = [], who = [];
   // AN UNSIGNED ANSWER AGAINST A CHECKED CERTIFICATE IS NAMED, IT DOES NOT CLOSE THE ROUND (kanban #2643, wf1489 r1 census-2): a seat's
@@ -626,7 +626,7 @@ export function settlementSignerNodesFrom(got) {
     // the error's `detail` and in the console, as "the lobby says which node answered what" asks
     const detail = named.join('; ');
     console.warn(`[arena] the round is refused: ${detail}`);
-    const line = who.length === 1 && named.length === 1 ? `${who[0]} names other signer nodes than this client worked out` : who.length ? `${who.length} seat${who.length === 1 ? '' : 's'} name other signer nodes than this client worked out` : 'a seating certificate does not match this client\'s draw';
+    const line = who.length === 1 && named.length === 1 ? `${who[0]} names other seats than this client worked out` : who.length ? `${who.length} seat${who.length === 1 ? '' : 's'} name other seats than this client worked out` : 'a seating certificate does not match this client\'s draw';
     const e = new Error(`the round is refused: ${line} - nothing is sealed, locked or signed`);
     e.detail = detail;
     throw e;
