@@ -8,12 +8,13 @@ import { fetchFees } from '../src/fee-proposal-page.js';
 import { fetchReserveKey } from '../src/reserves-page.js';
 import { postHandout } from '../src/join.js';
 
-const nodes = [1, 2, 3, 4, 5, 6, 7].map((n) => `http://127.0.0.1:${n}`);
+// seven seats on seven hosts (kanban #3576: ports or paths of one host are one seat unless each proves a census key)
+const nodes = [1, 2, 3, 4, 5, 6, 7].map((n) => `http://seat${n}.test`);
 const fed = new Uint8Array(32).fill(7), fedHex = '07'.repeat(32), KEY = `02${'ab'.repeat(32)}`;
 const json = (o) => new Response(JSON.stringify(o), { status: 200 });
 const seat = (status, dead) => async (url) => {
   const u = new URL(url);
-  if (Number(u.port) <= dead) return new Response('error', { status });
+  if (Number(u.hostname.replace(/\D/g, '')) <= dead) return new Response('error', { status });
   if (u.pathname === '/fees') return json({ atHeight: { a: 1 }, tip: 5 });
   if (u.pathname === '/reserves') return json({ federations: [{ federationId: fedHex, key: KEY }] });
   return new Response('{}', { status: 200 });

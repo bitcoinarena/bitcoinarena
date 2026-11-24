@@ -35462,6 +35462,7 @@ function nextRoundLine({ grids, game, nowMs = Date.now(), blockMs = 600000 }) {
 
 
 
+
 const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
 
@@ -35470,8 +35471,17 @@ const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (
  * only when `needed` agree. With `height` the set is the one in force there (`atHeight`), else at each node's tip (`inForce`). Answers
  * { ok, fees, agreeing, asked, tip, limits, sums, schedule, proposals } - `proposals` of an agreeing node - or { ok: false, why }.
  */
-async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000 } = {}) {
-  const asked = [...new Set((nodes || []).map(feesBaseOf))];
+// ONE SEAT, ONE VOTE (kanban #3576, audit client-a7-1-3): the URLs of the list were the votes, so a link naming the round's five seats plus six
+// paths of one box (http://liar.test/a .. /f) set the round's fees by itself, and every honest seat refused the paid entry built on them. The
+// URLs are grouped into seats (seat-identity.js seatsOf: one host one seat unless each of its URLs proves a distinct key of the checked census -
+// `keys`, default newestCheckedCensus; `verify`, default the page's curve), a seat's answers are one vote (none when they disagree), and
+// `needed` is capped by the seats, not the URLs
+const feesVerify = () => { const c = globalThis.ARENA_CURVE; return c && typeof c.verify === 'function' ? (sg, m, k) => { try { return !!c.verify(sg, m, k); } catch { return false; } } : null; };
+const feesCensusKeys = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
+async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 10000, keys = null, verify = null } = {}) {
+  const seats = await seatsOf([...new Set((nodes || []).map(feesBaseOf))], { keys: keys || feesCensusKeys(), verify: verify || feesVerify(), fetcher, ms: timeoutMs });
+  const asked = seats.flatMap((s) => s.urls);
+  const seatAt = seats.flatMap((s) => s.urls.map(() => s));
   const q = Number.isInteger(height) && height >= 0 ? `?height=${height}` : '';
   // NOT HELD FOR THE SLOWEST NODE (kanban #625, measured 2026-10-24 20:07Z: an order's fetchFees took 10 s - 13 of 14 nodes agreed at
   // once, the 14th was restarting): once more than half the nodes answered, the rest get COMPARE_GRACE_MS more
@@ -35479,13 +35489,16 @@ async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u, o) =>
   await majorityThenGrace(asked.map(async (b, i) => {
     try { const r = await fetcher(`${b}/fees${q}`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }); got[i] = r.ok ? await r.json() : null; } catch { got[i] = null; }
   }), COMPARE_GRACE_MS);
-  const answers = got.filter((a) => a && (q ? a.atHeight : a.inForce));
+  const setKey = (a) => (a && (q ? a.atHeight : a.inForce) ? JSON.stringify(Object.keys(FEES).map((f) => (q ? a.atHeight : a.inForce)[f])) : null);
+  // (kanban #3576) one answer per seat: the one its URLs agree on
+  const answers = seats.map((s) => seatVoice(got.filter((_, i) => seatAt[i] === s), setKey)).filter(Boolean);
   const by = new Map();
-  for (const a of answers) { const set = q ? a.atHeight : a.inForce; const k = JSON.stringify(Object.keys(FEES).map((f) => set[f])); by.set(k, [...(by.get(k) || []), a]); }
+  for (const a of answers) { const k = setKey(a); by.set(k, [...(by.get(k) || []), a]); }
   const best = [...by.values()].sort((x, y) => y.length - x.length)[0] || [];
-  if (best.length < Math.min(needed, asked.length) || !best.length) return { ok: false, why: `only ${best.length} of ${asked.length} nodes agree on the fees${q ? ` at height ${height}` : ''}, and ${Math.min(needed, asked.length)} must`, asked: asked.length };
+  const need = Math.min(needed, seats.length);
+  if (best.length < need || !best.length) return { ok: false, why: `only ${best.length} of ${seats.length} nodes agree on the fees${q ? ` at height ${height}` : ''}, and ${need} must`, asked: seats.length };
   const a = best[0];
-  return { ok: true, fees: Object.freeze({ ...(q ? a.atHeight : a.inForce) }), agreeing: best.length, asked: asked.length, tip: a.tip, limits: a.limits, sums: a.sums,
+  return { ok: true, fees: Object.freeze({ ...(q ? a.atHeight : a.inForce) }), agreeing: best.length, asked: seats.length, tip: a.tip, limits: a.limits, sums: a.sums,
     schedule: a.schedule, proposals: a.proposals || [] };
 }
 
