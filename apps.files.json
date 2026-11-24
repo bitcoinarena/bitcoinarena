@@ -433,7 +433,7 @@
       "exec": []
     },
     "arena-app-up-or-down": {
-      "commit": "eb128ae78b650e68a3a062cf9c2fec7d94a76692",
+      "commit": "64c18882d5331aca49aea50878167f34b9dbac84",
       "files": {
         "app.json": "a2bba8cec680f3d40dd12a70d9cfefd1989fd5b49962a5cb770ddbd9ca7c7183",
         "brand/updown-icon.svg": "3b6d03a10e6e3173ad19cbfe6c3850b8c78d7c37fdd0f06ad25e1c4299a8ec4b",
@@ -451,7 +451,7 @@
         "client/index-v22.html": "7b58cdd16d145ec3a8fb20f34ca357e09d805465780bd8570025b70d08c78a0c",
         "client/index-v23.html": "02c0358edb38435e944510de127d3c5f1a75872678fdb6bdf36fbfc800fd94e1",
         "client/index-v25.html": "d4b8ca1e49a7cb4401f4c16b78277a9d77e171acada24db2ca451c618e2a57fd",
-        "client/index-v26.html": "97ba715fbcb923bbdd9ce72cdfafcb9dac46700c3b298fe021052ec9352ec911",
+        "client/index-v26.html": "5243b0dafc0ac19260ce126ecde2ca8a53b3f47c7478be575c810fa96bf7c6ba",
         "client/index-v3.html": "adb31ce22943f1bc87b9f54ff300d9c64ee0e5a0fcd7ab510cbd7d89888d83bf",
         "client/index-v4.html": "7b9c9c74275d8801b44d3d41154aa87b16b10f74f0ef53a788d305f413460317",
         "client/index-v5.html": "c9024083bbdc736487233a5cdad0d6e03a9a02c16b6d78e5b2d518d6a7807df6",
@@ -467,7 +467,7 @@
         "client/src-v22.js": "b3e1062c2df112a3b776721709ef8bf0e3081a38467862e07ee016383650e739",
         "client/src-v23.js": "5298d558397a8d32e3a539aba2f6d623dada892c1ea831a94b6989ab9075a901",
         "client/src-v25.js": "cf24a1254b4e8513f485c8c609750e9e15b5e0bce8d08d149114ec79c7c4b225",
-        "client/src-v26.js": "7e121f73fdd0881ae21eb4dfe21cb3d2ccc2faa1ce03c3e669bef5c368985d64",
+        "client/src-v26.js": "f8744963278008433f09075983480de543626b2dc9f08e0349651b7af229c1cb",
         "dist/updown-view.js": "af20723a515cf2df90569d75908ef2c461828588c50c7c6c499bdb5dc0e8d9b0",
         "package.json": "2e0b61ff9c039512bcfa16ff69cbb2f72ade3612af8fd1bc853e3006e9e89951",
         "page/book-bot.js": "c5ad215e49559425cc4183fa3fc3a1510542277bb42190195f228ad1f09576d0",
@@ -491,7 +491,7 @@
         "plugin/btc-updown-v23.js": "fd92a5afb57f27b6568fcee92815ef43a5e2aa04355d98dab71ca68449aabe90",
         "plugin/btc-updown-v24.js": "e5b9873fd9bccfcd369f93f65c7565ab04a2a884a57a5b294532162a10f8abf8",
         "plugin/btc-updown-v25.js": "38bd87a71bac41480158f2a560b61c058a58be1305f0483ea5d8584d9b287567",
-        "plugin/btc-updown-v26.js": "6a9a2a3b50f7d33ce7574809fd0fa4dc586100ffb39c10ada7848c3537d37765",
+        "plugin/btc-updown-v26.js": "3966634db7a519455e137efaef9d51369f14c72537a5477a81cdb26312c0a4d4",
         "plugin/btc-updown-v3.js": "94fa6c35b56e3729e90ed2bbe4eda70e1d854919020267ba811cb35903250d01",
         "plugin/btc-updown-v4.js": "3ad1f8437e7c0e3a2af7225ba37d3ae588c480dc9bebfc679483c047c052a784",
         "plugin/btc-updown-v5.js": "cfbe9b2e2033d3f1876b8313ded24711269346b6a0ed2cad2e04006440ac7a3f",
