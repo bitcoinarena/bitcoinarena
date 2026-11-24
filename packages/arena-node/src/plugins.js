@@ -140,8 +140,16 @@ export function runTicksOf(core, config) {
   let s;
   try { s = core && sandboxFor(core); } catch { return null; }
   if (!s) return null;
-  return s.meta.runTicks ? s.call('runTicks', { config }) : s.meta.RUN_TICKS;
+  if (!s.meta.runTicks) return s.meta.RUN_TICKS;
+  // kanban #3556: an ask that failed is remembered for that core and config, as runTicksFits' (#2807) - never asked again on the seat's thread
+  const memo = RUN_TICKS_FAILED.get(core) || RUN_TICKS_FAILED.set(core, new Map()).get(core);
+  const k = configKey(config);
+  if (k !== null && memo.has(k)) throw new Error(memo.get(k));
+  try { return s.call('runTicks', { config }); }
+  catch (e) { if (k !== null && memo.size < 1024) memo.set(k, String(e && e.message || e).slice(0, 400)); throw e; }
 }
+const RUN_TICKS_FAILED = new WeakMap();   // core -> config -> the refusal of a runTicks ask that failed (kanban #3556)
+const configKey = (config) => { try { return JSON.stringify(config === undefined ? null : config, (k, x) => (typeof x === 'bigint' ? `${x}n` : ArrayBuffer.isView(x) ? Array.from(x) : x)); } catch { return null; } };
 
 /**
  * MAY A ROUND NAME THIS RUN LENGTH ON THIS CORE (the 82/90 fork, 2026-10-01: "The round length must be part of
@@ -171,6 +179,37 @@ export function runLengthFits(core, config, blockTicks) {
   catch (e) { const r = { ok: false, why: `${core.name}'s runTicksFits did not answer: ${String(e && e.message || e).slice(0, 200)}` }; if (memo.size < 1024) memo.set(blockTicks, r); return r; }
   return fits ? { ok: true }
     : { ok: false, why: `that round says a run is ${blockTicks} ticks, and ${core.name} runs 1 to ${runTicksOf(core, config)}` };
+}
+
+/**
+ * runLengthFits FOR THE SEAT'S OWN THREAD WHILE IT SERVES (kanban #3556, RCE audit #3552): POST /round asked the core's runTicksFits
+ * (and runTicks) with the seat's thread waiting on it - a core spinning on chosen lengths held it ASK_MS (2 s) per new length. The
+ * asks are made here first without blocking (core-sandbox.js callAsync); their answers - or failures - are remembered where
+ * runLengthFits reads them, so its answer, asked right after (and by round.open), is the same one and costs no wait.
+ */
+export async function runLengthFitsAsync(core, config, blockTicks) {
+  let s = null;
+  try { s = core ? sandboxFor(core) : null; } catch { s = null; }
+  if (s && typeof s.callAsync === 'function' && Number.isInteger(blockTicks) && !Number.isInteger(core.fixedRunTicks)) {
+    const warmRunTicks = async () => {
+      if (!s.meta.runTicks) return;
+      const memo = RUN_TICKS_FAILED.get(core) || RUN_TICKS_FAILED.set(core, new Map()).get(core);
+      const k = configKey(config);
+      if (k === null || memo.has(k)) return;
+      try { await s.callAsync('runTicks', { config }); }
+      catch (e) { if (memo.size < 1024) memo.set(k, String(e && e.message || e).slice(0, 400)); }
+    };
+    if (s.meta.runTicksFits) {
+      const memo = FITS_FAILED.get(core) || FITS_FAILED.set(core, new Map()).get(core);
+      if (!memo.has(blockTicks)) {
+        let fits = true;
+        try { fits = await s.callAsync('runTicksFits', { ticks: blockTicks }); }
+        catch (e) { fits = true; if (memo.size < 1024) memo.set(blockTicks, { ok: false, why: `${core.name}'s runTicksFits did not answer: ${String(e && e.message || e).slice(0, 200)}` }); }
+        if (!fits) await warmRunTicks();
+      }
+    } else await warmRunTicks();
+  }
+  return runLengthFits(core, config, blockTicks);
 }
 
 

@@ -20,8 +20,9 @@
 // 4. ONLY STRINGS CROSS. core-driver.js runs beside the core in the same sandbox and is called with an operation's name
 //    and a JSON string; it answers a JSON string. No object of the node's is ever handed in.
 // 5. A THREAD OF ITS OWN, WATCHED. The sandbox is built in a worker thread per core (core-host.js), a V8 isolate of its own
-//    that holds none of the node's memory; the node calls it synchronously and waits for each answer against a deadline
-//    (Atomics.wait). Each core thread is started by this node thread's core supervisor (core-supervisor.js), a thread that is
+//    that holds none of the node's memory; the node waits for each answer against a deadline - blocked (Atomics.wait) in a
+//    replay worker and for the warm ghost, and without blocking (Atomics.waitAsync, callAsync) where the seat's own thread asks
+//    while it serves: decide, a round's run length (kanban #3556). Each core thread is started by this node thread's core supervisor (core-supervisor.js), a thread that is
 //    never blocked: it hears the core thread's exit at once - a heap death wakes the node, not its deadline - and reads the
 //    core thread's own memory every 2 ms while a call runs, ending the core before the backstop (kanban #1813: never
 //    another thread's memory - one game's cores elsewhere in the process do not end another game's core). No vm timeout is used: one firing in
@@ -37,8 +38,13 @@ import { compileApart } from './core-compile-apart.js';
 
 /** The longest a replay may run: a whole replay of the longest run (10800 ticks) is a few seconds; this is the ceiling. */
 export const CALL_MS = 120000;
-/** A warm ghost catching up (stepTo) in the node's own thread, which waits on it: less. */
-export const STEP_MS = 30000;
+/** A warm ghost catching up (stepTo) in the node's own thread, which waits on it: less. kanban #3556 (RCE audit #3552): it was 30 s, and
+ *  a core spinning on chosen inputs held the seat's thread that long per call; a step is at most ghosts.js STEP_BUDGET (150) ticks,
+ *  about 60 ms for the truck. */
+export const STEP_MS = 1000;
+/** kanban #3556: HOW OFTEN the warm ghost of one core may miss its deadline in the seat's thread before its ghosts are refused there
+ *  (until that core is loaded again: the idle sweep, a restart). The ghosts are pictures nobody signs; each miss held the thread. */
+export const KEPT_MISSES_MAX = 2;
 /** Everything else the node asks a core (meta, run length, decide, a pose): a moment. */
 export const ASK_MS = 2000;
 /** Loading a core: its thread started and its modules' top level evaluated. */
@@ -175,7 +181,35 @@ function deathOf(sup, id) {
 
 /** ONE CORE THREAD (core-host.js), started by this thread's supervisor and loaded: { call(op, input, within) answering the
  *  driver's JSON, end(why), lastEnd, highWaterMb }. Throws when the core does not load. */
-function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax = ANSWER_MAX, until = null, lingerAs = null, loadUntil = null }) {
+function startThread(files, opts) {
+  const t = spawnThread(files, opts);
+  t.load();
+  return t;
+}
+/** THE SAME THREAD, ITS LOAD WAITED FOR WITHOUT BLOCKING this thread (kanban #3556): resolves to the same handle, whose
+ *  callAsync and endAsync wait the same way. */
+async function startThreadAsync(files, opts) {
+  const t = spawnThread(files, opts);
+  await t.loadAsync();
+  return t;
+}
+
+// kanban #3556 (RCE audit #3552): EVERY WAIT ON A CORE THREAD IS WRITTEN ONCE, as a generator that yields what it waits for
+// ([the value ctrl[STATE] holds, ms]); `blocking` waits with Atomics.wait - the replay worker, the plugin trial, the warm ghost -
+// and `waiting` with Atomics.waitAsync, so the seat's own thread goes on serving while a core runs (decide, a run length asked
+// at POST /round). The deadlines, the backstop and every refusal are the same in both.
+function blocking(ctrl, g) {
+  for (let r = g.next(); ; r = g.next()) { if (r.done) return r.value; Atomics.wait(ctrl, C.STATE, r.value[0], r.value[1]); }
+}
+async function waiting(ctrl, g) {
+  for (let r = g.next(); ; r = g.next()) {
+    if (r.done) return r.value;
+    const w = Atomics.waitAsync(ctrl, C.STATE, r.value[0], r.value[1]);
+    if (w.async) await w.value;
+  }
+}
+
+function spawnThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax = ANSWER_MAX, until = null, lingerAs = null, loadUntil = null }) {
   // `lingerAs`: the label an ended, not yet gone thread is kept under for lingeringCores (the plugin trial's, kanban #1880) - never
   // the core's own name, which stays the seat's (kanban #1694)
   // `until` (kanban #1719, #1538): ONE ABSOLUTE DEADLINE (a Date.now() time) for the load AND the meta ask loadCore makes
@@ -207,19 +241,19 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
    *  before the node answers. At most EXIT_WAIT_MS. */
   // ONCE ONLY, AND NEVER PAST `until` + UNTIL_EXIT_GRACE_MS (kanban #1880, #1913): a second end() (the caller's, after the
   // deadline's own) does not wait again, and a thread still inside a builtin is left to its supervisor (`lingering`)
-  const end = (why) => {
+  function* endG(why) {
     if (ended) return;
     ended = why;
     const t0 = Date.now();
     const waitMs = Number.isFinite(by()) ? Math.max(0, Math.min(EXIT_WAIT_MS, by() + UNTIL_EXIT_GRACE_MS - t0)) : EXIT_WAIT_MS;
     if (!gone()) sup.worker.postMessage({ type: 'end', id });
-    while (!gone() && Date.now() - t0 < waitMs) Atomics.wait(ctrl, C.STATE, Atomics.load(ctrl, C.STATE), Math.max(1, Math.min(10, waitMs - (Date.now() - t0))));
+    while (!gone() && Date.now() - t0 < waitMs) yield [Atomics.load(ctrl, C.STATE), Math.max(1, Math.min(10, waitMs - (Date.now() - t0)))];
     if (!gone()) lingering.add({ ctrl, name: lingerAs || name });
     lastEnd = { exitMs: Date.now() - t0, exited: gone(), rssMb: rssMb(), highMb: Atomics.load(ctrl, C.HIGH_MB) };
     Atomics.store(ctrl, C.CALL, 0);
-  };
+  }
   /** Wait for the core thread's next answer, or its end: the deadline, its supervisor's backstop, its exit. */
-  const wait = (ms, what) => {
+  function* waitG(ms, what) {
     Atomics.store(ctrl, C.HIGH_MB, 0);
     Atomics.store(ctrl, C.CALL, 1);
     const until = Date.now() + ms;
@@ -227,42 +261,44 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
     while (state === 0) {
       const left = until - Date.now();
       if (left <= 0) break;
-      Atomics.wait(ctrl, C.STATE, 0, left);
+      yield [0, left];
       state = Atomics.load(ctrl, C.STATE);
     }
     if (state === ANSWERED) {
       Atomics.store(ctrl, C.CALL, 0);
       Atomics.store(ctrl, C.STATE, 0);
       const got = receiveMessageOnPort(port1);
-      if (!got) { end('the core thread answered nothing'); throw new Error(ended); }
+      if (!got) { yield* endG('the core thread answered nothing'); throw new Error(ended); }
       return got.message;
     }
     if (state === EXITED) {
       // THE THREAD IS GONE BEFORE ITS ANSWER: the supervisor's backstop ended it, or it died (its heap limit)
       const caught = Atomics.load(ctrl, C.CAUGHT);
       const d = deathOf(sup, id);
-      end(caught
+      yield* endG(caught
         ? `the core grew this node by ${caught} MB in ${what}, and a call may grow it by at most ${Math.round(rssBackstop / 1048576)} MB: its thread was ended at ${triggerMb} MB, and it is not run again`
         // kanban #2549: the death's text is the core's own (its error event's code or message) - bounded like every other failure text
         : `the core's thread died in ${what}${d && d.error ? ` (${d.error === 'ERR_WORKER_OUT_OF_MEMORY' ? 'out of its heap' : String(d.error).slice(0, 512)})` : ''}: it is not run again`);
       throw new Error(ended);
     }
-    end(`the core did not stop within ${ms} ms (${what}): its thread was ended, and it is not run again`);
+    yield* endG(`the core did not stop within ${ms} ms (${what}): its thread was ended, and it is not run again`);
     throw new Error(ended);
-  };
-  const loaded = wait(leftOf(loadMs), 'loading');
-  loading = false;   // (kanban #2058) the load's own bound ends with the load
-  // kanban #2165, #2232, #2304: a failure text past WHY_MAX (or not a string) is never thrown into the node
-  if (!loaded.ok) { const why = whyBounded(loaded.why) ? loaded.why : `the core failed while loading with a message longer than ${WHY_MAX} characters`; end(why); throw new Error(why); }
+  }
+  function* loadG() {
+    const loaded = yield* waitG(leftOf(loadMs), 'loading');
+    loading = false;   // (kanban #2058) the load's own bound ends with the load
+    // kanban #2165, #2232, #2304: a failure text past WHY_MAX (or not a string) is never thrown into the node
+    if (!loaded.ok) { const why = whyBounded(loaded.why) ? loaded.why : `the core failed while loading with a message longer than ${WHY_MAX} characters`; yield* endG(why); throw new Error(why); }
+  }
 
   // `within`: a shorter deadline for this one call (kanban #1538: the plugin trial run gives all its calls one deadline in total)
-  const callHere = (op, input = {}, within = null) => {
+  function* callG(op, input = {}, within = null) {
     if (ended) throw new Error(ended);
     // kanban #1813: unknown until the core thread writes its own memory as it takes this call (before the post: never stale)
     Atomics.store(ctrl, C.FROM_MB, -1);
     port1.postMessage({ op: String(op), json: plain(input) });
     const ms = Number.isFinite(within) ? Math.max(1, Math.min(within, { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'])) : { callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'];
-    const a = wait(ms, op);
+    const a = yield* waitG(ms, op);
     // kanban #2165, #2232, #2304: a failure text past WHY_MAX (or not a string) is never thrown into the node - a bounded one is
     if (!a.ok && !whyBounded(a.why)) throw new Error(`the core failed in ${op} with a message longer than ${WHY_MAX} characters`);
     // A CALL PAST ITS ARRAY BUDGET FAILS, AND ONLY THAT CALL (kanban #1721, #1792, #1831): core-host.js drops the context it
@@ -270,12 +306,17 @@ function startThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
     // seat fail ("it is not run again") while a seat that never ran that input answered them: the seat's history again.
     // kanban #1691: past its answer size the core is ended, as core-host.js does - and an answer that is not a string of at most
     // ANSWER_MAX characters is never parsed in this thread
-    if (!a.ok && /its answer was longer than/.test(a.why)) { end(`${a.why}: its thread was ended, and it is not run again`); throw new Error(ended); }
+    if (!a.ok && /its answer was longer than/.test(a.why)) { yield* endG(`${a.why}: its thread was ended, and it is not run again`); throw new Error(ended); }
     if (!a.ok) throw new Error(a.why);
-    if (typeof a.json !== 'string' || a.json.length > answerMax) { end(`the core answered ${op} with more than ${answerMax} characters: its thread was ended, and it is not run again`); throw new Error(ended); }
+    if (typeof a.json !== 'string' || a.json.length > answerMax) { yield* endG(`the core answered ${op} with more than ${answerMax} characters: its thread was ended, and it is not run again`); throw new Error(ended); }
     return a.json;
+  }
+  return {
+    load: () => blocking(ctrl, loadG()), loadAsync: () => waiting(ctrl, loadG()),
+    call: (op, input, within) => blocking(ctrl, callG(op, input, within)), callAsync: (op, input, within) => waiting(ctrl, callG(op, input, within)),
+    end: (why) => blocking(ctrl, endG(why)), endAsync: (why) => waiting(ctrl, endG(why)),
+    ended: () => ended, lastEnd: () => lastEnd, highWaterMb: () => Atomics.load(ctrl, C.HIGH_MB),
   };
-  return { call: callHere, end, ended: () => ended, lastEnd: () => lastEnd, highWaterMb: () => Atomics.load(ctrl, C.HIGH_MB) };
 }
 
 /** The warm ghost's operations: a run kept in the core between calls. Nobody signs what they answer. */
@@ -324,11 +365,15 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   let ended = null;
   let last = kept;
   const memo = new Map();
+  let keptMisses = 0;   // kanban #3556
   const end = (why) => { ended = why; kept.end(why); };
   const call = (op, input = {}, within = null) => {
     if (ended) throw new Error(ended);
     op = String(op);
     if (oneThread || KEPT.has(op)) {
+      // kanban #3556: A WARM GHOST THAT KEEPS MISSING ITS DEADLINE IS REFUSED: each miss held the seat's thread its whole deadline
+      if (!oneThread && keptMisses >= KEPT_MISSES_MAX)
+        throw new Error(`this core's warm ghost did not stop within its deadline ${keptMisses} times on this seat: it is not asked again here`);
       // THE WARM GHOST'S THREAD THAT DIES ENDS THAT THREAD ALONE (kanban #2121, #1489 v1-refute-45-s3-1, as #2008 for a call's own
       // thread): a player's input that kills its heap while a ghost is stepped is set by the input, not by the core, and ending the
       // core made every later signed call on this seat throw "it is not run again" while seats that never drew that ghost answered.
@@ -336,7 +381,9 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
       // plugin trial (`oneThread`), which watches one thread across calls, still ends the core.
       if (!oneThread && kept.ended()) kept = startThread({ files, entry }, opts);
       last = kept;
-      try { return revive(kept.call(op, input, within)); } finally { if (oneThread && kept.ended()) ended = kept.ended(); }
+      try { return revive(kept.call(op, input, within)); }
+      catch (e) { if (!oneThread && /did not stop within \d+ ms/.test(String(e && e.message))) keptMisses++; throw e; }
+      finally { if (oneThread && kept.ended()) ended = kept.ended(); }
     }
     const key = PURE.has(op) ? `${op}\0${plain(input)}` : null;
     if (key !== null && memo.has(key)) return revive(memo.get(key));
@@ -353,12 +400,31 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
     if (key !== null) { if (memo.size >= PURE_MAX) memo.clear(); memo.set(key, json); }
     return revive(json);
   };
+  // kanban #3556 (RCE audit #3552): THE SAME CALL, ITS THREAD'S LOAD AND ANSWER WAITED FOR WITHOUT BLOCKING THIS THREAD (Atomics.waitAsync):
+  // what the seat's own thread asks while it serves - decide at a head-to-head close, a run length at POST /round. A core that spins on
+  // chosen moves held the seat's thread ASK_MS (2 s) per decide, every close of every seat running that game; now it costs its own thread
+  // that long and nothing else. The same thread per call, deadlines and refusals as call(); the warm ghost's ops and the plugin trial's
+  // (one thread they share) are asked as call() asks them.
+  const callAsync = async (op, input = {}, within = null) => {
+    if (ended) throw new Error(ended);
+    op = String(op);
+    if (oneThread || KEPT.has(op)) return call(op, input, within);
+    const key = PURE.has(op) ? `${op}\0${plain(input)}` : null;
+    if (key !== null && memo.has(key)) return revive(memo.get(key));
+    const one = await startThreadAsync({ files, entry }, opts);
+    last = one;
+    let json;
+    try { json = await one.callAsync(op, input, within); }
+    finally { if (!one.ended()) await one.endAsync('answered'); }
+    if (key !== null) { if (memo.size >= PURE_MAX) memo.clear(); memo.set(key, json); }
+    return revive(json);
+  };
   // the core's meta from the thread just loaded, before it was asked anything: what a thread of its own would answer
   let meta;
   // the meta ask inside the trial's one deadline when one is given (kanban #1719)
   try { meta = revive(kept.call('meta', {}, Number.isFinite(until) ? leftOf(askMs) : null)); } catch (e) { kept.end(e.message); throw e; }
   memo.set(`meta\0${plain({})}`, JSON.stringify(meta));
-  return Object.freeze({ call, meta, end: () => end('ended by the node'), lastEnd: () => last.lastEnd(), endedWhy: () => ended, highWaterMb: () => last.highWaterMb() });
+  return Object.freeze({ call, callAsync, meta, end: () => end('ended by the node'), lastEnd: () => last.lastEnd(), endedWhy: () => ended, highWaterMb: () => last.highWaterMb() });
 }
 
 /** Does this core draw a picture (a ghost)? false only when its sandbox says it does not; null when it does not load. */
