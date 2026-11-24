@@ -121,6 +121,8 @@ export const eventId = (e) => createHash('sha256').update(JSON.stringify([0, e.p
 /** Whether an event is well formed, its id its own, its signature its author's: null, or why not. */
 /** kanban #3044: the relay-wide signature budget (about 1.2 ms a check: a burst holds the loop ~0.25 s at most), and refused pairs kept */
 export const VERIFY_BURST = 200, VERIFY_PER_S = 200, REFUSED_SIGS_KEPT = 4096;
+/** kanban #3592: the (id, sig) pairs of `keep` keys' events verified good, kept on disk across restarts (the newest this many) */
+export const KEEP_SIGS_KEPT = 65536;
 /** kanban #3145 (#1489 r1120b-refute-10): the two reserves only a socket with no bad signature reaches once the shared budget is empty -
  *  one for authors with standing here (`keep`, an author already seen), one for everyone else - and the bad signatures one socket may
  *  send before it is closed */
@@ -286,6 +288,8 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   db.exec(`CREATE INDEX IF NOT EXISTS ev_pool ON events (${POOL_SQL('kind')})`);
   db.exec(`CREATE TABLE IF NOT EXISTS seen_authors (pubkey TEXT PRIMARY KEY);
     INSERT OR IGNORE INTO seen_authors (pubkey) SELECT DISTINCT pubkey FROM events;`);
+  // kanban #3592: the seats' (keep keys') signatures verified good, so a re-sent copy of one the relay no longer keeps is not checked again
+  db.exec('CREATE TABLE IF NOT EXISTS keep_sigs (id TEXT NOT NULL, sig TEXT NOT NULL, UNIQUE (id, sig))');
   const unsized = db.prepare('SELECT id, json FROM events WHERE size IS NULL').all();
   if (unsized.length) {
     const setSize = db.prepare('UPDATE events SET size = ? WHERE id = ?');
@@ -338,6 +342,9 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const dropId = db.prepare('DELETE FROM events WHERE id = ?');
   const has = db.prepare('SELECT 1 AS x FROM events WHERE id = ?');
   const hasSigned = db.prepare('SELECT 1 AS x FROM events WHERE id = ? AND instr(json, ?) > 0');   // kanban #3359: kept with this very signature
+  const hasKeepSig = db.prepare('SELECT 1 AS x FROM keep_sigs WHERE id = ? AND sig = ?');   // kanban #3592
+  const putKeepSig = db.prepare('INSERT OR IGNORE INTO keep_sigs (id, sig) VALUES (?, ?)');
+  const trimKeepSigs = db.prepare('DELETE FROM keep_sigs WHERE rowid <= ?');
   // SIGNATURE CHECKS ARE A RELAY-WIDE BUDGET, AND ONE REFUSED (id, sig) IS NOT CHECKED AGAIN (kanban #3044, audit nostr r3-2): measured, 150
   // free sockets each re-sending ONE junk-signature kind 0 frame 60 times (the per-socket budget) made 9000 BIP-340 checks on the relay's one
   // event loop - an honest REQ took 11.6 s. A refused (id, sig) is remembered (bounded), and past VERIFY_BURST checks (VERIFY_PER_S refilled)
@@ -346,7 +353,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES,
     seedEvents: SEED_EVENTS, seedBytes: SEED_BYTES, verifyBurst: VERIFY_BURST, verifyPerS: VERIFY_PER_S,
     verifyStandingBurst: VERIFY_STANDING_BURST, verifyStandingPerS: VERIFY_STANDING_PER_S, verifyCleanBurst: VERIFY_CLEAN_BURST, verifyCleanPerS: VERIFY_CLEAN_PER_S,
-    badSigsPerSocket: BAD_SIGS_PER_SOCKET, ...limits };
+    badSigsPerSocket: BAD_SIGS_PER_SOCKET, keepSigsKept: KEEP_SIGS_KEPT, ...limits };
   // ONE SHARED BUDGET DOES NOT DECIDE WHO IS REFUSED (kanban #3145, #1489 r1120b-refute-10 of #3044): junk frames made distinct (a counter in
   // `content`: a fresh id, so never in refusedSigs) over 300 free sockets kept the one bucket empty, and every honest EVENT - a seat's signed
   // 30762 round result, a player's profile - was answered 'rate-limited' for as long as the flood lasted. Now the shared bucket is spent
@@ -722,7 +729,12 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
           // check and only BAD pairs were remembered, so a stranger re-sending any public valid event (a seat's kept round result, one signed
           // NIP-46 frame) spent a reserve token per copy and honest writes were 'rate-limited'. The same id and signature as an event this relay
           // keeps, or as one it verified lately (checkedSigs: ephemeral frames are not kept), is the same signed event: no second check
-          const checked = checkedSigs.has(key) || !!hasSigned.get(e.id, `"sig":"${e.sig}"`);
+          // A SEAT'S SIGNATURE IS CHECKED ONCE, EVER (kanban #3592, audit nostr a7-2-1): checkedSigs is a bounded FIFO, empty after a restart,
+          // and hasSigned knows only what is still kept, so a stranger re-sending a seat's public events the relay no longer keeps (round
+          // results rolled out by the author quota, replaced definitions) spent a keep-reserve token per copy, and the seat's next round result
+          // was 'rate-limited'. A `keep` key's (id, sig) verified good is kept on disk (keep_sigs, the newest KEEP_SIGS_KEPT): only the seats
+          // themselves can sign under those keys, so no stranger can fill or rotate it
+          const checked = checkedSigs.has(key) || !!hasSigned.get(e.id, `"sig":"${e.sig}"`) || (keepSet.has(e.pubkey) && !!hasKeepSig.get(e.id, e.sig));
           // kanban #3174 (#1489 r1120b-refute-10-s2 of #3044/#3145): a reserve token is spent only by a GOOD signature. Before, a fresh
           // socket's first frame always reached a reserve (c.badSigs is 0 until its signature is read) and kept the token when its signature
           // was junk, and the reserve was picked by the sender-chosen e.pubkey: a stranger reconnecting with one junk frame bearing a seat's
@@ -735,7 +747,12 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
           const reserve = !checked && !shared && c.badSigs === 0 ? (keepSet.has(e.pubkey) ? keepBucket : seenAuthor.get(e.pubkey) ? standingBucket : cleanBucket) : null;
           if (!checked && !shared && !(reserve && take(reserve))) return send(['OK', e.id, false, 'rate-limited: the relay is checking too many signatures, try again shortly']);
           const why = checked ? null : sigRefusal(e);
-          if (!why && !checked) { checkedSigs.add(key); if (checkedSigs.size > REFUSED_SIGS_KEPT) checkedSigs.delete(checkedSigs.values().next().value); }
+          if (!why && !checked) {
+            checkedSigs.add(key); if (checkedSigs.size > REFUSED_SIGS_KEPT) checkedSigs.delete(checkedSigs.values().next().value);
+            if (keepSet.has(e.pubkey)) {   // kanban #3592
+              try { const r = putKeepSig.run(e.id, e.sig); if (r.changes) trimKeepSigs.run(Number(r.lastInsertRowid) - lim.keepSigsKept); } catch { /* the in-memory memo still holds it */ }
+            }
+          }
           if (why) {
             if (reserve) reserve.left = Math.min(lim[reserve.burst], reserve.left + 1);   // kanban #3174: junk never keeps a reserve token
             refusedSigs.add(key); if (refusedSigs.size > REFUSED_SIGS_KEPT) refusedSigs.delete(refusedSigs.values().next().value); return bad(why);
