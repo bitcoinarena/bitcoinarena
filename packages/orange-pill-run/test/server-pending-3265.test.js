@@ -11,7 +11,7 @@ test('#3265 POST /attempt opens the run at once: level, provisional token, invoi
   const s = await w.opr.startAttempt(p.pk, { round: r.id });
   assert.equal(s.state, 'pending-entry'); assert.match(s.token, /^[0-9a-f]{64}$/); assert.match(s.invoice, /^lntb/);
   assert.equal(s.level.candles.length, 48); assert.equal(s.deadlineMs - s.startedMs, 10 * MIN);
-  assert.equal(s.expiresMs, s.deadlineMs);   // the invoice dies with the run's deadline
+  assert.equal(s.expiresMs, s.startedMs + 30000);   // #3603: the invoice lives 30 s - the entry is paid first
   const c = await w.opr.checkAttempt(p.pk, s.attempt);
   assert.equal(c.state, 'pending-entry'); assert.equal(c.token, s.token); assert.equal(c.paid, false);
   w.lnd.pay(s.invoice);
@@ -21,7 +21,7 @@ test('#3265 POST /attempt opens the run at once: level, provisional token, invoi
 test('#3265 an unpaid run is never on the board and not in the pot; at its deadline it is "entry not paid"', async () => {
   const w = world({ start: '2026-11-23T01:00:00Z' }); const r = await openRound(w); const p = keypair();
   const s = await w.opr.startAttempt(p.pk, { round: r.id });
-  w.clock.add(60000);
+  w.clock.add(20000);   // #3603: sent inside the entry's 30 s, still unpaid
   const sub = await w.opr.submitChecked(p.pk, { attempt: s.attempt, token: s.token, log: logOf(9) });
   assert.equal(sub.ok, true); assert.equal(sub.paid, false); assert.equal(sub.state, 'pending-entry'); assert.equal(sub.score.total, 90);
   assert.deepEqual(w.opr.boardOf(r.id), []); assert.equal(w.opr.potOf(r.id), 0);
@@ -37,16 +37,20 @@ test('#3265 an unpaid run is never on the board and not in the pot; at its deadl
   assert.match(w.opr.submit(p.pk, { attempt: s2.attempt, token: s2.token, log: logOf(3) }).why, /entry not paid/);
 });
 
-test('#3265 a run paid after its submit (before the deadline) is scored and placed - on the tick, or on the next check', async () => {
+// #3603: a payment AFTER the submit no longer scores a run (server-pay-first-3603.test.js); one settled before the submit that lnd showed only
+// after it still does
+test('#3265 a run whose entry settled before its submit, seen only after it, is scored and placed - on the tick, or on the next check', async () => {
   const w = world({ start: '2026-11-23T01:00:00Z' }); const r = await openRound(w);
   const p = keypair(), q = keypair();
   const a = await w.opr.startAttempt(p.pk, { round: r.id });
   const b = await w.opr.startAttempt(q.pk, { round: r.id });
-  w.clock.add(60000);
-  assert.equal((await w.opr.submitChecked(p.pk, { attempt: a.attempt, token: a.token, log: logOf(7) })).paid, false);
-  assert.equal((await w.opr.submitChecked(q.pk, { attempt: b.attempt, token: b.token, log: logOf(5) })).paid, false);
-  w.clock.add(2 * MIN);
+  const t0 = w.clock.now();
+  w.clock.add(20000);
+  assert.equal(w.opr.submit(p.pk, { attempt: a.attempt, token: a.token, log: logOf(7) }).paid, false);
+  assert.equal(w.opr.submit(q.pk, { attempt: b.attempt, token: b.token, log: logOf(5) }).paid, false);
   w.lnd.pay(a.invoice); w.lnd.pay(b.invoice);
+  for (const x of w.lnd.inv.values()) if (x.state === 'SETTLED') x.settleMs = t0 + 15000;
+  w.clock.add(1000);
   await w.opr.tick();
   assert.deepEqual(w.opr.boardOf(r.id).map((x) => [x.player, x.total]), [[p.pk, 70], [q.pk, 50]]);
   assert.equal(w.opr.potOf(r.id), 200);

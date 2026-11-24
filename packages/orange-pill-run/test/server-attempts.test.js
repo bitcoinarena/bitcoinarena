@@ -73,7 +73,7 @@ test('#3248 no new attempt in the last 5 minutes; an invoice never outlives the 
   const p = keypair();
   const s = await w.opr.startAttempt(p.pk, { round: r.id });
   assert.equal(s.ok, true);
-  assert.ok(s.expiresMs <= r.end_ms && s.expiresMs === s.deadlineMs);   // #3265: the invoice lives as long as the run, never past the round
+  assert.ok(s.expiresMs <= r.end_ms && s.expiresMs === Math.min(s.deadlineMs, s.startedMs + 30000));   // #3265, #3603: the invoice lives 30 s (paid first), never past the run or the round
   w.clock.set(at('2026-11-23T23:55:00Z'));
   const late = await w.opr.startAttempt(p.pk, { round: r.id });
   assert.equal(late.ok, false); assert.match(late.why, /last 5 minutes/);

@@ -48,6 +48,7 @@ export const DEFAULTS = Object.freeze({
   lnChecksPerMinAll: 60, xChecksPerMinAll: 15,   // kanban #3333, #3353: wallet asks and X lookups per minute of all keys of ONE caller address (ipKey)
   lnChecksPerMinNet: 600, xChecksPerMinNet: 150,   // kanban #3353: the whole service's backstop per minute; a key with a run in a round still listing is not held by it
   bountyClaimMs: 7 * DAY_MS, alertAfterMs: 15 * MIN_MS, fastSlackMs: 1000, maxSteps: 180 * 60,
+  entryPayMs: 30000,   // kanban #3603: a paid run's entry settles within this of its start (and before its submit), or the run does not count
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], promoEnd: null, adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
   refusedLogNetBytes: 2e6, refusedLogRoundBytes: 200e6,   // kanban #3355: refused logs kept per round from one network (IPv6 /48, IPv4 /24) and from all
@@ -341,8 +342,11 @@ export function createOpr(o = {}) {
       return { ok: true, attempt: id, state: 'started', paid: true, free: true, sats: 0, token, startedMs: t, deadlineMs: deadline, level: levelFor(r) };
     }
     if (!invoices) return { ok: false, why: 'the entry invoice could not be made - try again in a minute' };
+    // PAID FIRST (kanban #3603, feedback #437): the entry invoice lives entryPayMs (30 s), not the run's 10 minutes - a run paid after its score
+    // was known (the submit's answer, or the deterministic sim run locally) let a player pay only for the runs that beat the board
+    const invoiceSeconds = Math.max(1, Math.min(expirySeconds, Math.ceil(cfg.entryPayMs / 1000)));
     let inv;
-    try { inv = await invoices.create({ sats: r.entry_sats, memo: `Orange Pill Run ${r.id} entry`, expirySeconds }); }
+    try { inv = await invoices.create({ sats: r.entry_sats, memo: `Orange Pill Run ${r.id} entry`, expirySeconds: invoiceSeconds }); }
     catch (e) { log(`entry invoice not made: ${e.message}`); return { ok: false, why: 'the entry invoice could not be made - try again in a minute' }; }
     // the count again after the wait: two starts at once never make a sixth
     if (usedBy(r.id, player, now()) >= r.max_attempts) return { ok: false, why: `all ${r.max_attempts} attempts of this round are used` };
@@ -350,15 +354,16 @@ export function createOpr(o = {}) {
     const id = randomBytes(16).toString('hex');
     const token = randomBytes(32).toString('hex');
     q(`INSERT INTO attempts (id, round, player, ip, ip_key, invoice, paid_hash, invoice_expires_ms, created_ms, started_ms, token, deadline_ms, state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`).run(id, r.id, player, ip, ik, inv.invoice, inv.hash, t + expirySeconds * 1000, t, t, token, deadline);
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`).run(id, r.id, player, ip, ik, inv.invoice, inv.hash, t + invoiceSeconds * 1000, t, t, token, deadline);
     q('INSERT INTO players (pubkey, seen_ms) VALUES (?, ?) ON CONFLICT (pubkey) DO UPDATE SET seen_ms = excluded.seen_ms').run(player, t);
-    return { ok: true, attempt: id, state: 'pending-entry', invoice: inv.invoice, sats: r.entry_sats, expiresMs: t + expirySeconds * 1000,
+    return { ok: true, attempt: id, state: 'pending-entry', invoice: inv.invoice, sats: r.entry_sats, expiresMs: t + invoiceSeconds * 1000,
       token, startedMs: t, deadlineMs: deadline, level: levelFor(r) };
   }
   const levelFor = (r) => ({ round: r.id, chartDay: r.chart_day, candles: J(r.candles), seed: J(r.seed), gameVersion: r.game_version, levelHash: r.level_hash });
   /**
-   * THE ENTRY, READ FROM LND (kanban #3248, #3265). A run's invoice settled for the whole entry before its deadline: the run is paid (paid_ms) - a
-   * pending run is started, a submitted one waiting for its entry is scored and goes on the board. Not settled once the deadline passed (the
+   * THE ENTRY, READ FROM LND (kanban #3248, #3265, #3603). A run's invoice settled for the whole entry within entryPayMs of its start (its
+   * expiry): the run is paid (paid_ms) - a pending run is started, a submitted one waiting for its entry is scored only if the entry settled before
+   * its submit (else refused, not ranked; the entry in the pot). Not settled by then (the
    * invoice has expired with it): "entry not paid" - not ranked, not in the pot. A row of the earlier flow ('invoiced': paid first, then the
    * token) is still settled as it was.
    */
@@ -369,14 +374,23 @@ export function createOpr(o = {}) {
     try { l = await invoices.lookup(a.paid_hash); } catch (e) { log(`invoice ${String(a.paid_hash).slice(0, 12)} not read: ${e.message}`); return a; }
     const t = now(), r = roundRow(a.round);
     if (open) {
-      const paidAt = Number.isFinite(l.settleMs) && l.settleMs > 0 ? l.settleMs : Math.min(t, a.deadline_ms);   // no settle time read: lnd's expiry (= the deadline) vouches
-      if (l.state === 'SETTLED' && l.paidMsat >= r.entry_sats * 1000 && paidAt <= a.deadline_ms + 5000) {
+      // PAID FIRST (kanban #3603, feedback #437): the entry counts only if it settled by payBy - entryPayMs after the run's start (the invoice's own
+      // expiry), never past the deadline. A run sent while its entry was unpaid ('awaiting') is never scored by a later payment: the score was
+      // known then. Such a payment is still the pot's (the sats came in), as a refused run's is; the run is refused, not ranked
+      const payBy = Math.min(a.deadline_ms, (a.started_ms ?? a.created_ms) + cfg.entryPayMs, a.invoice_expires_ms || Infinity);
+      const paidAt = Number.isFinite(l.settleMs) && l.settleMs > 0 ? l.settleMs : Math.min(t, payBy);   // no settle time read: lnd's expiry (= payBy) vouches
+      if (l.state === 'SETTLED' && l.paidMsat >= r.entry_sats * 1000 && paidAt <= payBy + 5000) {
+        if (a.state === 'awaiting' && !(a.submitted_ms != null && paidAt <= a.submitted_ms)) {
+          if (q("UPDATE attempts SET paid_ms = ?, state = 'rejected', why = 'entry paid after the run was sent - this run is not ranked' WHERE id = ? AND state = 'awaiting' AND paid_ms IS NULL")
+            .run(Math.min(paidAt, t), a.id).changes) log(`attempt ${a.id.slice(0, 8)} of ${a.round}: entry paid after the run was sent - refused, not ranked`);
+          return q('SELECT * FROM attempts WHERE id = ?').get(a.id);
+        }
         const next = a.state === 'pending' ? 'started' : a.state === 'awaiting' ? 'scored' : a.state;
         if (q('UPDATE attempts SET paid_ms = ?, state = ? WHERE id = ? AND state = ? AND paid_ms IS NULL').run(Math.min(paidAt, t), next, a.id, a.state).changes) {
           log(`attempt ${a.id.slice(0, 8)} of ${a.round}: entry paid${next === 'scored' ? ', run scored' : ''}`);
           if (next === 'scored' && r.state === 'listed') refreshLists(r.id);
         }
-      } else if (t > a.deadline_ms && a.state !== 'rejected') {   // the invoice expired with the deadline: not paid (or not in full) for good
+      } else if (t > payBy + 5000 && a.state !== 'rejected') {   // the invoice expired at payBy: not paid (or not in full, or too late) for good
         q("UPDATE attempts SET state = 'unpaid', why = 'entry not paid - this run does not count' WHERE id = ? AND state = ? AND paid_ms IS NULL").run(a.id, a.state);
       }
       return q('SELECT * FROM attempts WHERE id = ?').get(a.id);
@@ -486,7 +500,8 @@ export function createOpr(o = {}) {
     let feat = null;
     try { feat = runFeatures(sim, levelOf(r), body.log); } catch (e) { log(`attempt ${a.id.slice(0, 8)}: no bot features (${String(e.message).slice(0, 80)})`); }
     const review = Object.keys(flags).length ? 'pending' : 'none';
-    // a run whose entry is not paid yet is kept with its score, waiting: it is placed only once the entry settles before the deadline (#3265)
+    // a run whose entry is not paid yet is kept with its score, waiting: it is placed only if the entry settled before this submit, within the
+    // entry's 30 s (#3265, #3603) - a payment after it never scores it
     const to = from === 'started' ? 'scored' : 'awaiting';
     const done = q(`UPDATE attempts SET state = ?, submitted_ms = ?, log = ?, log_hash = ?, score = ?, flags = ?, client = ?, review = ?, bot_feat = ? WHERE id = ? AND state = ?`)
       .run(to, t, JSON.stringify(body.log), logHash, JSON.stringify(score), JSON.stringify(flags), clientText(body.client), review, feat ? JSON.stringify(feat) : null, a.id, from);
