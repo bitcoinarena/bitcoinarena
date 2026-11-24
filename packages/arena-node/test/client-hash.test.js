@@ -23,6 +23,7 @@ const SCRIPTS = ['arena-client.js', 'arena-curve.js', 'blwp_lock_client.js', 'bl
 const MARK = ['nextblock-icon.svg', 'nextblock-wordmark.svg', 'favicon.ico', 'apple-touch-icon.png', 'nextblock-icon-192.png',
   'nextblock-icon-512.png', 'nextblock-og.png', 'site.webmanifest'];
 const GAME_SCRIPTS = { nextblock: ['blwp-core.js', ...MARK] };
+const ARENA_OWN_MARK = new Set(['favicon.ico', 'apple-touch-icon.png', 'site.webmanifest']);
 // a file is pinned when the page's own list or any list of a game names it - a game's later versions keep lists of their own (markV6)
 const pinsOf = (name) => [...(LIST.pinned[name] || []), ...Object.values(LIST.games).flatMap((g) => Object.values(g).filter((l) => l && typeof l === 'object' && !Array.isArray(l)).flatMap((l) => l[name] || []))];
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
@@ -41,7 +42,8 @@ test('the list pins the scripts the rebuilt bundle and the template carry, and n
     ['blwp_lock_client_bg.wasm', '../../arena-client/dist/blwp_lock_client_bg.wasm'],
     ...MARK.map((f) => [f, `../../nextblock/brand/${f}`])]) {
     assert.ok(pinsOf(name).includes(sha(at(source))), `${name}: the built file is not on the list`);
-    assert.equal(sha(join(TEMPLATE, name)), sha(at(source)), `${name}: the template is not the built file`);
+    // the Arena's own favicon, touch icon and manifest since a289d09a1 (kanban #1455): pinned for Next Block's list, not the template's (kanban #3535)
+    if (!ARENA_OWN_MARK.has(name)) assert.equal(sha(join(TEMPLATE, name)), sha(at(source)), `${name}: the template is not the built file`);
   }
   assert.ok(LIST.notPinned['index.html']);
   // and the bundle it pins is not where the list lives
