@@ -223,6 +223,8 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     verified.set(k, good);
     return good;
   };
+  /** A signature add() already checked and kept: remembered as good, so the reads after it do not check it again (kanban #3586). */
+  const rememberGood = (sig, msg, pk) => { if (verified.size >= VERIFIED_MOST) verified.clear(); verified.set(`${toHex(sig)}:${toHex(msg)}:${toHex(pk)}`, true); };
   /** Some bond of `census` signed this vote for proposal `pid` (its pair results remembered); junk is checked once and not remembered. */
   const signedByCensus = (pid, payload, census) => {
     const d = decodeVote(payload); if (!d) return false;
@@ -579,8 +581,24 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     for (const f of feeFold()) if (f.activationHeight <= height) at = f.fees;
     return at;
   }
-  const approvalsOf = (pid) => db.prepare("SELECT hex FROM funding_items WHERE kind = 'fee-approval' AND proposal = ? ORDER BY at_ms, id").all(pid)
-    .map((x) => read('fee-approval', x.hex)).filter((x) => x.ok).map((x) => ({ approval: x.obj, signature: x.signature }));
+  // A FEE APPROVAL IS VERIFIED ONCE (kanban #3586, the #3317 stall through the approval rows): GET /fees ran approvalsOf for every fee row
+  // and BIP-340 checked every held approval again on each request. Each approval's (signature, id, dev) result is remembered (heldVerify),
+  // so a read decodes and looks it up; devMajority is handed the same remembered check. And only the protocol developers' keys of the
+  // proposal's network are kept at add (below); `devKeysKnown` (network hex -> Set of keys, the last answer devKeysOf gave) also keeps an
+  // approval held from before that rule out of what a page shows as the developers' answers.
+  const devKeysKnown = new Map();
+  const devKeysFor = async (networkHex) => {
+    if (typeof devKeysOf !== 'function') return undefined;
+    const keys = await Promise.resolve(devKeysOf(networkHex)).catch(() => null);
+    if (Array.isArray(keys)) devKeysKnown.set(networkHex, new Set(keys.map((k) => String(k).toLowerCase())));
+    return Array.isArray(keys) ? keys : null;
+  };
+  const approvalsOf = (pid, networkHex = null) => {
+    const known = networkHex ? devKeysKnown.get(networkHex) : null;
+    return db.prepare("SELECT hex FROM funding_items WHERE kind = 'fee-approval' AND proposal = ? ORDER BY at_ms, id").all(pid)
+      .map((x) => readSignedFunding('fee-approval', fromHex(x.hex), heldVerify)).filter((x) => x.ok && (!known || known.has(toHex(x.obj.dev))))
+      .map((x) => ({ approval: x.obj, signature: x.signature }));
+  };
   /**
    * DECIDE THE FEE PROPOSALS WHOSE VOTE IS DECIDED: each once, whole - its set against the fees in force just before its
    * activation, its signal, its vote, and the protocol developers' majority for a donation it changes. A refusal is written too: it
@@ -601,7 +619,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       // known only when the set it lands on is folded, and that set can still change under it
       const donationFee = o.changes.some((c) => FEES[c.fee].donation);
       if (donationFee) {
-        devKeys = typeof devKeysOf === 'function' ? await Promise.resolve(devKeysOf(toHex(o.networkId))).catch(() => null) : null;
+        devKeys = typeof devKeysOf === 'function' ? await devKeysFor(toHex(o.networkId)) : null;
         if (!Array.isArray(devKeys)) { log(`[fees] ${pid.slice(0, 16)}: the protocol developers' keys not read yet`); continue; }
       }
       // THE PEERS' APPROVALS AND SIGNALS FIRST (ruled 2026-11-07 on #1245, kanban #1231): the census seats this seat reaches are asked for theirs and
@@ -611,10 +629,10 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         let took = 0; for (const it of Array.isArray(got) ? got : []) { try { const r = await book.add(it.kind, it.hex, { heldAtMs: it.atMs === undefined ? null : Number(it.atMs), from: it.seat ?? null }); if (r && r.ok && r.fresh) took++; } catch { /* the next */ } }
         if (took) log(`[fees] ${pid.slice(0, 16)}: ${took} approval(s) or signal(s) pulled from the peers before deciding`);
       }
-      const decided = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify, schedule });
+      const decided = feeProposalOutcome({ proposal: o, current: feesAt(o.activationHeight - 1), signal, tally: vote, approvals: approvalsOf(pid), devKeys, verify: heldVerify, schedule });
       // kept with it (kanban #2313): what feeFold re-reads - its signal and vote, and the developers' majority over everything it moves
       const out = { ...decided, passed: !!(signal.state === 'passed' && vote && vote.passed === true),
-        devs: donationFee ? devMajority({ proposalId: fromHex(pid), approvals: approvalsOf(pid), devKeys, verify }).majority : false };
+        devs: donationFee ? devMajority({ proposalId: fromHex(pid), approvals: approvalsOf(pid), devKeys, verify: heldVerify }).majority : false };
       db.prepare('INSERT OR IGNORE INTO fee_outcomes (proposal, outcome, activation, decided_ms) VALUES (?, ?, ?, ?)').run(pid, JSON.stringify(out), o.activationHeight, now());
       log(`[fees] ${pid.slice(0, 16)}: ${out.accepted ? `accepted - in force from ${o.activationHeight}` : `refused - ${out.why}`}`);
       done.push({ id: pid, ...out });
@@ -631,7 +649,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
       // the decision as the fold holds it (kanban #2313): accepted = in force from its activation over the set folded before it
       const folded = decided ? feeFold().find((f) => f.proposal === row.id) : null;
       const before = feesAt(o.activationHeight - 1);
-      const devs = approvalsOf(row.id).map((a) => ({ dev: toHex(a.approval.dev), approve: a.approval.approve }));
+      const devs = approvalsOf(row.id, toHex(o.networkId)).map((a) => ({ dev: toHex(a.approval.dev), approve: a.approval.approve }));
       return { id: row.id, network: toHex(o.networkId), author: toHex(o.author), publishedHeight: o.publishedHeight, activationHeight: o.activationHeight,
         changes: o.changes.map((c) => ({ fee: c.fee, from: before[c.fee], to: c.value, donation: !!FEES[c.fee].donation })), purpose: o.purpose,
         needsDevs: donationChanges(o, before).length > 0, devs, signal: st, vote: voteView(row.id, o, st), decision: decided ? decisionOf(JSON.parse(decided.outcome), folded, o) : null, hex: row.hex };
@@ -661,7 +679,7 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
     leaderboardsPassed,
     leaderboardList,
     feeList,
-    devMajorityOf: (pid, devKeys) => devMajority({ proposalId: fromHex(pid), approvals: approvalsOf(pid), devKeys, verify }),
+    devMajorityOf: (pid, devKeys) => devMajority({ proposalId: fromHex(pid), approvals: approvalsOf(pid), devKeys, verify: heldVerify }),
     payments,
     cancelledOf,
     // `heldAtMs` (kanban #1279): when a peer says it first held the object (GET /funding-items' atMs) - a signal or an approval is kept as of the
@@ -729,11 +747,25 @@ export function createFundingBook({ db, verify, isBonded, tip, activeAt, schedul
         db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, id, String(hex).toLowerCase(), now());
         return { ok: true, fresh: true, id, proposal: id };
       }
-      // A PROTOCOL DEVELOPER'S ANSWER: to a fee proposal this seat holds; the newest answer of each developer counts (devMajority)
+      // A PROTOCOL DEVELOPER'S ANSWER: to a fee proposal this seat holds; a "no" of a developer stands over its "yes" (devMajority)
+      // kanban #3586: ONLY A PROTOCOL DEVELOPER'S, of the proposal's network (devKeysOf): the signer was any key, so a stranger's
+      // fresh keys were kept without bound and handed on to every seat. With the dev key checked, at most two are kept per (proposal,
+      // developer) - its yes and its no, the whole payload being the id - so a proposal holds at most twice its network's developers.
+      // When this seat cannot read the keys yet it refuses (503), and keeps nothing it cannot tell is a developer's: a pull before the
+      // decision (decideFees reads the keys first) or the developer's next post brings it in.
       if (kind === 'fee-approval') {
         proposal = toHex(r.obj.proposalId);
-        if (!db.prepare("SELECT 1 FROM funding_items WHERE kind = 'fee' AND id = ?").get(proposal)) return { ok: false, status: 404, why: 'this seat holds no such fee proposal: send the proposal first' };
+        const fee = db.prepare("SELECT hex FROM funding_items WHERE kind = 'fee' AND id = ?").get(proposal);
+        if (!fee) return { ok: false, status: 404, why: 'this seat holds no such fee proposal: send the proposal first' };
+        const f = readSignedFunding('fee', fromHex(fee.hex), heldVerify);
+        if (!f.ok) return { ok: false, status: 404, why: 'this seat holds no such fee proposal: send the proposal first' };
+        const keys = await devKeysFor(toHex(f.obj.networkId));
+        if (keys === null) return { ok: false, status: 503, why: 'this seat has not read the protocol developers\' keys of that network yet: try again later' };
+        if (Array.isArray(keys) && !keys.some((k) => String(k).toLowerCase() === toHex(r.obj.dev))) {
+          return { ok: false, status: 422, why: 'a fee approval is given by one of the network\'s protocol developers, and that key is none of theirs' };
+        }
         db.prepare('INSERT OR IGNORE INTO funding_items (id, kind, proposal, hex, at_ms) VALUES (?, ?, ?, ?, ?)').run(id, kind, proposal, String(hex).toLowerCase(), atMs);
+        rememberGood(r.signature, r.id, r.obj.dev);
         claim();
         return { ok: true, fresh: true, id, proposal };
       }
