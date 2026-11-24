@@ -8350,6 +8350,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // ahead, so on the day a version is first hosted its tables are not out yet, and the tile showed no round at all (measured on UI 586)
       const everyVersion = game.name === 'nextblock' || game.name === 'rock-paper-scissors';
       window.ARENA_GAME_IDS = everyVersion && Array.isArray(game.versions) && game.versions.length ? game.versions : [game.id];
+      // EVERY VERSION OF THE SHOWN GAME IS ITS OWN (kanban #3668, feedback #456: round ed43c013 ran on Up/Down v24 while the page already showed
+      // v26, and the client was handed only the shown version's orders - the player's order vanished during the version change): the tile's
+      // versions, the same developer key and name; a link naming one version by its id finds its tile's
+      window.ARENA_GAME_FAMILY = [...new Set([game.id, ...(Array.isArray(game.versions) ? game.versions : []), ...((tiles.find((t) => t.name === game.name && t.devKey === game.devKey && Array.isArray(t.versions)) || {}).versions || [])].map((x) => String(x).toLowerCase()))];
       // A TABLE WAITS (2026-10-11, path B): a head-to-head game with no round of it open asks the seats for
       // one - POST /h2h-want, every 30 s while none is open; their operator publishes the next 30 min of rounds in one
       // transaction, the first about an hour later. window.ARENA_H2H_WANT keeps the last ask for a probe.
@@ -8844,7 +8848,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             onPrice: opts.onPrice || null, label: opts.label || null, everyMs: opts.everyMs || 3000,
             closeMs: () => { const id = opts.round ? opts.round() : null, row = (window.ARENA_LOBBY_ROWS || []).find((r) => r.id === id); return row ? Number(row.entryCloseMs) || 0 : 0; } }) : null),
           // an old order read back from the seats is left out while its result is read (marketViewLines)
-          orders: () => { marketViewLines(); return readPicks().filter((x) => x.order && x.gameId === game.id && !QUIET_ORDERS.has(x.entryIdHex)).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
+          orders: () => { marketViewLines(); return readPicks().filter((x) => x.order && (window.ARENA_GAME_FAMILY || [game.id]).includes(String(x.gameId || '').toLowerCase()) && !QUIET_ORDERS.has(x.entryIdHex)).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
             limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled,
             // (kanban #619: from the press, ms - submitted to the first seat, placed on enough seats, its lock accepted by the guardians)
             timing: x.order.timing || {},
