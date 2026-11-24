@@ -24,6 +24,7 @@ import {
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const CHECKED_KEPT = 4096;   // kanban #2817: certificates checked once, kept beside the rooms
+const ROOMS_KEPT = 512;      // rooms held; past it the oldest one whose window is not open goes (kanban #3572)
 const HEX128 = /^[0-9a-f]{128}$/;
 /** How often a seat pulls its peers while a round's set is open, and how long it waits for one peer. */
 export const LOCK_SET_PULL_MS = Number(process.env.ARENA_LOCK_SET_PULL_MS || 400);   // kanban #2901: was 150 - 798 pulls in 30 s on one seat; pushes carry the fast path
@@ -73,7 +74,8 @@ export class LockSetBook {
     this.db.exec(`CREATE TABLE IF NOT EXISTS lock_set_signed (round_id BLOB PRIMARY KEY, entries TEXT NOT NULL, at_ms INTEGER NOT NULL, sig BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS lock_set_certs (round_id BLOB PRIMARY KEY, cert BLOB NOT NULL, at_ms INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS lock_set_conflicts (round_id BLOB PRIMARY KEY, cert BLOB NOT NULL, at_ms INTEGER NOT NULL);
-      CREATE TABLE IF NOT EXISTS lock_set_double_signs (round_id BLOB NOT NULL, key TEXT NOT NULL, a BLOB NOT NULL, b BLOB NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (round_id, key))`);
+      CREATE TABLE IF NOT EXISTS lock_set_double_signs (round_id BLOB NOT NULL, key TEXT NOT NULL, a BLOB NOT NULL, b BLOB NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (round_id, key));
+      CREATE TABLE IF NOT EXISTS lock_set_views (round_id BLOB PRIMARY KEY, entries TEXT NOT NULL, at_ms INTEGER NOT NULL, sig BLOB NOT NULL)`);
     /** rid hex -> the one pull made before a lock outside the certificate is first returned (kanban #2585) */
     this.returnPulls = new Map();
   }
@@ -83,14 +85,31 @@ export class LockSetBook {
   /** Whether a view held here names an entry (kanban #2901 b): an empty round's set is worth no signature, whoever asks. */
   heardEntries(rid) { const r = this.rooms.get(toHex(rid)); if (!r) return false; for (const v of r.views.values()) if (v && v.entries && v.entries.length) return true; return false; }
 
-  #room(ridHex) {
+  #room(ridHex, c = null) {
     let r = this.rooms.get(ridHex);
     if (!r) {
-      r = { views: new Map(), sigs: new Map(), cert: null, pulledAt: new Map(), pulling: new Map(), pushed: new Set(), answeredAt: new Map(), twoViews: new Set() };
+      r = { views: new Map(), sigs: new Map(), cert: null, pulledAt: new Map(), pulling: new Map(), pushed: new Set(), answeredAt: new Map(), twoViews: new Set(), closeMs: null };
       this.rooms.set(ridHex, r);
-      if (this.rooms.size > 512) this.rooms.delete(this.rooms.keys().next().value);
+      if (this.rooms.size > ROOMS_KEPT) this.#evict(ridHex);
     }
+    if (c && r.closeMs === null) r.closeMs = Number(c.entryCloseMs);
     return r;
+  }
+
+  /**
+   * A LIVE ROOM IS NEVER DROPPED (kanban #3572, audit h2h-a7-1-1): the rooms held 512 rounds and dropped the oldest first, so a stranger's GET
+   * /lock-set over 513 other rounds pushed a round out inside its window - its views, its twoViews and what was pushed went with it, and each
+   * seat so treated signed its own view again (#3347: a second view over another set made it an equivocator at every peer; three such honest
+   * seats of 7 left 4 views, below the threshold: the paid round VOID). The oldest room whose window is not open (close .. close + the window +
+   * LOCK_SET_FINAL_AFTER_MS) is dropped instead; when every room is open none is, so the rooms grow only by the rounds open at once.
+   */
+  #evict(keep) {
+    const now = this.#now();
+    for (const [k, r] of this.rooms) {
+      if (k === keep) continue;
+      if (r.closeMs === null) { let c = null; try { c = this.roundOf(fromHex(k)); } catch { c = null; } r.closeMs = c ? Number(c.entryCloseMs) : -Infinity; }
+      if (now < r.closeMs || now > r.closeMs + LOCK_SET_WINDOW_MS + LOCK_SET_FINAL_AFTER_MS) { this.rooms.delete(k); return; }
+    }
   }
 
   #committee(rid) { return this.round.signerNodes(rid).map(toHex); }
@@ -144,7 +163,7 @@ export class LockSetBook {
   state(rid) {
     const c = this.roundOf(rid);
     if (!c) return { round: toHex(rid), required: false };
-    const room = this.#room(toHex(rid));
+    const room = this.#room(toHex(rid), c);
     const cert = this.certified(rid);
     const own = this.#signed(rid);
     if (own) room.sigs.set(own.key, own);
@@ -163,7 +182,7 @@ export class LockSetBook {
     const c = this.roundOf(rid);
     if (!c) return { ok: false, status: 409, why: 'that round does not play under the certified lock set (a paying head-to-head round of protocol 28)' };
     const committee = this.#committee(rid), members = new Set(committee), threshold = this.#threshold(committee);
-    const close = Number(c.entryCloseMs), room = this.#room(toHex(rid));
+    const close = Number(c.entryCloseMs), room = this.#room(toHex(rid), c);
     const got = { views: 0, signatures: 0, certificate: false };
     // A FORGED POST COSTS ONE VERIFY (kanban #2822, #1489 r23-h2h-1): every view, signature and both certificates of a body were verified, failed
     // ones too - ~28 BIP-340 verifies (~18 ms) per unauthenticated POST of random signatures, re-sendable at once. A peer hands on only what it
@@ -341,17 +360,34 @@ export class LockSetBook {
     return 'that lock is not in the round\'s certified lock set: it is not in the round and goes back at once (kanban #2561)';
   }
 
-  /** This seat's own view, made once from the close on. */
+  /**
+   * This seat's own view, made once from the close on. KEPT IN THE STORE BEFORE IT IS SERVED, AND ONLY ONCE (kanban #3572): it was held in the
+   * room alone, so a room dropped (or a restart) inside the window made it again from viewOf at that time - over another set whenever a stake
+   * verified after the close kept its door time (#1805) - and since #3347 a second view over another set is an equivocation: the honest seat's
+   * view stopped counting at every peer. The kept one is served again, after a drop and after a restart alike.
+   */
   #ownView(rid, c, room) {
     const me = toHex(this.round.pubkey);
     if (room.views.has(me)) return room.views.get(me);
+    const kept = this.#keptView(rid);
+    if (kept) { room.views.set(me, kept); return kept; }
     const now = this.#now(), close = Number(c.entryCloseMs);
     if (now < close || now > close + LOCK_SET_WINDOW_MS) return null;
     const set = lockSetOf({ roundId: rid, entries: this.viewOf(rid, c) });
     const setId = lockSetId(set);
-    const v = { key: me, atMs: now, entries: set.entries.map(toHex), sig: toHex(schnorr.sign(lockSetViewId({ setId, atMs: now }), this.round.identity.secret)), setId: toHex(setId) };
+    const sig = schnorr.sign(lockSetViewId({ setId, atMs: now }), this.round.identity.secret);
+    const w = this.db.prepare('INSERT OR IGNORE INTO lock_set_views (round_id, entries, at_ms, sig) VALUES (?, ?, ?, ?)').run(rid, JSON.stringify(set.entries.map(toHex)), now, sig);
+    const v = w.changes ? { key: me, atMs: now, entries: set.entries.map(toHex), sig: toHex(sig), setId: toHex(setId) } : this.#keptView(rid);
     room.views.set(me, v);
     return v;
+  }
+
+  /** The own view kept in the store for the round (kanban #3572), or null. */
+  #keptView(rid) {
+    const row = this.db.prepare('SELECT entries, at_ms, sig FROM lock_set_views WHERE round_id = ?').get(rid);
+    if (!row) return null;
+    const entries = JSON.parse(row.entries);
+    return { key: toHex(this.round.pubkey), atMs: Number(row.at_ms), entries, sig: toHex(new Uint8Array(row.sig)), setId: toHex(lockSetId(lockSetOf({ roundId: rid, entries }))) };
   }
 
   /** Sign the one set, if it is time: every view held, or the view wait passed with a threshold of them. */
@@ -444,7 +480,7 @@ export class LockSetBook {
     const now = this.#now(), close = Number(c.entryCloseMs);
     if (now < close || this.certified(rid)) return this.certified(rid);
     if (now > close + LOCK_SET_WINDOW_MS + 2000) return null;   // past the window: nothing more forms (a late pull still may find a certificate)
-    const committee = this.#committee(rid), threshold = this.#threshold(committee), room = this.#room(toHex(rid));
+    const committee = this.#committee(rid), threshold = this.#threshold(committee), room = this.#room(toHex(rid), c);
     const peers = this.peersOf(rid) || [];
     if (committee.includes(toHex(this.round.pubkey))) this.#ownView(rid, c, room);
     this.#signOnce(rid, c, committee, threshold, room);
