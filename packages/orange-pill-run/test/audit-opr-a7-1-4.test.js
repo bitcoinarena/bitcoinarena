@@ -9,9 +9,12 @@ import { checkLevel } from '../src/level-check.mjs';
 import { createOpr, DEFAULTS } from '../server/opr-service.mjs';
 import { keypair } from './server-helpers.mjs';
 
+// RULING (2026-11-24, kanban #3582): a full network budget never refuses an attempt - an IPv4 /24 is shared by honest players. A scored run always
+// keeps its log; the room it needs comes from that network's oldest kept logs of refused runs.
+
 const fx = JSON.parse(fs.readFileSync(new URL('./fixtures/candles-30d.json', import.meta.url)));
 
-test('the logs a round keeps from one IPv6 /48 stay within the #3355 network budget, scored runs included', async () => {
+test('one network\'s scored runs always keep their logs and are never refused; the room comes from its oldest refused logs (#3582 ruling)', async () => {
   const day = fx.days[fx.days.length - 1];
   let t = Date.parse('2026-11-22T10:00:00Z');
   const opr = createOpr({ now: () => t, sim: { GAME_VERSION: sim.GAME_VERSION, buildLevel: sim.buildLevel, runLog: sim.runLog }, fetchCandles: async () => day.candles,
@@ -23,23 +26,39 @@ test('the logs a round keeps from one IPv6 /48 stay within the #3355 network bud
   assert.equal(r.state, 'ready');
   const c = checkLevel(day.candles, r.id);
   const L = sim.buildLevel(day.candles, c.seed);
-  const { log, W } = sim.recordLog(L, (w) => sim.botInput(w, { ...sim.BOT_CONFIGS[0] }));
-  const real = sim.runLog(L, log);
-  // a run that taps every other step from the start to maxSteps: every press is a real input (replayed, scored), 5,399 presses, ~60 KB
+  const { log } = sim.recordLog(L, (w) => sim.botInput(w, { ...sim.BOT_CONFIGS[0] }));
+  // a run that taps every other step from the start to maxSteps: every press is a real input (replayed, scored), ~60 KB
   const pad = [];
   for (let st = 0; st + 1 <= DEFAULTS.maxSteps && pad.length < DEFAULTS.logPressesMost; st += 2) pad.push([st, st + 1]);
   const big = { v: log.v, presses: pad };
   const bigRun = sim.runLog(L, big);
   assert.ok(Number.isFinite(bigRun.total) && bigRun.steps > 0, 'the tapping run replays and scores');
-  const N = 40, open = [];
-  for (let i = 0; i < N; i++) {
-    const kp = keypair(), ip = `2001:db8:77:${(i + 1).toString(16)}::1`;   // one /48, a /64 each
-    const s = await opr.startAttempt(kp.pk, { round: r.id, ip }); assert.equal(s.ok, true, s.why);
-    open.push({ kp, s, ip });
-  }
+  const size = JSON.stringify(big).length, budget = DEFAULTS.refusedLogNetBytes;
+  let n = 0;
+  const open = async () => { n++; const kp = keypair(), ip = `198.51.100.${n}`;   // one IPv4 /24, an address each
+    const s = await opr.startAttempt(kp.pk, { round: r.id, ip }); assert.equal(s.ok, true, `attempt ${n} from the /24: ${s.why}`); return { kp, s, ip }; };
+  // refused runs first: sent at once, faster than the run's game time - refused, their logs kept for review while the network's budget holds
+  const R = Math.floor(budget / size) - 2, refused = [];
+  for (let i = 0; i < R; i++) { const o = await open(); const out = opr.submit(o.kp.pk, { attempt: o.s.attempt, token: o.s.token, log: big }, { ip: o.ip });
+    assert.equal(out.ok, false, 'sent faster than its game time'); refused.push(o.s.attempt); t += 10; }
+  const logOf = (id) => opr.db.prepare('SELECT log FROM attempts WHERE id = ?').get(id).log;
+  assert.equal(refused.filter((id) => logOf(id) != null).length, R, 'the refused logs are kept within the budget');
+  // then 40 scored runs from the same /24: none refused, every one keeps its log
+  const S = 40, runs = [];
+  for (let i = 0; i < S; i++) runs.push(await open());
   t += Math.ceil(bigRun.steps / 60) * 1000 + 2000;
-  for (const { kp, s, ip } of open) { const out = opr.submit(kp.pk, { attempt: s.attempt, token: s.token, log: big }, { ip }); assert.equal(out.ok, true, out.why); }
-  const kept = opr.db.prepare("SELECT COUNT(*) AS n, COALESCE(SUM(LENGTH(log)), 0) AS bytes FROM attempts WHERE round = ? AND state = 'scored'").get(r.id);
-  console.log(`one /48, ${N} fresh keys: ${kept.n} runs kept, ${kept.bytes} bytes of logs (${Math.round(kept.bytes / kept.n)} each, ${big.presses.length} presses, run ${bigRun.steps} steps, score ${bigRun.total}; the bot's real run is ${JSON.stringify(log).length} bytes)`);
-  assert.ok(kept.bytes <= DEFAULTS.refusedLogNetBytes, `one /48 stored ${kept.bytes} bytes of logs in one round through ${N} scored runs (budget ${DEFAULTS.refusedLogNetBytes}); 65,536 /64s x 10 attempts reach ~${Math.round(kept.bytes / N * 655360 / 1e9)} GB`);
+  const keptAfter = [];
+  for (const { kp, s, ip } of runs) {
+    const out = opr.submit(kp.pk, { attempt: s.attempt, token: s.token, log: big }, { ip }); assert.equal(out.ok, true, out.why);
+    keptAfter.push(refused.map((id) => logOf(id) != null));
+  }
+  const scored = opr.db.prepare("SELECT COUNT(*) AS n, SUM(log IS NOT NULL) AS logs, COALESCE(SUM(LENGTH(log)), 0) AS bytes FROM attempts WHERE round = ? AND state = 'scored'").get(r.id);
+  console.log(`one /24: ${R} refused logs then ${S} scored runs of ${size} bytes - scored ${scored.n}, with log ${scored.logs}, ${scored.bytes} bytes (budget ${budget}); refused logs left after each scored run: ${keptAfter.map((k) => k.filter(Boolean).length).join(',')}`);
+  assert.equal(scored.n, S); assert.equal(scored.logs, S, 'every scored run keeps its log');
+  // the oldest refused logs go first: after the first scored run only the oldest was dropped, and at every step the kept ones are the newest
+  for (const k of keptAfter) { const first = k.indexOf(true); assert.ok(first < 0 || k.slice(first).every(Boolean), 'refused logs are dropped oldest first'); }
+  assert.ok(keptAfter[2].filter(Boolean).length < R, 'a scored run past the budget takes room from the refused logs');
+  assert.equal(keptAfter[S - 1].filter(Boolean).length, 0, 'in the end no refused log of that network is left');
+  // the network can still open attempts with its budget long used up
+  const more = await open(); assert.equal(more.s.ok, true);
 });

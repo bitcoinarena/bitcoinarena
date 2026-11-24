@@ -322,13 +322,25 @@ export function createOpr(o = {}) {
     return c.kept >= share || c.n - c.kept >= cfg.ipUnplayedShare * share;
   };
   const IP_FULL = 'this address opened all the attempts it may in this round';
-  // ONE NETWORK'S KEPT LOGS ARE BOUNDED, SCORED RUNS INCLUDED (kanban #3582, audit opr a7-1-4): the #3355 budget counted refused logs only, so one
-  // IPv6 /48 (65,536 /64s, 10 attempts each, free keys) kept ~64 KB tapping logs of scored runs without end - ~42 GB a round. Every log a round
-  // keeps is counted against its network's refusedLogNetBytes; a network that used it up opens no new attempt in the round, and a run sent past
-  // it is scored without its log and held for review (no log: no replay, no bot pass - it never reaches a list unseen)
+  // ONE NETWORK'S KEPT LOGS, SCORED RUNS COUNTED (kanban #3582, audit opr a7-1-4): the #3355 budget counted refused logs only. Every log a round
+  // keeps is now counted against its network's refusedLogNetBytes, but a scored run is never refused for it and always keeps its log (ruling
+  // 2026-11-24: an IPv4 /24 is shared by honest players, so a full budget must not lock the network out of the round). A scored run that does
+  // not fit takes the room from that network's oldest kept logs of refused runs, which are dropped first; a refused run past the budget keeps
+  // no log (#3355). Scored runs - the round's best runs among them - are never dropped
   const netOf = (ik, player) => (ik && ipNetsOf(ik)[0]) || ik || `key:${player}`;
   const netLogBytes = (round, net) => q('SELECT COALESCE(SUM(log_bytes), 0) AS n FROM attempts WHERE round = ? AND log_net = ?').get(round, net).n;
-  const NET_FULL = 'this network sent all the runs a round keeps from it - try again in the next round';
+  const dropRefusedLogs = (round, net, need) => {
+    let held = netLogBytes(round, net);
+    if (held + need <= cfg.refusedLogNetBytes) return 0;
+    let dropped = 0;
+    for (const x of q("SELECT id, log_bytes, flags FROM attempts WHERE round = ? AND log_net = ? AND state = 'rejected' AND log IS NOT NULL ORDER BY submitted_ms, rowid").all(round, net)) {
+      if (held + need <= cfg.refusedLogNetBytes) break;
+      const f = J(x.flags, {}) || {}; f.logDropped = true;
+      q('UPDATE attempts SET log = NULL, log_net = NULL, log_bytes = NULL, flags = ? WHERE id = ?').run(JSON.stringify(f), x.id);
+      held -= Number(x.log_bytes) || 0; dropped++;
+    }
+    return dropped;
+  };
   const startedCount = (round) => q('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND paid_ms IS NOT NULL').get(round).n;   // the pot: paid entries only
   const phaseOf = (r, t = now()) => (t >= r.end_ms || ['closed', 'listed'].includes(r.state) ? 'ended' : r.state !== 'ready' ? (r.state === 'posting' ? 'posting' : 'preparing')
     : t < r.start_ms ? 'soon' : t >= r.end_ms - cfg.lastCallMs ? 'last-call' : 'open');
@@ -366,7 +378,6 @@ export function createOpr(o = {}) {
     const ik = ipKey(ip);
     const first = !q("SELECT 1 FROM attempts WHERE round = ? AND player = ? LIMIT 1").get(r.id, player);   // kanban #3374
     if (ipFull(r, ik, { first })) return { ok: false, why: IP_FULL };
-    if (netLogBytes(r.id, netOf(ik, player)) >= cfg.refusedLogNetBytes) return { ok: false, why: NET_FULL };   // kanban #3582
     // THE RUN OPENS AT ONCE (kanban #3265, the owner 2026-11-21: play at once with an empty new wallet): the level, a token and the entry invoice
     // together; the invoice lives exactly as long as the run's 10 minutes, so an entry paid after the deadline is impossible
     const deadline = Math.min(t + cfg.submitMs, r.end_ms);
@@ -542,10 +553,10 @@ export function createOpr(o = {}) {
     }
     let feat = null;
     try { feat = runFeatures(sim, levelOf(r), body.log); } catch (e) { log(`attempt ${a.id.slice(0, 8)}: no bot features (${String(e.message).slice(0, 80)})`); }
-    // kanban #3582: the log is kept only within its network's budget; past it the run is scored without it and held for review
+    // kanban #3582: a scored run always keeps its log; past its network's budget the room comes from that network's oldest refused logs
     const net = netOf(a.ip_key, a.player);
-    let text = JSON.stringify(body.log);
-    if (netLogBytes(a.round, net) + text.length > cfg.refusedLogNetBytes) { text = null; flags.logNotKept = true; }
+    const text = JSON.stringify(body.log);
+    dropRefusedLogs(a.round, net, text.length);
     const review = Object.keys(flags).length ? 'pending' : 'none';
     // a run whose entry is not paid yet is kept with its score, waiting: it is placed only if the entry settled before this submit, within the
     // entry's 30 s (#3265, #3603) - a payment after it never scores it
