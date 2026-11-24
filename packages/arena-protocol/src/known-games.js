@@ -561,9 +561,9 @@ export const KNOWN_GOOD_GAMES = Object.freeze({
     sharedWorld: Object.freeze([]),
     gameDonationSetId: 'a5dc55c1ffef31fae9b7450fb687334675089bb33aea54c667e233c9b3c23779',
   }),
-  'c0404aabebd5fb270d51d8df4348adc75f2a85a1584fffa8d52c141d52f7e0d7': Object.freeze({
+  '045c0d33570f564a5b1a1fa08774e580bce44f9877204d4423703a67920c94da': Object.freeze({
     name: 'rock-paper-scissors',
-    //: manifest version 14, parent 1e13b8e3 - version 13 in every term but its client: in reveal and result a move the opponent did not show is never drawn (the idle open hand, not a rock fist; kanban #3234, feedback #342/#182)
+    //: manifest version 14, parent 1e13b8e3 - version 13 in every term but its client: in reveal and result a move the opponent did not show is never drawn (the idle open hand, not a rock fist; kanban #3234, feedback #342/#182); the line that a result is provisional or signed has a row of its own, never over the cost line (kanban #3564, feedback #423) - signed again before any seat hosted it (was c0404aab)
     requiredProtocolVersion: 2,
     // ONE COMMITTEE AND ONE KEY PER TABLE (2026-10-13 ~21:10Z, pick (c)): a table's rounds - one grid series -
     // are drawn and seated once, by the table's first round, and every 8 s round after plays on that committee's claim key
