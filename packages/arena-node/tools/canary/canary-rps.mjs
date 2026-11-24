@@ -6,6 +6,7 @@
 import { chromium } from 'playwright-core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { closeThenExit } from './canary-stop.mjs';
 
 const U = (process.argv[2] || process.env.CANARY_URL || 'https://testnet.bitcoinarena.io').replace(/\/+$/, '');
 const DIR = process.env.CANARY_DIR || `${homedir()}/arena-canary`;
@@ -17,12 +18,15 @@ const RUN = `${DIR}/runs/${stamp}`; mkdirSync(RUN, { recursive: true });
 const rec = { at: T(), kind: 'rps', tag: process.env.CANARY_TAG || 'cron', url: U, ok: false, fail: [] };
 const log = [];
 const done = (code) => {
+  if (done.ran) return; done.ran = true; // #3664: the hard stop's close can let the main path reach done() first - one line per run
   rec.totalMs = Date.now() - t0; rec.ok = rec.fail.length === 0 && !!rec.played;
   appendFileSync(LOG, JSON.stringify(rec) + '\n'); writeFileSync(`${RUN}/full.log`, log.join('\n')); writeFileSync(`${RUN}/rec.json`, JSON.stringify(rec, null, 1));
   console.log('#2905 ' + JSON.stringify(rec)); process.exit(code ?? (rec.ok || rec.countable === false ? 0 : 1));
 };
 // hard stop: the run never outlives 7 min (the wrapper kills the whole group at 8)
-setTimeout(() => { rec.fail.push('canary-timeout'); try { done(1); } catch { process.exit(1); } }, 420000).unref();
+// #3664: the browser is closed first (capped at 15 s) - a killed Chrome loses the wallet's last storage writes and the next run spends a spent note
+let ctx;
+setTimeout(() => { rec.fail.push('canary-timeout'); log.push(`${T()} canary-timeout: closing the browser before exit (#3664)`); closeThenExit(ctx, () => { try { done(1); } catch { process.exit(1); } }, 15000); }, 420000).unref();
 
 if (existsSync(REFILL)) { // the last round left the wallet below LOW_MSAT: a new wallet (the faucet's welcome) - the old profile kept aside
   try { renameSync(PROFILE, `${PROFILE}.spent-${stamp}`); renameSync(REFILL, `${REFILL}.done-${stamp}`); rec.refilled = true; } catch (e) { rec.refillError = String(e).slice(0, 120); }
@@ -30,7 +34,6 @@ if (existsSync(REFILL)) { // the last round left the wallet below LOW_MSAT: a ne
 // rounds this kept key has entered (the bot comes at once only for a key it already saw lock, #2901)
 const wallet = (() => { try { return JSON.parse(readFileSync(WALLET, 'utf8')); } catch { return { entered: 0 }; } })();
 if (rec.refilled || !existsSync(PROFILE)) wallet.entered = 0;
-let ctx;
 try {
   ctx = await chromium.launchPersistentContext(PROFILE, { executablePath: CHROME, headless: true, viewport: { width: 1280, height: 900 } });
 } catch (e) { rec.fail.push('chrome'); rec.error = String(e).slice(0, 200); done(2); }
@@ -83,7 +86,7 @@ try {
     from = log.length;
     const left = await fr.evaluate(() => (document.body.innerText.match(/(\d+):(\d\d)/) || [])[0] || null).catch(() => null);
     try { await fr.getByText(move, { exact: true }).first().click({ timeout: 30000 }); pressMs = Date.now(); log.push(`${T()} PRESS ${move} (client countdown ${left})`); }
-    catch (e) { log.push(`${T()} tap: ${String(e).slice(0, 160)}`); }
+    catch (e) { log.push(`${T()} tap: ${String(e).slice(0, 1200)}`); await p.screenshot({ path: `${RUN}/tap-${k + 1}.png`, timeout: 5000 }).catch(() => {}); } // #3664: the whole call log (why the button took no click) and what the page showed
     const l = await waitFor(/taken \d+ ms after the press|refused at the tap|not-started|missed/i, 30000, from);
     if (l && /taken \d+ ms after the press/.test(l)) taken = l;
     else await p.waitForTimeout(4000);
