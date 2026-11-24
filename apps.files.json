@@ -378,7 +378,7 @@
       ]
     },
     "arena-app-rock-paper-scissors": {
-      "commit": "67e489e030207b4b701fc91c35516b8a7198da36",
+      "commit": "25c77c8a43fe7b419f10c5de557dc42cb070ac9c",
       "files": {
         "app.json": "06b679fcc96f7d898eaec8fde0aa7cc935f9576c9c9eb52e784d979dcd421337",
         "brand/rps-icon.svg": "ae9a1a196e3c3194a269df00eaf94ddcfe22ededad568cd19bebb025b02d8f36",
@@ -386,7 +386,7 @@
         "client/index-v11.html": "1208d4375f4d78c859e46880f2368463948e12055a4d9647242bf55bf82ab053",
         "client/index-v12.html": "333f4bbafe9c7caa9332e77f9efeab396090aa2bfedee12e9a994d9b61daca6f",
         "client/index-v13.html": "ef169cdccaa29d4ff5569f2ab349c519eb49ace5b7ab66c5f837d2cdd97d408d",
-        "client/index-v14.html": "80263d356ef3a958354de79c58cd1547cd9b92324b47bf875a1e4cdafb64e884",
+        "client/index-v14.html": "6dabddfdf0861bf151b7ac5d272645047f6f42e6e42e928aa3800723d97ff705",
         "client/index-v2.html": "b895f3b16d9cef663130faacbf5d37e2fe60271ba5e4748024db2d27e1174206",
         "client/index-v4.html": "5c724514c0fba4a8a360ff646a8a050c79627c8f34369377fa54c7c38d4f11fa",
         "client/index-v5.html": "00985bcf21fa83e91812617aaab627dd4a9ee245597e728118c0f5c606a34d2a",
@@ -410,7 +410,7 @@
         "plugin/rock-paper-scissors-v11.js": "35e7d9af200e5df59240544a22a8f3aa7a50c142f6fcd578ac304a3a15946667",
         "plugin/rock-paper-scissors-v12.js": "cd669d53feb5ec552725d500cefc47224d93d2dd53b8878c814900b3edba638d",
         "plugin/rock-paper-scissors-v13.js": "9a2bc19be6daf9dff9a2f9133c9174230df878df8653e8d4e8251e29b0eb647c",
-        "plugin/rock-paper-scissors-v14.js": "e85b58b6483821b8879e0768ea26ea93e714f5feb12a4c9be0f6734fcf7a30f8",
+        "plugin/rock-paper-scissors-v14.js": "d0d542e1cf52631792d52ba304674f829fc3e73ef11d7cb7a4759e4fea23387b",
         "plugin/rock-paper-scissors-v2.js": "59eab819ac20bb6ff3fec7658ae34269a8dfb02c04e04f2cb1eb11460d36dea3",
         "plugin/rock-paper-scissors-v3.js": "ddfaf3312315302cd36ac6d910c162528f3832229beacff32f09b62cfd1000ea",
         "plugin/rock-paper-scissors-v4.js": "c31e3e2dab60e3a4c5cba671cadb7852c03342bf6b3f2ecf3df54305eb375013",
@@ -425,7 +425,7 @@
         "tools/build-client-v11.mjs": "357671b3ab0fcbbcfea6a1c65e0ef01ef90362bf904926298427ff6f58915610",
         "tools/build-client-v12.mjs": "ab282440958f4494f2cf6e1f13f84c2ae708215770f7305158fdbf93b5ce639c",
         "tools/build-client-v13.mjs": "0b1dfe8bdd93bc93cc3d2822e61fe120304dc83736b8558b1d94c9212016c0d7",
-        "tools/build-client-v14.mjs": "12e269cfe82ced5604127f600b6df8d5cff6f00f98b6602572a67d46485813de",
+        "tools/build-client-v14.mjs": "51d9f7cce1a3892067a792a38c3bbda81ae54e856205af1dccc37b64e8b66550",
         "tools/build-client-v4.mjs": "b83f892dfabc79ea2b1aa20c184d5b34c4aa63b47d7fae45432d178a1a3381b7",
         "tools/build-client-v5.mjs": "b0b5d439f8973adf709b1905a8ae1c73bc5755081ee918f85a7fc6a035a50216",
         "tools/build-client-v6.mjs": "4ba8b47579f3082feeec36552bce8cf6f410a1c109b2cdd101b0c961e4bb1558",
