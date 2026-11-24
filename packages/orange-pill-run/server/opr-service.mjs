@@ -486,8 +486,12 @@ export function createOpr(o = {}) {
     const gameMs = (res.steps * 1000) / 60;
     if (t - a.started_ms + cfg.fastSlackMs < gameMs) return reject(`submitted faster than the run's game time (${Math.round(gameMs / 1000)} s)`, { flags: { tooFast: true }, keepLog: true });
     const score = { total: res.total, parts: res.parts, clean: !!res.clean, finished: !!res.finished, steps: res.steps, deaths: res.deaths, timeS: res.timeS };
-    const logHash = sha(JSON.stringify(body.log.presses));
-    const flags = runSignals(body.log, JC(JSON.stringify(body.client ?? null), null));
+    // #3613 (feedback #449): the duplicate check and the bot signals read only what the replay used - presses that start before the run's end
+    // (res.steps), each released at the end at most. A copied log with presses appended after the end, or its last release moved past it,
+    // replayed to the same score under a new hash and was never sameLog
+    const played = body.log.presses.filter(([d]) => d < res.steps).map(([d, u]) => [d, Math.min(u, res.steps)]);
+    const logHash = sha(JSON.stringify(played));
+    const flags = runSignals({ ...body.log, presses: played }, JC(JSON.stringify(body.client ?? null), null));
     const same = q("SELECT id, player FROM attempts WHERE round = ? AND log_hash = ? AND player != ? AND state = 'scored'").all(a.round, logHash, player);
     if (same.length) {
       flags.sameLog = true;
