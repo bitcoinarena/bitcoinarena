@@ -11706,6 +11706,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // kanban #2913 (feedback #178): what came back is named as what it was - the fee lock (look.stake.fee: the round's 4 % node fee locked
         // beside the stake, returned) is not "your stake"; said "your 4 sat stake came back" while the 90 sat stake was still in the federation
         else if (stake > 0n && st.fee) what = (st.refused ? 'Your entry was not taken: your ' : 'Your ') + sats(stake) + ' fee lock came back';
+        // kanban #3667 (feedback #457): "your 99 sat stake came back · +100 sat into your wallet" - the stake lock (the order less its fee lock)
+        // and everything credited for the round in one sentence. When more than the stake came back (stake + fee lock), the whole order is said:
+        // one amount, the one the wallet history shows
+        else if (stake > 0n && got > stake) what = (st.refused ? 'Your entry was not taken: your ' : 'No payout this round: your ') + sats(got) + ' order came back in full';
         else if (stake > 0n && st.refused) what = 'Your entry was not taken: your ' + sats(stake) + ' stake came back';
         else if (stake > 0n) what = 'No payout this round: your ' + sats(stake) + ' stake came back';
         else if (refund > 0n) what = 'Your ' + sats(refund) + ' lock came back after its expiry';
