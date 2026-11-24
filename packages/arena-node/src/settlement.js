@@ -50,6 +50,8 @@ import { answersUpTo, binaryUpTo, textUpTo } from './peer-read.js';
 export const PEER_FROST_BYTES = 64 * 1024;
 /** kanban #2737: how long a settlement summary that did not rebuild is not rebuilt again for a reader */
 const SUMMARY_MISS_MS = 10 * 60000;
+/** How many rounds' summaries summaryOf keeps: open rounds, and rounds whose row is ACCEPTED - final, never rebuilt again (kanban #3569). */
+export const SUMMARY_MOST = 4096, SUMMARY_SETTLED_MOST = 20000;
 // a refusal's text, up to the bound (a stand-in answer with no body stream, a test's, is read as it offers itself)
 const whyUpTo = async (r) => (r.body === undefined && typeof r.text === 'function' ? r.text() : textUpTo(r, PEER_FROST_BYTES));
 import { lockSettlement, lateLockSettlement, attestedLockSettlement, bookLockSettlement, RESERVE_LATER_PK } from '../../arena-protocol/src/lock-settlement.js';
@@ -342,6 +344,7 @@ export class LockSettlement {
     this.built = new Map();          // round id hex -> the settlement this signer node rebuilt
     this.summaries = new Map();      // round id hex -> what its settlement moved, rebuilt after a restart
     this.summaryMisses = new Map();  // round id hex -> when its rebuild last did not match its kept moves (kanban #2737)
+    this.settledSummaries = new Map(); // round id hex -> the summary of a round whose row is ACCEPTED: final (kanban #3569)
     this.byPlan = new Map();         // round id hex -> { fp, built }: the last build and the plan it was built for
     this.planCertificates = new Map(); // round id hex [:late entry hex] -> { planId, certificate } the seats signed
     this.planRetries = new Map();    // round id hex -> how often a peer refused the send plan
@@ -1470,8 +1473,8 @@ export class LockSettlement {
   summary(roundIdBytes) {
     const m = this.built.get(toHex(roundIdBytes));
     if (m && m.ok) return planSummary(m.txid, m.plan);
-    const kept = this.summaries.get(toHex(roundIdBytes));
-    return kept || null;
+    const rid = toHex(roundIdBytes);
+    return this.settledSummaries.get(rid) || this.summaries.get(rid) || null;
   }
 
   /**
@@ -1492,15 +1495,22 @@ export class LockSettlement {
     // any refusal of planOf) was rebuilt whole on every read - up to 500 plans per stranger's GET. Its miss is kept SUMMARY_MISS_MS.
     const key = toHex(roundIdBytes), missed = this.summaryMisses.get(key);
     if (missed !== undefined && Date.now() - missed < SUMMARY_MISS_MS) return null;
-    const miss = () => { this.summaryMisses.delete(key); this.summaryMisses.set(key, Date.now()); if (this.summaryMisses.size > 4096) this.summaryMisses.delete(this.summaryMisses.keys().next().value); return null; };
+    // A SETTLED ROUND IS NOT ROUND-ROBINED OUT OF ITS CACHE (kanban #3569, audit settle a7-1-1, the summaryOf twin of #3312): both maps were
+    // insertion-ordered FIFOs of 4096, so a stranger reading 4097 settled rounds in turn dropped each just before it was read again and every
+    // read rebuilt the whole plan. A round whose row is ACCEPTED never changes: its summary is kept in a store of SUMMARY_SETTLED_MOST, and
+    // misses (a time each) are kept up to SUMMARY_SETTLED_MOST rounds too.
+    const row = typeof this.round.lockSettlement === 'function' ? this.round.lockSettlement(roundIdBytes) : null;
+    const settled = !!(row && row.state === ACCEPTED);
+    const miss = () => { this.summaryMisses.delete(key); this.summaryMisses.set(key, Date.now()); if (this.summaryMisses.size > SUMMARY_SETTLED_MOST) this.summaryMisses.delete(this.summaryMisses.keys().next().value); return null; };
     let got;
     try { got = await this.planOf(roundIdBytes, { withSends: true }); } catch { return miss(); }
     if (!got || !got.ok) return miss();
     if (got.plan.claims.length !== moves.claims.length || got.plan.payouts.length !== moves.payouts) return miss();
     this.summaryMisses.delete(key);
     const s = planSummary(moves.txid, got.plan);
-    this.summaries.set(toHex(roundIdBytes), s);
-    if (this.summaries.size > 4096) this.summaries.delete(this.summaries.keys().next().value);
+    const store = settled ? this.settledSummaries : this.summaries, most = settled ? SUMMARY_SETTLED_MOST : SUMMARY_MOST;
+    store.set(key, s);
+    if (store.size > most) store.delete(store.keys().next().value);
     return s;
   }
 
