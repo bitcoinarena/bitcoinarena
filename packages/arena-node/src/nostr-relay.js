@@ -20,9 +20,13 @@ import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { WebSocketServer } from 'ws';
 import { schnorr } from '@noble/curves/secp256k1.js';
+import { messageBudget } from './body-budget.js';
 
 export const RELAY_KINDS = Object.freeze([0, 10002, 30078, 24133, 22242, 13194, 23194, 23195, 30762, 30009, 8, 9735]);   // + NIP-47 (wallet connect), + round results and NIP-58 badges, + NIP-57 zap receipts
 const MAX_EVENT_BYTES = 64 * 1024, MAX_SUBS = 20, MAX_FILTERS = 10, MAX_LIMIT = 500, FUTURE_S = 900;
+// kanban #3691: the bytes all sockets' unfinished messages may hold (ARENA_RELAY_WS_BUDGET), and how long one message may stay unfinished
+const WS_BUDGET = Number(process.env.ARENA_RELAY_WS_BUDGET) > 0 ? Number(process.env.ARENA_RELAY_WS_BUDGET) : 16 * 1024 * 1024;
+const WS_MESSAGE_MS = Number(process.env.ARENA_RELAY_WS_MESSAGE_MS) > 0 ? Number(process.env.ARENA_RELAY_WS_MESSAGE_MS) : 15000;
 // WHAT KEPT SUBSCRIPTIONS MAY HOLD (kanban #2839, #1489 r24-nostr-2): a socket's 20 REQs of 10 filters with ~1,600 tag values each stayed compiled
 // for the socket's life - 12.9 MB of heap per idle socket, nothing bounding the total. Each kept subscription is charged its values (ids,
 // authors, kinds and tag values); a socket holds at most SUB_VALUES_PER_SOCKET, the relay at most SUB_VALUES_TOTAL; past either a REQ is CLOSED.
@@ -353,7 +357,14 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES,
     seedEvents: SEED_EVENTS, seedBytes: SEED_BYTES, verifyBurst: VERIFY_BURST, verifyPerS: VERIFY_PER_S,
     verifyStandingBurst: VERIFY_STANDING_BURST, verifyStandingPerS: VERIFY_STANDING_PER_S, verifyCleanBurst: VERIFY_CLEAN_BURST, verifyCleanPerS: VERIFY_CLEAN_PER_S,
-    badSigsPerSocket: BAD_SIGS_PER_SOCKET, keepSigsKept: KEEP_SIGS_KEPT, ...limits };
+    badSigsPerSocket: BAD_SIGS_PER_SOCKET, keepSigsKept: KEEP_SIGS_KEPT, wsBudget: WS_BUDGET, wsMessageMs: WS_MESSAGE_MS, ...limits };
+  // THE UNFINISHED MESSAGES OF ALL SOCKETS TOGETHER (kanban #3691, bypass audit wf_12229180-099, the twin of #2075 in the seat): a socket may send
+  // a message of up to maxPayload (128 KiB), and with no cap on sockets per address (the tunnel) N sockets that each sent most of a frame and
+  // never its end held N x 128 KiB for as long as they stayed open. Every socket's bytes since its last whole message now count against
+  // lim.wsBudget (one budget for all: behind the tunnel every peer has the same address, so no per-address share), with a small reserve for
+  // small messages past it, and a message unfinished for lim.wsMessageMs is not waited for (body-budget.js messageBudget, as server.js's)
+  const wsMessages = messageBudget({ total: lim.wsBudget, perAddress: lim.wsBudget, reserve: Math.max(512 * 1024, Math.floor(lim.wsBudget / 4)),
+    smallMost: MAX_EVENT_BYTES * 2, messageMs: lim.wsMessageMs });
   // ONE SHARED BUDGET DOES NOT DECIDE WHO IS REFUSED (kanban #3145, #1489 r1120b-refute-10 of #3044): junk frames made distinct (a counter in
   // `content`: a fresh id, so never in refusedSigs) over 300 free sockets kept the one bucket empty, and every honest EVENT - a seat's signed
   // 30762 round result, a player's profile - was answered 'rate-limited' for as long as the flood lasted. Now the shared bucket is spent
@@ -680,7 +691,8 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
     if (o.ws.bufferedAmount > SLOW_BYTES) return dropSlow(o);
     queue(o, JSON.stringify(['EVENT', sid, e]));
   };
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
+    if (req && req.socket) wsMessages.watch(ws, req.socket);   // kanban #3691
     const subs = new Map();
     const c = { ws, subs, held: 0, badSigs: 0 };   // kanban #3145: badSigs, this socket's refused signatures
     // kanban #2839: every change of a kept subscription goes through these two, so the charges are given back on CLOSE, a cut and the close
