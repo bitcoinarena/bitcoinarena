@@ -25,7 +25,7 @@ import { entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
 import { resultFrom, runId } from './verdict.js';
 import { replay } from './replay.js';
 import { dissentsOn } from './test-dissent.js';
-import { loadValueRefusal } from './load-checks.js';
+import { loadValueRefusal, bedRoomOf, BED_ROOM_UNITS } from './load-checks.js';
 
 const hex = (b) => [...b].map((v) => v.toString(16).padStart(2, '0')).join('');
 const NOBODY = new Uint8Array(32);
@@ -105,8 +105,9 @@ export function liveRunKeyOf(bundle) {
  * +41 %, and the objection held (a second one after the re-run VOIDed the entry). The same rules as Round.batch's
  * loadsRefusal, on the whole run: every load's values (loadValueRefusal), at most one a tick, at a tick the run reaches
  * (its first .. one past its last, a batch of no ticks reaching the next), and before the first tick with a control word.
+ * `bed`: the entry's bed capacity (kanban #3695, ruling #3707: load-checks.js bedRoomOf over the ENTRY's items - never anything the inputs say).
  */
-export function inputsLoadRefusal(form) {
+export function inputsLoadRefusal(form, bed = BED_ROOM_UNITS) {
   const loads = form.loads || [];
   if (!loads.length) return null;
   const first = form.ticks.length ? form.ticks[0].tick : null;
@@ -119,7 +120,7 @@ export function inputsLoadRefusal(form) {
       return `the load at tick ${tick} is not at a tick those inputs reach (${first} .. ${last === null ? null : last + 1}): a load goes out with the batch that reaches its tick`;
     if (seen.has(tick)) return `two loads at tick ${tick}: a page declares at most one a tick`;
     seen.add(tick);
-    const why = loadValueRefusal(l);
+    const why = loadValueRefusal(l, bed);
     if (why) return why;
     if (driven && driven.tick < tick)
       return `the load at tick ${tick} comes after the truck was driven at tick ${driven.tick}: a bed is declared before ROLL OUT`;
@@ -229,7 +230,7 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
     if (Number.isInteger(chain.throughTick) && reaches >= chain.throughTick)
       return no('entry', `those inputs reach tick ${reaches}, past the last receipted mark at ${chain.throughTick}`);
     // NO LOAD THE BATCH DOOR REFUSES (kanban #1952, #1990): what a live run's inputs carry is held to the same rules
-    const loadWhy = inputsLoadRefusal(form);
+    const loadWhy = inputsLoadRefusal(form, bedRoomOf(entry, { unlocks: core && core.items, trucks: core && core.trucks }));
     if (loadWhy) return no('inputs', `those inputs carry a load no honest bed declares: ${loadWhy}`);
     // AND, AT A SEAT, THE RUN IT STORED (kanban #1952, #1990): inputs the player's session key never signed are not his run
     const differs = inputsDifferFromStored(form, storedInputs);

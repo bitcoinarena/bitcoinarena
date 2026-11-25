@@ -25,23 +25,61 @@ export const BED_ROOM_UNITS = 2 * 196608;
 /** CargoBay.BtcLimit (20 BTC) in hundredths. */
 export const BTC_MOST_HUND = 2000;
 
-// THE FEWEST PARCELS EACH ROOM NEEDS, 0 for an empty bed and -1 for a room no bed of parcels makes. 254 rooms are made.
-const FEWEST = (() => {
-  const n = new Int8Array(BED_ROOM_UNITS + 1).fill(-1);
+// THE BED AN ENTRY'S TRUCK HAS (kanban #3695, spec ruling #3707): Next Block sells the larger truck (2 x 3.9 m, 511180 units), and its honest
+// loads above the stock bed were refused. An entry's bed capacity is the capacity of the truck its unlocks select, from the truck table the
+// game's registration declares (`trucks`: { bedRoom, byUnlock: { unlock hex: room } }); a registration without one is 393216 for everyone
+// (every game version before the table). Only the unlocks the entry carries count - its items, which round.enter verified it owns, through
+// the round's game's catalogue (plugins.js itemUnlocksOf) - and an unknown unlock selects nothing. Batch door, objection checker and arbiter
+// all take the bound from bedRoomOf.
+/** The most room a truck table may name (two stock beds): it sizes the tables below. */
+export const BED_ROOM_MOST = 2 * BED_ROOM_UNITS;
+const roomOk = (r) => Number.isInteger(r) && r > 0 && r <= BED_ROOM_MOST;
+/** A registration's truck table, checked: { bedRoom, byUnlock: Map(unlock hex -> room) }, or null (none, or one that does not stand). */
+export function truckTableOf(trucks) {
+  if (!trucks || typeof trucks !== 'object') return null;
+  const bedRoom = trucks.bedRoom === undefined ? BED_ROOM_UNITS : trucks.bedRoom;
+  if (!roomOk(bedRoom)) return null;
+  const byUnlock = new Map();
+  for (const [u, r] of Object.entries(trucks.byUnlock || {})) {
+    if (!/^[0-9a-fA-F]{64}$/.test(u) || !roomOk(r)) return null;
+    byUnlock.set(u.toLowerCase(), r);
+  }
+  return Object.freeze({ bedRoom, byUnlock });
+}
+/**
+ * The bed capacity of an entry, in room units: `entry.items` through `unlocks` (item id -> unlock hex, the round's game's catalogue), the
+ * first one the truck table names; else the table's default; with no table, the stock bed.
+ */
+export function bedRoomOf(entry, { unlocks = {}, trucks = null } = {}) {
+  const t = trucks && trucks.byUnlock instanceof Map ? trucks : truckTableOf(trucks);
+  if (!t) return BED_ROOM_UNITS;
+  for (const it of (entry && entry.items) || []) {
+    const u = unlocks && Object.prototype.hasOwnProperty.call(unlocks, it.itemId) ? String(unlocks[it.itemId]).toLowerCase() : null;
+    if (u && t.byUnlock.has(u)) return t.byUnlock.get(u);
+  }
+  return t.bedRoom;
+}
+
+// THE FEWEST PARCELS EACH ROOM NEEDS, 0 for an empty bed and -1 for a room no bed of parcels makes. A room's value does not depend on the
+// bed (the walk only adds parcels), so one table up to BED_ROOM_MOST serves every bed; it is built on first use.
+let FEWEST = null;
+const fewestTable = () => {
+  if (FEWEST) return FEWEST;
+  const n = new Int8Array(BED_ROOM_MOST + 1).fill(-1);
   n[0] = 0;
-  for (let r = 0; r <= BED_ROOM_UNITS; r++) {
+  for (let r = 0; r <= BED_ROOM_MOST; r++) {
     if (n[r] < 0) continue;
     for (const p of PARCEL_ROOMS) {
       const t = r + p;
-      if (t <= BED_ROOM_UNITS && (n[t] < 0 || n[t] > n[r] + 1)) n[t] = n[r] + 1;
+      if (t <= BED_ROOM_MOST && (n[t] < 0 || n[t] > n[r] + 1)) n[t] = n[r] + 1;
     }
   }
-  return n;
-})();
+  return (FEWEST = n);
+};
 
-/** How many parcels a bed of this room holds at the fewest, or -1 when no bed of parcels takes exactly this room. */
-export const fewestParcels = (room) =>
-  (Number.isInteger(room) && room >= 0 && room <= BED_ROOM_UNITS ? FEWEST[room] : -1);
+/** How many parcels a bed of `bed` room units holds at the fewest in this room, or -1 when no bed of parcels takes exactly this room. */
+export const fewestParcels = (room, bed = BED_ROOM_UNITS) =>
+  (Number.isInteger(room) && room >= 0 && room <= bed && bed <= BED_ROOM_MOST ? fewestTable()[room] : -1);
 
 // THE FEWEST SATS EACH ROOM PAYS (kanban #1740, #1800 - a refute of #1488: a full bed at 1 sat a parcel, 7 sats, scored
 // C = 1 at heat 22/65536, Hexbox #011's attack 1 by another price). A parcel is a transaction in the mempool, and a
@@ -52,28 +90,30 @@ export const fewestParcels = (room) =>
 // follows C is the attested-transaction load of a later game version. Every page load measured on testnet4 pays far more.
 /** The fewest sats a parcel of each size class pays (0.1 sat/vB of the class's fewest vbytes), PARCEL_ROOMS' order. */
 export const PARCEL_FEWEST_SATS = Object.freeze([6, 25, 60, 150]);
-const CHEAPEST = (() => {
-  const n = new Int32Array(BED_ROOM_UNITS + 1).fill(-1);
+let CHEAPEST = null;
+const cheapestTable = () => {
+  if (CHEAPEST) return CHEAPEST;
+  const n = new Int32Array(BED_ROOM_MOST + 1).fill(-1);
   n[0] = 0;
-  for (let r = 0; r <= BED_ROOM_UNITS; r++) {
+  for (let r = 0; r <= BED_ROOM_MOST; r++) {
     if (n[r] < 0) continue;
     for (let i = 0; i < PARCEL_ROOMS.length; i++) {
       const t = r + PARCEL_ROOMS[i], f = n[r] + PARCEL_FEWEST_SATS[i];
-      if (t <= BED_ROOM_UNITS && (n[t] < 0 || n[t] > f)) n[t] = f;
+      if (t <= BED_ROOM_MOST && (n[t] < 0 || n[t] > f)) n[t] = f;
     }
   }
-  return n;
-})();
+  return (CHEAPEST = n);
+};
 
-/** The fewest sats a bed of this room pays at the minimum relay feerate, or -1 when no bed of parcels takes this room. */
-export const fewestSats = (room) =>
-  (Number.isInteger(room) && room >= 0 && room <= BED_ROOM_UNITS ? CHEAPEST[room] : -1);
+/** The fewest sats a bed (of `bed` room units) of this room pays at the minimum relay feerate, or -1 when no bed of parcels takes this room. */
+export const fewestSats = (room, bed = BED_ROOM_UNITS) =>
+  (Number.isInteger(room) && room >= 0 && room <= bed && bed <= BED_ROOM_MOST ? cheapestTable()[room] : -1);
 
 /**
  * Why this load could not come from an honest bed, or null. `load` is [tick, fee, btc] or [tick, fee, btc, room].
- * The values alone - where it sits in the run is loadsRefusal's.
+ * The values alone - where it sits in the run is loadsRefusal's. `bed`: the entry's bed capacity (bedRoomOf), the stock bed by default.
  */
-export function loadValueRefusal([tick, fee, btc, room]) {
+export function loadValueRefusal([tick, fee, btc, room], bed = BED_ROOM_UNITS) {
   if (room === undefined || room === null)
     return `the load at tick ${tick} carries no room: every page has sent the room its bed fills since the cargo factor became the bed fill, and a load without one scores 0.7 of a bed with no parcel on it`;
   if (!Number.isInteger(fee) || fee < 0) return `the load at tick ${tick} pays ${fee} sats: a fee is not negative`;
@@ -82,16 +122,16 @@ export function loadValueRefusal([tick, fee, btc, room]) {
   if (fee > 0x7fffffff) return `the load at tick ${tick} pays ${fee} sats: a fee is at most ${0x7fffffff} (the core reads it as a 32-bit integer)`;
   if (!Number.isInteger(btc) || btc < 0 || btc > BTC_MOST_HUND)
     return `the load at tick ${tick} carries ${btc} hundredths of a BTC: a truck carries 0 .. ${BTC_MOST_HUND} (20 BTC)`;
-  if (!Number.isInteger(room) || room < 0 || room > BED_ROOM_UNITS)
-    return `the load at tick ${tick} fills ${room} room units: a bed is 0 .. ${BED_ROOM_UNITS}`;
-  const parcels = fewestParcels(room);
+  if (!Number.isInteger(room) || room < 0 || room > bed)
+    return `the load at tick ${tick} fills ${room} room units: ${bed === BED_ROOM_UNITS ? 'a bed' : 'this entry\'s bed'} is 0 .. ${bed}`;
+  const parcels = fewestParcels(room, bed);
   if (parcels < 0)
     return `the load at tick ${tick} fills ${room} room units, which no bed of parcels fills (each parcel takes ${PARCEL_ROOMS.join(', ')})`;
   if (parcels === 0 && (fee !== 0 || btc !== 0))
     return `the load at tick ${tick} is an empty bed carrying ${fee} sats and ${btc} hundredths of a BTC: an empty bed carries nothing`;
   if (fee < parcels)
     return `the load at tick ${tick} fills ${room} room units - ${parcels} parcels at the fewest - and pays ${fee} sats: every parcel is a transaction that pays at least 1 sat`;
-  const sats = fewestSats(room);
+  const sats = fewestSats(room, bed);
   if (fee < sats)
     return `the load at tick ${tick} fills ${room} room units - ${parcels} parcels at the fewest - and pays ${fee} sats: parcels that fill it pay at least ${sats} sats at the minimum relay feerate (0.1 sat/vB)`;
   return null;
@@ -100,9 +140,9 @@ export function loadValueRefusal([tick, fee, btc, room]) {
 /**
  * Why the loads of this batch are refused, or null. `b` the decoded batch, `at` its ticks (batchTicks), `drivenBefore()`
  * true when a tick of this entry the seat already holds carries a non-zero control word (only asked when a load comes),
- * `next` the tick this entry's next batch has to start at (Round.nextTick).
+ * `next` the tick this entry's next batch has to start at (Round.nextTick), `bed` the entry's bed capacity (bedRoomOf).
  */
-export function loadsRefusal(b, at, drivenBefore, next) {
+export function loadsRefusal(b, at, drivenBefore, next, bed = BED_ROOM_UNITS) {
   const loads = b.loads || [];
   if (!loads.length) return null;
   // NOT DECLARED AHEAD (kanban #1740, #1800 - a refute of #1488): Round.batch holds a batch's first tick to the next one
@@ -120,7 +160,7 @@ export function loadsRefusal(b, at, drivenBefore, next) {
       return `the load at tick ${tick} is not at a tick this batch carries (${first} .. ${last}): a load goes out with the batch that reaches its tick`;
     if (ticks.has(tick)) return `two loads at tick ${tick}: a page declares at most one a tick`;
     ticks.add(tick);
-    const why = loadValueRefusal(l);
+    const why = loadValueRefusal(l, bed);
     if (why) return why;
     // AFTER ROLL OUT NOTHING GOES ON THE BED: the truck is held (every control word 0) until the load is declared
     if (stored === null) stored = !!drivenBefore();

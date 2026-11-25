@@ -18,6 +18,14 @@ import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
 import { gameInfoStands, gameInfoJson } from '../../arena-protocol/src/game-info.js';
 import { sandboxFor, sandboxChecked } from './core-sandbox.js';
+import { truckTableOf } from './load-checks.js';
+
+/**
+ * WHAT THIS NODE READS OF A REGISTRATION BEYOND THE MANIFEST (kanban #3695, ruling #3707): a game version that needs a node to read a field
+ * names it in `requiresNode`, and a node that does not know one of them does not host that version - so no committee splits on a field
+ * some of its seats ignore. 'truck-table': the registration's `trucks` (load-checks.js truckTableOf), the bed an entry's truck has.
+ */
+export const NODE_READS = Object.freeze(['truck-table']);
 
 /**
  * THE GAMES A NODE HOSTS, by game_id (hex): the registrations its launcher handed it, each checked here once - a
@@ -55,6 +63,12 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519, log 
   return out;
   function hostOne(p) {
     if (!p || !p.manifest || !(p.cores instanceof Map)) throw new Error('a game is handed to a node as { name, manifest, gameId, cores }');
+    // kanban #3695: a version that needs a field this node does not read is not hosted; a truck table that does not stand neither
+    const needs = Array.isArray(p.requiresNode) ? p.requiresNode : [];
+    const unknown = needs.filter((f) => !NODE_READS.includes(f));
+    if (unknown.length) throw new Error(`game "${p.manifest.gameName}" needs a node that reads ${unknown.join(', ')}: this node does not`);
+    if (p.trucks !== undefined && p.trucks !== null && !truckTableOf(p.trucks))
+      throw new Error(`game "${p.manifest.gameName}" declares a truck table that does not stand (bedRoom and byUnlock: 64-hex unlock -> room units, 1 .. two stock beds)`);
     const stands = manifestStands(p.manifest, { verify, parentOf: (id) => byId.get(toHex(id)) || null });
     if (!stands.ok) throw new Error(`that game is not one this node can host: ${stands.why}`);
     const id = toHex(stands.gameId);
@@ -87,6 +101,8 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519, log 
       ...sharedWorldOf(stands.gameId).filter((h) => installed.has(h))])];   // kanban #3371
     out.set(id, Object.freeze({ name: p.name || p.manifest.gameName, gameId: stands.gameId, manifest: p.manifest, cores: p.cores,
       replayPage: p.replayPage || null, sharedWorld: Object.freeze(sharedWorld),
+      // the bed each truck has (kanban #3695, ruling #3707): null without a table - every entry the stock bed
+      trucks: p.trucks ? truckTableOf(p.trucks) : null,
       // the name a player knows the game by and its square icon (an SVG file), when it gives them
       title: typeof p.title === 'string' && p.title ? p.title : (p.name || p.manifest.gameName), icon: p.icon || null,
       // the game's own check of the round fields only it reads (contracts.js contractWarnings appends it)

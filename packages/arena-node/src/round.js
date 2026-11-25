@@ -44,7 +44,7 @@ import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { itemPurchaseKept } from './item-purchase-seat.js';
 import { readTranscript } from './transcript-read.js';
-import { loadsRefusal } from './load-checks.js';
+import { loadsRefusal, bedRoomOf } from './load-checks.js';
 // 27A.7's node fee. The rate lives in one place and `genesis.js` writes it into
 // the genesis parameters, so a round naming a config has committed to it.
 import { feeMatchesEntry, feeBpsOf, entryFeeBpsOf, donationInFee, donationBpsOf, NODE_FEE_BPS } from '../../arena-protocol/src/fee.js';
@@ -58,7 +58,7 @@ import { firstMarkOutcome, startDeadlineOf, roundEndMs } from '../../arena-proto
 import { H2H_REVEAL_MIN_MS, marketOfRound } from '../../arena-protocol/src/manifest.js';
 import { marketWindowOf, decodeAttestation, encodeAttestation, attestationBodyId } from '../../arena-protocol/src/attested.js';
 import { isValueAttestationBytes, decodeValueAttestation, encodeValueAttestation, valueAttestationBodyId } from '../../arena-protocol/src/scalar.js';
-import { pluginForRound, hostedPlugins, runLengthFits } from './plugins.js';
+import { pluginForRound, hostedPlugins, runLengthFits, itemUnlocksOf } from './plugins.js';
 import { chainIndex } from './finality.js';
 import { withinTolerance } from '../../arena-protocol/src/window.js';
 import { decodeRerunResult, splitSignedRerun } from '../../arena-protocol/src/rerun.js';
@@ -595,6 +595,18 @@ export class Round {
       .run(id, bytes, OPEN, this.now());
     if (added.changes) { this.openSeq++; this.openList.askedMs = 0; }   // this store's own write: the next openHeld asks at once
     return id;
+  }
+
+  /**
+   * THE BED CAPACITY OF AN ENTRY (kanban #3695, ruling #3707): the truck its items select in the round's game's truck table (load-checks.js
+   * bedRoomOf). `entryBytes` the entry contract this seat took - its items verified owned at round.enter. No game or no table: the stock bed.
+   */
+  bedRoomOf(roundRow, entryBytes) {
+    let g = null, entry = null;
+    try { g = pluginForRound(decodeRoundContract(new Uint8Array(roundRow.contract)), this.plugins); } catch { g = null; }
+    try { entry = entryBytes ? decodeEntryContract(new Uint8Array(entryBytes)) : null; } catch { entry = null; }
+    const plugin = g && g.ok ? g.plugin : null;
+    return bedRoomOf(entry, { unlocks: itemUnlocksOf(plugin), trucks: plugin ? plugin.trucks : null });
   }
 
   get(id) {
@@ -1250,9 +1262,10 @@ export class Round {
     // A repeat of the head was checked when it first came.
     if (!seen && b.loads && b.loads.length) {
       // the next tick too (kanban #1740, #1800): a batch of no ticks carries its loads only at the next one
+      // the entry's own bed (kanban #3695, ruling #3707): the truck its items select, by the round's game's truck table
       const why = loadsRefusal(b, at, () => !!this.db.prepare(
         'SELECT 1 FROM ticks WHERE round_id = ? AND entry_id = ? AND substr(words, 1, 16) != zeroblob(16) LIMIT 1')
-        .get(b.roundId, b.entryId), this.nextTick(b.roundId, b.entryId));
+        .get(b.roundId, b.entryId), this.nextTick(b.roundId, b.entryId), this.bedRoomOf(round, joined));
       if (why) throw new Error(why);
     }
 

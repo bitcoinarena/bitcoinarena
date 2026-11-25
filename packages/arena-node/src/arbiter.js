@@ -58,7 +58,7 @@ const ARBITER_REQUEST_MS = Number(process.env.ARENA_ARBITER_REQUEST_TIMEOUT_MS) 
 /** THE ROUND'S CORE, as a seat's verifier resolves it (verify.js #coreOf): its plugin's, with the round's world rule. */
 export function coreForRound(contract, roundIdBytes, plugins) {
   const found = pluginForRound(contract, hostedPlugins(plugins));
-  return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks, items: itemUnlocksOf(found.plugin),
+  return found.ok ? { ...found.core, config: found.config, runTicks: found.runTicks, items: itemUnlocksOf(found.plugin), trucks: found.plugin.trucks || null,
     world: { configHash: contract.configHash, censusRoot: contract.censusRoot, roundId: new Uint8Array(roundIdBytes), sharedWorld: [...found.plugin.sharedWorld] } } : null;
 }
 
