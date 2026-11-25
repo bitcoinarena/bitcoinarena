@@ -1795,6 +1795,7 @@ a transaction is §5A.3B.
 | Claiming a fee share without meeting the availability rule (§22A) | Receipt record |
 | Withholding a settlement signature: a seat that acknowledged the round's settlement transaction and did not sign it before the locks expired | The signed acknowledgement + the transaction + the expiry — a stall refunds losers and unpays winners, so it is an offence and not only a delay |
 | Signing two `LockSet`s for one `round_id` with different entries (§17A.6, RULED 2026-11-13 on #2587) | The two signed LockSets, the accused's node key on both — the whole bond goes to the reserves (no player lost money) |
+| Signing two lock-set views for one `round_id` over different sets (§17A.6, RULED 2026-11-25 on #3727) | The two signed views, the accused's node key on both — the whole bond goes to the reserves (no player lost money) |
 
 Slashed bonds are distributed: half to the affected players of that round;
 the other half 75% evenly to the active census nodes at the slashing height
@@ -3922,10 +3923,24 @@ From the entry close, by its own clock, each seat of the round's committee:
 1. **View.** Signs what it verified, under its own tag so it can never count as
    a certificate signature: `BIP340(node_key, H("ARENA/v1/LockSetView", set_id || u64 at_ms))`.
    The views go to every seat of the round (`POST /lock-set`) and are pulled
-   (`GET /lock-set?round=`).
+   (`GET /lock-set?round=`). A seat signs one view a round and keeps it before it
+   serves it. A seat hands every view it takes for the first time on to every peer
+   at once, a key's second view too (kanban #3727).
+   **Two views of one key** over different sets: neither counts at that seat from then on (kanban #3347),
+   and the pair is slash evidence (§17A.6).
 2. **Sign once.** When it holds every committee seat's view, or at the close +
    1200 ms holding a threshold of them, it signs **one** set: the entries of its
    own view that at least a threshold of views name.
+   An entry whose count `f = floor((n - 1) / 3)` views could tip
+   (`threshold - f <= count < threshold + f`) waits longer: until the close + 1200 ms,
+   and until 500 ms after the last new view the seat took
+   (`LOCK_SET_VIEW_HOLD_MS`), never past the close + 2000 ms
+   (`LOCK_SET_VIEW_HOLD_UNTIL_MS`). That way a view sent to some seats late
+   reaches every seat before any of them signs on it (kanban #3347, #3727).
+   What is left: a view that reaches some seats less than one gossip hop before
+   the others sign. One view from a seat that signs no set can only add a count,
+   and the same view sent on time does the same, so it adds no harm.
+   A second view is caught at every seat and costs the sender its bond.
    `sig = BIP340(node_key, H("ARENA/v1/LockSetSignature", set_id || u64 at_ms))`, with `at_ms`
    its own clock. The seat keeps that signature before it serves it and never
    signs another set for the round, after a restart too, so two different sets can
@@ -3987,7 +4002,8 @@ partner or a slow honest seat changes only **whether** the certificate forms
 ## 17A.5 Speed
 
 One signing round between the close and the reveal: views at the close, the
-signature as soon as every view is in (at the latest close + 1.2 s), the
+signature as soon as every view is in (at the latest close + 1.2 s; an entry one
+view could tip waits until 500 ms after the last new view, at most close + 2 s), the
 certificate as soon as a threshold of signatures is in. Measured on seven seats
 with one seat answering 1.5 s late and one down (`h2h-lock-set-2561.test.js`):
 the certificate at the close + 1.25 s, the page saw it at + 1.31 s, all six live
@@ -4016,6 +4032,18 @@ signs two sets can make two certificates that stand over different sets of one r
   lower set id named and the higher beside it, so one offence has one commitment
   (`slashHoldsOnTwoLockSets`). A view signature never counts. No player lost money,
   so the whole bond goes to the reserves (#976).
+- **Two views, the same offence class (RULED 2026-11-25 on #3727):** signing two
+  lock-set **views** for one `round_id` over different sets (`TWO_LOCK_SET_VIEWS`).
+  A view counts toward no certificate. But two views, one with an entry that
+  threshold - 1 honest seats saw and one without it, each sent to some seats, tip
+  that entry in at some seats and out at others: no certificate, and the round is
+  `VOID`. Evidence: the two views in the same encoding (`encodeSignedLockSetView`),
+  each signed under the view tag. Every seat that takes the second view keeps the
+  pair (`lock_set_double_views`, `LockSetBook.doubleViews`) and hands it on as it
+  hands on every new view. The proof is built as for two sets, its player field
+  `H("ARENA/v1/LockSetView", "")`, so this offence and two set signatures over the
+  same two sets have two commitments (`slashHoldsOnTwoLockSetViews`). A set
+  signature never counts here. The whole bond goes to the reserves.
 
 ---
 

@@ -31,6 +31,15 @@ export const LOCK_SET_WINDOW_MS = 3000;
 export const LOCK_SET_FINAL_AFTER_MS = 2000;
 /** A seat signs its set once it holds every committee seat's view, or at the latest this long after the close (with a threshold of views). */
 export const LOCK_SET_VIEW_WAIT_MS = 1200;
+/**
+ * A BORDERLINE ENTRY WAITS FOR THE GOSSIP OF THE LAST NEW VIEW (kanban #3727, gap in #3347; ruling 2026-11-25): a seat signs an entry whose
+ * count one dishonest view could tip only once this long has passed since it took its last new view (a first view of a key, or a key's second
+ * view over another set), and it hands every new view on at once. A view sent to some seats just before the close + LOCK_SET_VIEW_WAIT_MS then
+ * reaches every seat before any of them signs on it.
+ */
+export const LOCK_SET_VIEW_HOLD_MS = 500;
+/** ...but never past the close + this, so a seat that keeps sending new views cannot hold the set past the window (arena-node lock-set-book.js). */
+export const LOCK_SET_VIEW_HOLD_UNTIL_MS = 2000;
 /** At most a committee's worth of signatures in a certificate (9 drawn for 7 seats). */
 export const LOCK_SET_MAX_SIGS = 9;
 /** A head-to-head round seats a handful of players; the set is bounded so a certificate stays a short message. */
@@ -185,6 +194,12 @@ export function encodeSignedLockSet({ set, atMs, sig }) {
   w.u16(setBytes.length); w.bytes(setBytes); w.u64(BigInt(atMs)); w.bytes(lsBytes(sig), 64);
   return w.finish();
 }
+/**
+ * TWO VIEWS OF ONE KEY, AS EVIDENCE (kanban #3727, ruling 2026-11-25): a view travels in the same encoding as a signed lock set, its signature
+ * over lockSetViewId({ setId, atMs }) instead. Two of them by one committee key over two different sets of one round are an offence of their own
+ * (slash.js slashHoldsOnTwoLockSetViews): an honest seat signs one view a round and keeps it before it serves it (lock-set-book.js #ownView).
+ */
+export const encodeSignedLockSetView = encodeSignedLockSet;
 export function decodeSignedLockSet(bytes) {
   const r = new Reader(bytes);
   const set = decodeLockSet(r.bytes(r.u16()));

@@ -7,7 +7,8 @@
 //   2. GOSSIP. Views, set signatures and a certificate go to every peer of the round (POST /lock-set) and are pulled (GET /lock-set).
 //   3. SIGN ONCE. When it holds every committee seat's view - or at the close + LOCK_SET_VIEW_WAIT_MS with a threshold of views - it signs ONE
 //      set: its own view's entries that a threshold of views name (lockSetToSign). Kept in the store before it is served, and never another
-//      for that round, after a restart too: two sets can then never both gather a threshold of honest signatures.
+//      for that round, after a restart too: two sets can then never both gather a threshold of honest signatures. An entry one view could
+//      tip waits too until LOCK_SET_VIEW_HOLD_MS after the last new view taken (kanban #3727), and every new view is handed on at once.
 //   4. CERTIFY. A threshold of signatures over one set, each at a time inside [close, close + LOCK_SET_WINDOW_MS], is the certificate; kept.
 // No reveal is taken or served here before it (server.js POST /reveal, GET /reveals), and only its entries are seated and decided
 // (verify.js #headToHeadClose). None standing anywhere by the close + window: the round is VOID.
@@ -18,8 +19,8 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import {
-  LOCK_SET_WINDOW_MS, LOCK_SET_FINAL_AFTER_MS, LOCK_SET_VIEW_WAIT_MS, LOCK_SET_MAX_ENTRIES, lockSetOf, lockSetId, lockSetSignatureId, lockSetViewId,
-  encodeLockSetCertificate, lockSetCertificateStands, lockSetToSign, decodeLockSetCertificate, encodeSignedLockSet,
+  LOCK_SET_WINDOW_MS, LOCK_SET_FINAL_AFTER_MS, LOCK_SET_VIEW_WAIT_MS, LOCK_SET_VIEW_HOLD_MS, LOCK_SET_VIEW_HOLD_UNTIL_MS, LOCK_SET_MAX_ENTRIES, lockSetOf, lockSetId, lockSetSignatureId, lockSetViewId,
+  encodeLockSetCertificate, lockSetCertificateStands, lockSetToSign, decodeLockSetCertificate, encodeSignedLockSet, encodeSignedLockSetView,
 } from '../../arena-protocol/src/lock-set.js';
 
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -75,7 +76,8 @@ export class LockSetBook {
       CREATE TABLE IF NOT EXISTS lock_set_certs (round_id BLOB PRIMARY KEY, cert BLOB NOT NULL, at_ms INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS lock_set_conflicts (round_id BLOB PRIMARY KEY, cert BLOB NOT NULL, at_ms INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS lock_set_double_signs (round_id BLOB NOT NULL, key TEXT NOT NULL, a BLOB NOT NULL, b BLOB NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (round_id, key));
-      CREATE TABLE IF NOT EXISTS lock_set_views (round_id BLOB PRIMARY KEY, entries TEXT NOT NULL, at_ms INTEGER NOT NULL, sig BLOB NOT NULL)`);
+      CREATE TABLE IF NOT EXISTS lock_set_views (round_id BLOB PRIMARY KEY, entries TEXT NOT NULL, at_ms INTEGER NOT NULL, sig BLOB NOT NULL);
+      CREATE TABLE IF NOT EXISTS lock_set_double_views (round_id BLOB NOT NULL, key TEXT NOT NULL, a BLOB NOT NULL, b BLOB NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (round_id, key))`);
     /** rid hex -> the one pull made before a lock outside the certificate is first returned (kanban #2585) */
     this.returnPulls = new Map();
   }
@@ -88,7 +90,10 @@ export class LockSetBook {
   #room(ridHex, c = null) {
     let r = this.rooms.get(ridHex);
     if (!r) {
-      r = { views: new Map(), sigs: new Map(), cert: null, pulledAt: new Map(), pulling: new Map(), pushed: new Set(), answeredAt: new Map(), twoViews: new Set(), closeMs: null };
+      // otherViews: a key's second view over another set (kanban #3727), held and handed on beside the first; lastViewAt: when the last new view was taken
+      r = { views: new Map(), sigs: new Map(), cert: null, pulledAt: new Map(), pulling: new Map(), pushed: new Set(), answeredAt: new Map(), twoViews: new Set(), otherViews: new Map(), lastViewAt: null, closeMs: null };
+      // a key already shown to have sent two views (the evidence is kept, kanban #3727) stays uncounted after a drop or a restart
+      try { for (const row of this.db.prepare('SELECT key FROM lock_set_double_views WHERE round_id = ?').all(fromHex(ridHex))) r.twoViews.add(row.key); } catch { /* none */ }
       this.rooms.set(ridHex, r);
       if (this.rooms.size > ROOMS_KEPT) this.#evict(ridHex);
     }
@@ -169,7 +174,7 @@ export class LockSetBook {
     if (own) room.sigs.set(own.key, own);
     return {
       round: toHex(rid), required: true, closeMs: Number(c.entryCloseMs), windowMs: LOCK_SET_WINDOW_MS,
-      views: [...room.views.values()], signatures: [...room.sigs.values()],
+      views: [...room.views.values(), ...room.otherViews.values()], signatures: [...room.sigs.values()],   // kanban #3727: a key's second view too
       certificate: cert ? toHex(cert.bytes) : null, entries: cert ? cert.entries : null, certifiedAtMs: cert ? cert.atMs : null,
       void: this.voidNow(rid, c),
       // RULING #2587: the second certificate is served too, so a seat that pulls sees the contest before it settles
@@ -205,14 +210,21 @@ export class LockSetBook {
     // TWO VIEWS OF ONE KEY (kanban #3347, audit h2h-a6-1-1; gap in #3257): a seat that signed {A,B,C} to some seats and {A,B} to others tipped an
     // entry seen by threshold - 1 honest seats in at some and out at others - two signed sets, no certificate, the honest pair VOID. A second view
     // of a key over another set is that key's equivocation: neither of its views is counted here from then on (signOnce), and the push carries
-    // every view this seat holds, so the other variant reaches each seat before a borderline entry is signed
+    // every view this seat holds, so the other variant reaches each seat before a borderline entry is signed.
+    // KANBAN #3727 (gap in #3347): the key's second view is held as well and handed on with the first - at once, as every new view is (below) -
+    // and the two are kept as slash evidence (TWO_LOCK_SET_VIEWS, #doubleView). A key's third view and later ones add nothing
     for (const v of (Array.isArray(body && body.views) ? body.views : []).slice(0, 2 * committee.length)) {
       const had = room.views.get(String(v && v.key));
-      if (had && (had.sig === String(v.sig) || room.twoViews.has(had.key))) continue;
+      if (had && (had.sig === String(v.sig) || room.otherViews.has(had.key))) continue;
       const ok = read(v, lockSetViewId);
       if (ok && !had) { room.views.set(ok.key, ok); got.views++; }
-      else if (ok && had.setId && ok.setId !== had.setId) { room.twoViews.add(ok.key); got.views++; this.log(`[lock-set] ${toHex(rid).slice(0, 16)}: seat ${ok.key.slice(0, 16)} sent two views over two sets - not counted (kanban #3347)`); }
+      else if (ok && had.setId && ok.setId !== had.setId) {
+        room.twoViews.add(ok.key); room.otherViews.set(ok.key, ok); got.views++;
+        this.#doubleView(rid, had, ok);
+        this.log(`[lock-set] ${toHex(rid).slice(0, 16)}: seat ${ok.key.slice(0, 16)} sent two views over two sets - not counted, kept as slash evidence (kanban #3347, #3727)`);
+      }
     }
+    if (got.views) room.lastViewAt = this.#now();
     for (const s of (Array.isArray(body && body.signatures) ? body.signatures : []).slice(0, committee.length)) {
       const had = room.sigs.get(String(s && s.key));
       // one set signature a seat; a second over ANOTHER set (an equivocation) is never counted - it is kept as slash evidence (ruling #2587)
@@ -228,7 +240,9 @@ export class LockSetBook {
     this.#assemble(rid, c, committee, threshold);
     // A CERTIFICATE OR CONFLICT MADE HERE TRAVELS (feedback #035): step() returns at once once certified, so one assembled in take() was
     // never pushed and the conflict reached the other side only by a pull
-    if ((!before && this.certified(rid)) || (!wasConflicted && this.conflicted(rid)) || this.#pushConflict) {
+    // A NEW VIEW TRAVELS AT ONCE (kanban #3727): a view taken here was handed on only by this seat's next step after it signed, so a view sent to
+    // some seats just before the view wait ended decided their set before it reached the others
+    if ((!before && this.certified(rid)) || (!wasConflicted && this.conflicted(rid)) || this.#pushConflict || got.views) {
       this.#pushConflict = false;
       try { this.#push(rid, this.peersOf(rid) || [], this.#room(toHex(rid))); } catch { /* best effort */ }
     }
@@ -299,6 +313,28 @@ export class LockSetBook {
         }
       }
     } catch { /* the certificates stood when taken; nothing to add */ }
+  }
+
+  /**
+   * Keep one key's two views over two different sets of the round (kanban #3727, ruling 2026-11-25): the evidence of slash.js
+   * slashHoldsOnTwoLockSetViews. Once per (round, key).
+   */
+  #doubleView(rid, x, y) {
+    try {
+      const bytesOf = (s) => encodeSignedLockSetView({ set: lockSetOf({ roundId: rid, entries: s.entries }), atMs: BigInt(s.atMs), sig: fromHex(s.sig) });
+      const w = this.db.prepare('INSERT OR IGNORE INTO lock_set_double_views (round_id, key, a, b, at_ms) VALUES (?, ?, ?, ?, ?)').run(rid, String(x.key), bytesOf(x), bytesOf(y), this.#now());
+      if (w.changes) this.log(`[lock-set] ${toHex(rid).slice(0, 16)}: seat ${String(x.key).slice(0, 16)} signed two lock-set views over different sets - slashable, the whole bond to the reserves (kanban #3727)`);
+    } catch { /* both views verified when taken; nothing to add */ }
+  }
+
+  /**
+   * THE KEYS THAT SENT TWO VIEWS OF A ROUND, WITH THE EVIDENCE (kanban #3727): [{ key, signedViews: [a, b] }] - each pair two signed views
+   * (protocol lock-set.js encodeSignedLockSetView) by one committee key over two sets: the evidence of slash.js slashHoldsOnTwoLockSetViews,
+   * which with the accused's advertised bond (twoLockSetViewsProof) is the proof any seat or auditor files. As doubleSigns (#2606).
+   */
+  doubleViews(rid) {
+    return this.db.prepare('SELECT key, a, b FROM lock_set_double_views WHERE round_id = ? ORDER BY key').all(rid)
+      .map((r) => ({ key: r.key, signedViews: [new Uint8Array(r.a), new Uint8Array(r.b)] }));
   }
 
   #doubleSigned(rid, key) { return !!this.db.prepare('SELECT 1 FROM lock_set_double_signs WHERE round_id = ? AND key = ?').get(rid, String(key)); }
@@ -405,7 +441,11 @@ export class LockSetBook {
     if (views.length < committee.length && now < close + LOCK_SET_VIEW_WAIT_MS) return;
     // kanban #3347: an entry whose count f views could tip (threshold - f <= count < threshold + f) is not signed early on every view held - the
     // seat waits the view wait, so a second view of a seat that equivocates reaches it first; an entry every honest seat saw signs at once as before
-    if (now < close + LOCK_SET_VIEW_WAIT_MS) {
+    // KANBAN #3727 (gap in #3347, ruling 2026-11-25): and until LOCK_SET_VIEW_HOLD_MS after the last new view taken here, which this seat handed
+    // on at once (take) - one seat's view (or second view) sent to some seats just before close + LOCK_SET_VIEW_WAIT_MS reaches every seat
+    // before any signs on it. Never past the close + LOCK_SET_VIEW_HOLD_UNTIL_MS, so the set is still signed inside the window
+    const holdTo = Math.min(close + LOCK_SET_VIEW_HOLD_UNTIL_MS, Math.max(close + LOCK_SET_VIEW_WAIT_MS, room.lastViewAt === null ? -Infinity : room.lastViewAt + LOCK_SET_VIEW_HOLD_MS));
+    if (now < holdTo) {
       const f = Math.floor((committee.length - 1) / 3), count = new Map();
       for (const v of views) for (const e of new Set(v.entries)) count.set(e, (count.get(e) || 0) + 1);
       if (f > 0 && [...new Set(own.entries)].some((e) => { const n = count.get(e) || 0; return n >= threshold - f && n < threshold + f; })) return;
@@ -428,7 +468,7 @@ export class LockSetBook {
     const cert = this.certified(rid);
     // RULING #2587 ("seats share certificates"): the second certificate travels with the first, so every peer sees the contest at once
     const conflict = this.conflicted(rid) ? this.db.prepare('SELECT cert FROM lock_set_conflicts WHERE round_id = ?').get(rid) : null;
-    return { views: [...room.views.values()], signatures: room.sigs.has(me) ? [room.sigs.get(me)] : [], ...(cert ? { certificate: toHex(cert.bytes) } : {}),   // kanban #3347: every view held
+    return { views: [...room.views.values(), ...room.otherViews.values()], signatures: room.sigs.has(me) ? [room.sigs.get(me)] : [], ...(cert ? { certificate: toHex(cert.bytes) } : {}),   // kanban #3347, #3727: every view held, a key's second one too
       ...(conflict ? { conflict: toHex(new Uint8Array(conflict.cert)) } : {}) };
   }
 
