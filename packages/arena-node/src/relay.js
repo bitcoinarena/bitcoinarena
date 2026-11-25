@@ -4,7 +4,7 @@
 // public broadcast channel ... The Round Contract names where: publication_relays[]". Transcripts and slash proofs already went
 // there; an objection and a checkpoint equivocation stayed at the seat that took them. These send them on, best effort - a
 // relay keeps no promise (§25.2: "Relays have none") - and each relay is a seat door that checks what it is handed itself.
-import { WebSocket } from 'ws';
+import { PlaySocket, cut } from './ws-dial.js';   // kanban #3749: a peer's /play answer is read up to a cap
 
 const base = (relay) => String(relay).replace(/\/+$/, '');
 
@@ -103,11 +103,15 @@ export async function relayPost(relays, path, body, { fetcher = fetch, timeoutMs
  * Hand signed marks to every relay over its /play socket, in order - the door a mark comes through; a relay holding one of
  * them and handed the other records the pair itself (round.js). Answers { sent, failed } once every relay answered each mark.
  */
-export async function relayMarks(relays, marks, { Socket = WebSocket, timeoutMs = 10000 } = {}) {
+// kanban #3749 (gap in #3690): dialed with the /play cap (PLAY_ANSWER_MOST, 64 KiB) and the dial guard's lookup, not the 'ws' default of
+// 100 MiB - one round peer answering each relayed mark with a near-100 MiB frame had both read whole by every seat relaying to it. A frame
+// past the cap fails the socket (1009): that relay counts as failed. The socket is cut (terminate) on the timer, an error and the answer.
+export async function relayMarks(relays, marks, { Socket = PlaySocket, timeoutMs = 10000 } = {}) {
   const failed = []; let sent = 0;
   await Promise.all((relays || []).map((r) => new Promise((done) => {
     let ws; let answered = 0;
-    const end = (ok, why) => { clearTimeout(timer); try { ws.close(); } catch { /* gone */ } if (ok) sent += 1; else failed.push(`${r}: ${why}`); done(); };
+    let ended = false;
+    const end = (ok, why) => { if (ended) return; ended = true; clearTimeout(timer); cut(ws); if (ok) sent += 1; else failed.push(`${r}: ${why}`); done(); };
     const timer = setTimeout(() => end(false, 'no answer'), timeoutMs);
     try { ws = new Socket(`${base(r).replace(/^http/, 'ws')}/play`); } catch (e) { end(false, e.message); return; }
     ws.on('open', () => { for (const m of marks) ws.send(m); });
