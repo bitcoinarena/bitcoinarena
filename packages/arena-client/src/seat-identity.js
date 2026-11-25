@@ -10,14 +10,15 @@
 // answers the seat's BIP-340 signature over identityProofDigest(nonce) (arena-node server.js, kanban #2982/#3253) - a box cannot sign for a
 // key it does not hold, and the fresh nonce keeps it from replaying another seat's answer. Every URL of a host that proves no key of the set
 // (no answer, a bad signature, a key the round did not draw) is that host's one seat together. A URL alone on its host is a seat by itself,
-// as before (nothing is asked of it). A seat with several URLs is asked at each, and its answers count as one vote - none when they disagree
-// (seatVoice).
+// as before - asked too once any host has several URLs, so a relayed proof meets the seat's own (kanban #3730, below). A seat with several
+// URLs is asked at each, and its answers count as one vote - none when they disagree (seatVoice).
 //
 // What this cannot stop: one box under several HOSTNAMES (evil0.example, evil1.example, ...: wildcard DNS) that answer no identity is still
 // one seat per hostname. Where the answers a door counts carry their own signatures (a lock-set certificate, a signed fee proposal) the door
 // checks those instead; where they do not, the most a door can do is keep those seats from outnumbering the round's proven ones.
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { sourceKey } from './join.js';
+import { endpointRoot } from './node-discovery.js';
 
 /** The digest a seat signs at GET /identity?nonce= (the same as arena-node's identityProofDigest). */
 export const identityProofDigest = (nonce) => taggedHash('ARENA/v1/NodeIdentityProof', nonce);
@@ -63,35 +64,92 @@ export async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, no
   } catch { return null; }
 }
 
+// A PROOF IS A KEY'S, NOT AN ADDRESS'S (kanban #3730, audit client-a8-1-1, the gap in #3574): the signed digest names only the nonce, so a
+// box that passes GET /identity?nonce= on to a round seat's public door hands back that seat's real signature, and its own path "proves" the
+// seat's key. One box under three paths relaying to three seats was three proven seats, and its unsigned settlement outvoted the honest two -
+// while the honest seats, alone on their hosts, were never asked, so nothing saw the same key proven twice. The digest stays as it is (the
+// node side's #3585 ruling: GET /identity and its digest are unchanged); what changes is where a proof is believed:
+// - once any host of the list has several URLs (proofs are asked at all), EVERY URL is asked, so a relayed key meets the seat's own URL and
+//   the two are one seat: one key, one seat, whatever the hosts;
+// - where the key's census advert names an address and one of the URLs proving the key IS that address (as named, or through the page's
+//   alt routes, window.ARENA_VIA_ALT: the live seats advertise one host and are reached at another), only that URL keeps the key - a relaying
+//   path proves nothing and stays in its host's one seat, and the seat keeps its voice (#3585's rule, page side);
+// - otherwise a key proven at several URLs is one seat whose URLs must agree (seatVoice): a relay can stall that seat's vote, not cast it.
+// A box relaying a round seat the link does not name at all still proves that key - one more voice, as one more hostname of the box would
+// be (the limit stated above). Binding the proof to the address asked is a change of the digest, the node's and the page's together.
+/** A seat URL as adverts and links are compared: scheme and host lower case, no trailing slash. */
+export const seatUrlKey = (u) => {
+  try { const x = new URL(String(u)); return `${x.protocol}//${x.host.toLowerCase().replace(/\.+$/, '')}${x.pathname.replace(/\/+$/, '')}`; } catch { return seatUrlTrimmed(u); }
+};
+// THE ADDRESSES THE CHECKED CENSUSES' ADVERTS NAME (kanban #3730): committee.js notes each census this page checked (noteAdverts), and
+// seatsOf reads them unless the caller names its own
+const ADVERTS = new Map(), ADVERT_KEYS_MAX = 5000;
+/** Note the advert endpoints of a checked census's entries ([{ pubkey, advert: { endpoint } }]) for seatsOf. */
+export function noteAdverts(entries) {
+  for (const e of entries || []) {
+    let k = null, root = null;
+    try { k = e && e.pubkey ? seatKeyHex(e.pubkey) : null; root = e && e.advert && e.advert.endpoint ? endpointRoot(e.advert.endpoint) : null; } catch { k = null; }
+    if (!k || !/^[0-9a-f]{64}$/.test(k) || !root) continue;
+    if (!ADVERTS.has(k)) { if (ADVERTS.size >= ADVERT_KEYS_MAX) ADVERTS.delete(ADVERTS.keys().next().value); ADVERTS.set(k, new Set()); }
+    ADVERTS.get(k).add(root);
+  }
+}
+export const forgetAdverts = () => ADVERTS.clear();
+const advertLookup = (advertised) => {
+  if (advertised === undefined) return (k) => ADVERTS.get(k) || null;
+  if (!advertised) return () => null;
+  if (typeof advertised === 'function') return (k) => advertised(k);
+  const m = advertised instanceof Map ? advertised : new Map(Object.entries(advertised));
+  const byKey = new Map();
+  for (const [k, v] of m) byKey.set(seatKeyHex(k), v);
+  return (k) => byKey.get(k) || null;
+};
+// an advert's address as the page reaches it: as named, and through the page's alt routes where it has them
+const advertKeys = (roots) => {
+  const out = new Set();
+  const via = typeof globalThis.ARENA_VIA_ALT === 'function' ? globalThis.ARENA_VIA_ALT : null;
+  for (const r of roots || []) { out.add(seatUrlKey(r)); if (via) { try { out.add(seatUrlKey(via(String(r)))); } catch { /* no route */ } } }
+  return out;
+};
+
 /**
  * THE SEATS BEHIND A NODE LIST: [{ id, urls, key }] in the list's order. `keys`: the round's node keys (bytes or hex) - a host's URL is a
  * seat of its own only when it proves one of them (and no other URL proved the same key: those are one seat). `verify`: BIP-340
- * (the page's curve.verify). Without keys or verify every host is one seat.
+ * (the page's curve.verify). `advertised`: the addresses the census adverts name per key (key hex -> URLs; a Map, an object or a function;
+ * by default the adverts of the censuses this page checked, noteAdverts; null for none) - where one of a key's URLs is its advert's, the
+ * key is that URL's alone (kanban #3730). Without keys or verify every host is one seat.
  */
-export async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 8000 } = {}) {
+export async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 8000, advertised } = {}) {
   const want = new Set((keys || []).map(seatKeyHex).filter(Boolean));
+  const sources = distinctSources(nodes);
+  const order = new Map(sources.map((u, i) => [u, i]));
   const byHost = new Map();
-  for (const u of distinctSources(nodes)) { const h = hostOf(u); if (!byHost.has(h)) byHost.set(h, []); byHost.get(h).push(u); }
+  for (const u of sources) { const h = hostOf(u); if (!byHost.has(h)) byHost.set(h, []); byHost.get(h).push(u); }
+  // proofs are asked only where some host has several URLs - and then of every URL (kanban #3730)
+  const asking = want.size > 0 && typeof verify === 'function' && [...byHost.values()].some((us) => us.length > 1);
   const seats = [];
-  await Promise.all([...byHost.entries()].map(async ([host, urls]) => {
-    if (urls.length === 1 || !want.size || typeof verify !== 'function') { seats.push({ id: `host:${host}`, urls, key: null, at: urls[0] }); return; }
-    const proven = await Promise.all(urls.map((u) => provenKeyAt(u, { fetcher, verify, ms })));
-    const byKey = new Map(), rest = [];
-    urls.forEach((u, i) => {
-      const k = proven[i];
-      if (k && want.has(k)) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(u); } else rest.push(u);
-    });
-    for (const [k, us] of byKey) seats.push({ id: `key:${k}`, urls: us, key: k, at: us[0] });
-    if (rest.length) seats.push({ id: `host:${host}`, urls: rest, key: null, at: rest[0] });
-  }));
-  // one key proven on two hosts is one seat (a seat reached at two names)
-  const merged = new Map();
-  for (const s of seats) {
-    const m = merged.get(s.id);
-    if (m) m.urls.push(...s.urls); else merged.set(s.id, { ...s, urls: [...s.urls] });
+  if (!asking) {
+    for (const [host, urls] of byHost) seats.push({ id: `host:${host}`, urls, key: null });
+  } else {
+    const proven = await Promise.all(sources.map((u) => provenKeyAt(u, { fetcher, verify, ms })));
+    const byKey = new Map();
+    sources.forEach((u, i) => { const k = proven[i]; if (k && want.has(k)) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(u); } });
+    const advertOf = advertLookup(advertised);
+    const keyed = new Set();
+    for (const [k, us] of byKey) {
+      let roots = null;
+      try { roots = advertOf(k); } catch { roots = null; }
+      const named = roots ? advertKeys([...roots]) : null;
+      const own = named && us.length > 1 ? us.filter((u) => named.has(seatUrlKey(u))) : [];
+      const keep = own.length ? own : us;
+      seats.push({ id: `key:${k}`, urls: keep, key: k });
+      for (const u of keep) keyed.add(u);
+    }
+    for (const [host, urls] of byHost) { const rest = urls.filter((u) => !keyed.has(u)); if (rest.length) seats.push({ id: `host:${host}`, urls: rest, key: null }); }
   }
-  const order = new Map(distinctSources(nodes).map((u, i) => [u, i]));
-  return [...merged.values()].sort((a, b) => order.get(a.at) - order.get(b.at)).map(({ id, urls, key }) => ({ id, urls, key }));
+  const first = (s) => Math.min(...s.urls.map((u) => order.get(u)));
+  return seats.map((s) => ({ ...s, urls: [...s.urls].sort((x, y) => order.get(x) - order.get(y)) }))
+    .sort((x, y) => first(x) - first(y)).map(({ id, urls, key }) => ({ id, urls, key }));
 }
 
 /**
