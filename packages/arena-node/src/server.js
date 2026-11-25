@@ -82,7 +82,7 @@ import { createServer as createHttpsServer } from 'node:https';
 import { randomBytes, createPublicKey, verify as ecdsaVerify, timingSafeEqual } from 'node:crypto';
 import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket as WsClient } from 'ws';
 import { createP2pTunnels, carryP2p, carryApi, P2P_TUNNEL_PATHS, GUARDIAN_NEXT_PATH, GUARDIAN_API_RELAY_PATH } from './p2p-tunnel.js';
 import { createAddressBook, announceOwn, pullAnnouncements } from './address-book.js';
 import { reserveKeyCache } from './reserve-key-cache.js';
@@ -207,6 +207,24 @@ import { SIGNED_RESULT_BYTES, resultId, decodePlayerResult, splitSignedResult } 
  * naming a maximum ticks per batch, which is a protocol-visible limit and a
  * decision rather than a measurement, so it is not made here.
  */
+// THE PEER'S ANSWER HAS A CAP (kanban #3690, #1489 bypass of #1469): the dial used the global WebSocket, which has no message cap, so a
+// committee seat answering each receipt offer with a 48 MiB frame had it read whole - outside wsMessages and the body budget. Only that
+// an answer came is used; an honest one is a few hundred bytes. A peer still sending at the timer is cut off, not closed politely.
+export const OFFER_ANSWER_MOST = 64 * 1024;
+/** One receipt offered to one round peer over its play socket (kanban #3690: out of offerReceipt so a test can dial it). */
+export function offerReceiptTo(peer, receiptBytes, { timeoutMs = 3000 } = {}) {
+  try {
+    const ws = new WsClient(`${String(peer).replace(/\/+$/, '').replace(/^http/, 'ws')}/play`, { maxPayload: OFFER_ANSWER_MOST });
+    ws.binaryType = 'arraybuffer';
+    const done = () => { try { ws.close(); } catch { /* gone */ } };
+    const t = setTimeout(() => { try { ws.terminate(); } catch { /* gone */ } }, timeoutMs);
+    if (t.unref) t.unref();
+    ws.addEventListener('open', () => ws.send(receiptBytes));
+    ws.addEventListener('message', () => { clearTimeout(t); done(); });
+    ws.addEventListener('error', () => { clearTimeout(t); try { ws.terminate(); } catch { /* gone */ } });
+    return ws;
+  } catch { return null; /* a peer that cannot be reached keeps the receipts it has */ }
+}
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED, relayRowCost } from './store.js';
@@ -2968,18 +2986,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   };
   /** One receipt this signer node issued, offered to every peer of the round over its play socket, as a peer offers one. */
   function offerReceipt(roundIdBytes, receiptBytes) {
-    for (const peer of verifier.peersOf(roundIdBytes)) {
-      try {
-        const ws = new WebSocket(`${String(peer).replace(/\/+$/, '').replace(/^http/, 'ws')}/play`);
-        ws.binaryType = 'arraybuffer';
-        const done = () => { try { ws.close(); } catch { /* gone */ } };
-        const t = setTimeout(done, 3000);
-        if (t.unref) t.unref();
-        ws.addEventListener('open', () => ws.send(receiptBytes));
-        ws.addEventListener('message', () => { clearTimeout(t); done(); });
-        ws.addEventListener('error', () => { clearTimeout(t); done(); });
-      } catch { /* a peer that cannot be reached keeps the receipts it has */ }
-    }
+    for (const peer of verifier.peersOf(roundIdBytes)) offerReceiptTo(peer, receiptBytes);
   }
 
   // ONE RE-OFFER CLOCK PER (ENTRY, PEER) (kanban #2387, refute of #2357/#2267/#1862): every first mark this seat stores
