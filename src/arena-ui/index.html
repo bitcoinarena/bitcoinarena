@@ -8267,7 +8267,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // ROCK PAPER SCISSORS THE SAME (kanban #951, measured 2026-11-07 19:2xZ on UI 579: the seats hosting version 6 before any v6 table
       // was posted made the tile open v6, and the lobby read v6's rounds alone - gotRaw 0 while the seats listed 118 v5 rounds). Its client
       // plays any version's round: each round's contract names its own core.
-      const everyVersion = game.name === 'nextblock' || game.name === 'rock-paper-scissors';
+      // BITCOIN UP OR DOWN THE SAME (kanban #3674, feedback #461, 2026-11-24 ~20:30Z-00:10Z: the day's tables were posted at v24 while the seats
+      // already hosted v26 - the tile opened v26 and showed "No window is open" beside an open v24 window). v25/v26 are v24 in every term but
+      // their client, so the newest client trades an older version's round; sameVersionPerSlot keeps the newest version a window has.
+      const everyVersion = game.name === 'nextblock' || game.name === 'rock-paper-scissors' || game.name === 'btc-updown-15m';
       window.ARENA_GAME_IDS = everyVersion && Array.isArray(game.versions) && game.versions.length ? game.versions : [game.id];
       // A TABLE WAITS (2026-10-11, path B): a head-to-head game with no round of it open asks the seats for
       // one - POST /h2h-want, every 30 s while none is open; their operator publishes the next 30 min of rounds in one
@@ -8773,8 +8776,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             fetchBook: async () => { const id = opts.round ? opts.round() : null; return id ? window.ARENA_GAME.market.book(id) : null; },
             onPrice: opts.onPrice || null, label: opts.label || null, everyMs: opts.everyMs || 3000,
             closeMs: () => { const id = opts.round ? opts.round() : null, row = (window.ARENA_LOBBY_ROWS || []).find((r) => r.id === id); return row ? Number(row.entryCloseMs) || 0 : 0; } }) : null),
-          // an old order read back from the seats is left out while its result is read (marketViewLines)
-          orders: () => { marketViewLines(); return readPicks().filter((x) => x.order && x.gameId === game.id && !QUIET_ORDERS.has(x.entryIdHex)).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
+          // an old order read back from the seats is left out while its result is read (marketViewLines); an order of any version the tile
+          // lists is kept (kanban #3674: a v24 order vanished from My orders under the v26 tile after "placed")
+          orders: () => { marketViewLines(); return readPicks().filter((x) => x.order && (x.gameId === game.id || (window.ARENA_GAME_IDS || []).includes(x.gameId)) && !QUIET_ORDERS.has(x.entryIdHex)).map((x) => ({ round: x.roundIdHex, entry: x.entryIdHex, pick: x.pick,
             limitPrice: x.order.limitPrice, orderExpiryMs: Number(x.order.orderExpiryMs), placedMs: x.order.placedMs, stakeMsat: x.stakeMsat, entryCloseMs: Number(x.entryCloseMs), cancelled: !!x.order.cancelled,
             // (kanban #619: from the press, ms - submitted to the first seat, placed on enough seats, its lock accepted by the guardians)
             timing: x.order.timing || {},
