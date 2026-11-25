@@ -13,7 +13,7 @@ import { resultOf, validateLog } from "../../src/sim/replay.js";
 import { fit, drawWorld, view, usd } from "./render.js";
 import { makeApi } from "./api.js";
 import { createEntry, entryOf } from "./entry.js";
-import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, X_HOUSE, FOLLOW_URL } from "./screens.js";
+import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, X_HOUSE, FOLLOW_URL, PRIZE_SATS } from "./screens.js";
 import { RULES, RULES_TITLE, hintText } from "./rules.js";
 import { makeAudio, snapWorld, worldEvents } from "./audio.js";
 import { makeClock, snapMovers, drawBetween } from "./frameloop.js";
@@ -220,11 +220,7 @@ function paintIntro() {
   for (const [k, v, cls] of m.facts || []) { const d = document.createElement("div"); if (cls) d.className = cls; const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; d.append(dt, dd); dl.append(d); }
   paintIntroBoard(m.board);
   $("iPrice").hidden = !m.practice;
-  // #3270: the X account on the intro, so a player can link it before the first run (it was only on the result screen)
-  $("iX").hidden = !m.x || !m.x.parts.length; paintStatus($("iXText"), m.x); $("iX").className = "xline " + (m.x ? (m.x.ok ? "ok" : "bad") : "");
-  $("iXBtn").hidden = true;   // #3328 (owner playtest 2026-11-22): the game never opens the page's My feedback dialog - the X field is right here
-  // #3328: the X handle field while no X account is linked (or while it is typed or answered)
-  { const inp = $("iXfIn"), st = XF.i; paintXf("i", !!(m.x && (m.x.link || st.dirty || st.msg || document.activeElement === inp))); }
+  // kanban #3720 (owner 2026-11-25): no X account or Lightning address on the intro - a player just plays; both sit in the bounty box after a run
   const btn = $("startBtn"); if (!btn.dataset.busy) { btn.textContent = m.button.label; btn.disabled = !!m.button.disabled; }
   if (!$("iWhy").dataset.err) $("iWhy").textContent = m.button.why || (S.err && bridge ? S.err : "");
   $("iTopUp").hidden = !m.topUp; if (m.topUp) $("iTopUp").textContent = m.topUp.label;
@@ -233,8 +229,6 @@ function paintIntro() {
   const tg = $("modeTag"), tt = !bridge ? "Practice" : S.round ? String(S.round.number || "") || "·" : "·";
   if (tg.textContent !== tt) tg.textContent = tt;
   tg.classList.toggle("test", !!(S.round && S.round.test)); tg.title = !bridge ? "Practice: open the game in the Arena to play the round" : S.round ? (S.round.test ? "Test round " : "Round ") + (S.round.number || "") + (m.bounty ? " · no play bounty" : "") : "";
-  // the address field right under the line while no address is saved (or while it is being typed or answered)
-  { const inp = $("iLnIn"), st = LN.i; paintLn("i", !(m.x && !m.x.ln && !st.dirty && !st.msg && document.activeElement !== inp)); }
   paintWallet();
   HOOKS.intro = m;
   // A SMALL PHONE (owner 2026-11-22, iPhone): the whole intro, Rules and Leaderboard included, fits its frame - if the 10 rows do not, the top 3
@@ -359,8 +353,8 @@ async function watchEntry(mine, res) {
   if (mine.payer) mine.payer.stop();
 }
 
-// ---------- the Lightning address for prizes (kanban #3250): intro and result, one field each ----------
-const LN = { i: { dirty: false, msg: null }, r: { dirty: false, msg: null } };
+// ---------- the Lightning address for prizes (kanban #3250): in the result's bounty box only (kanban #3720) ----------
+const LN = { r: { dirty: false, msg: null } };
 function paintLn(p, show = true) {
   const form = $(p + "Ln"), inp = $(p + "LnIn"), btn = $(p + "LnBtn"), why = $(p + "LnWhy"), st = LN[p];
   const on = show && !!api && !!S.me;   // signed in: GET /me answered
@@ -377,17 +371,17 @@ async function saveLn(p) {
   btn.dataset.busy = "1"; btn.disabled = true; st.msg = { text: "Checking your wallet …", kind: "" }; paintLn(p);
   const r = await api.post("/lnaddress", { address: inp.value.trim() }).catch(() => ({ ok: false, why: "The round service did not answer" }));
   delete btn.dataset.busy;
-  if (r.ok) { S.me = { ...S.me, lnAddress: r.lnAddress }; inp.value = r.lnAddress; st.dirty = false; st.msg = null; for (const k of ["i", "r"]) { LN[k].dirty = false; paintLn(k, k === "i" || !$("result").hidden); } }
+  if (r.ok) { S.me = { ...S.me, lnAddress: r.lnAddress }; inp.value = r.lnAddress; st.dirty = false; st.msg = null; if (!$("result").hidden && resultArgs) paintResult(resultArgs); else paintLn(p, false); }
   else { st.msg = { text: r.why || "Not saved", kind: "bad" }; paintLn(p); }
   HOOKS.ln = { ok: !!r.ok, why: r.ok ? null : r.why || null, lnAddress: S.me && S.me.lnAddress };
 }
-for (const p of ["i", "r"]) {
+for (const p of ["r"]) {
   $(p + "LnIn").addEventListener("input", () => { LN[p].dirty = true; LN[p].msg = null; paintLn(p); });
   $(p + "Ln").addEventListener("submit", (e) => { e.preventDefault(); saveLn(p); });
 }
 
-// ---------- the X handle (kanban #3328): intro and result, one field each, checked on Save ----------
-const XF = { i: { dirty: false, msg: null }, r: { dirty: false, msg: null } };
+// ---------- the X handle (kanban #3328): in the result's bounty box only (kanban #3720), checked on Save ----------
+const XF = { r: { dirty: false, msg: null } };
 function paintXf(p, show = true) {
   const form = $(p + "Xf"), inp = $(p + "XfIn"), btn = $(p + "XfBtn"), why = $(p + "XfWhy"), st = XF[p];
   const on = show && !!api && !!S.me;
@@ -413,10 +407,40 @@ async function saveX(p) {
   paintXf(p); paintIntro(); if (!$("result").hidden && resultArgs) paintResult(resultArgs);
   HOOKS.x = { ok: a.ok, text: a.text };
 }
-for (const p of ["i", "r"]) {
+for (const p of ["r"]) {
   $(p + "XfIn").addEventListener("input", () => { XF[p].dirty = true; XF[p].msg = null; paintXf(p); });
   $(p + "Xf").addEventListener("submit", (e) => { e.preventDefault(); saveX(p); });
 }
+
+// ---------- THE BOUNTY BOX (kanban #3720, owner 2026-11-25: "die Bounty Details ... an das Ende des Spiels ... voll optional") ----------
+// after a run that counts on the round's board: the X handle (must follow @bitcoinarena_io, never a house account - the service checks both)
+// and the Lightning address, each field while it is missing; what is saved shows filled, with Change to open the fields again
+const BB = { open: false };
+function paintBounty(on, st) {
+  const box = $("rBounty"); box.hidden = !on;
+  if (!on) { paintXf("r", false); paintLn("r", false); HOOKS.bounty = { on: false }; return; }
+  const me = S.me, sats = S.round && S.round.bountySats > 0 ? S.round.bountySats : PRIZE_SATS;
+  $("rBHead").textContent = "Want the daily " + fmtSats(sats) + " sat bounty?";
+  const f = $("rBFollow"); f.textContent = ""; f.append(followLink("@" + X_HOUSE));
+  // the service's rule (#3281): an X account counts in a round only when it was saved before the player's first run there
+  $("rBExtra").textContent = !me.x ? " An X handle saved now counts from your next round." : BB.open ? " A new X account counts from your next round." : "";
+  const hasX = !!me.x, hasLn = !!me.lnAddress;
+  const xOn = !hasX || !!(st && st.link) || BB.open || XF.r.dirty || !!XF.r.msg || document.activeElement === $("rXfIn");
+  // an X account with an open X field says its reason under the field (follow / Check again): the status line does not say it twice (phone)
+  if (st && st.link && xOn) st = { ...st, parts: st.parts.filter((x) => x.ok || !/^X /.test(x.text)) };
+  const stOn = !!(st && st.parts.length); $("rNot").hidden = !stOn; paintStatus($("rNotText"), stOn ? st : null);
+  const lnOn = !hasLn || BB.open || LN.r.dirty || !!LN.r.msg || document.activeElement === $("rLnIn");
+  const ch = $("rBChange"); ch.hidden = !((hasX && !xOn) || (hasLn && !lnOn) || BB.open); ch.textContent = BB.open ? "Done" : "Change";
+  paintXf("r", xOn); paintLn("r", lnOn);
+  HOOKS.bounty = { on: true, head: $("rBHead").textContent, note: $("rBNote").textContent, status: stOn ? $("rNotText").textContent : "", xField: !$("rXf").hidden, lnField: !$("rLn").hidden, change: ch.hidden ? null : ch.textContent };
+}
+$("rBChange").addEventListener("click", () => {
+  BB.open = !BB.open;
+  if (BB.open) { const xi = $("rXfIn"), u = S.me && S.me.x && S.me.x.username; if (u && !XF.r.dirty) xi.value = "@" + u; }
+  else { for (const k of [XF.r, LN.r]) { k.dirty = false; k.msg = null; } $("rXfIn").value = ""; }
+  if (resultArgs) paintResult(resultArgs);
+  if (BB.open) $("rXf").hidden ? $("rLnIn").focus() : $("rXfIn").focus();
+});
 
 // ---------- the screens ----------
 const cellRow = (tr, cells, cls, th) => cells.forEach((c, i) => { const td = document.createElement(th ? "th" : "td"); if (c instanceof Node) td.append(c); else td.textContent = c == null ? "" : c; if (cls && cls[i]) td.className = cls[i]; tr.append(td); });
@@ -428,7 +452,7 @@ function paintEntry() {
 const narrow = () => { try { return matchMedia("(max-width: 430px)").matches; } catch (_) { return false; } };
 let resultArgs = null;   // the last result screen asked (#3251): Back from a replay shows it as it stands now
 function showResult(args) {
-  if (args.mode === "play") resultArgs = args;
+  if (args.mode === "play") { if (!resultArgs || resultArgs.res !== args.res) BB.open = false; resultArgs = args; }
   if (replayOn()) { heldWhileReplay++; return; }   // the replay runs: nothing opens over it
   paintResult(args);
 }
@@ -449,12 +473,10 @@ function paintResult({ res, mode: m, entry: en, sending = false }) {
   // compact (owner 2026-11-22, iPhone): one facts row when the service answered; the practice and replay lines as before
   if (model.facts) { $("rRank").textContent = model.facts; $("rBeat").textContent = ""; $("rLeft").textContent = ""; }
   else { $("rRank").textContent = model.rank || ""; $("rBeat").textContent = model.beat || ""; $("rLeft").textContent = model.left || ""; }
-  $("rNot").hidden = !model.status || !model.status.parts.length; paintStatus($("rNotText"), model.status || null);
-  $("rX").hidden = true;   // the line above says it, with the button (#3251)
-  $("xBtn").hidden = true;   // #3328: no My feedback dialog from the game
-  paintXf("r", m === "play" && !!S.me && (!S.me.x || XF.r.dirty || !!XF.r.msg || document.activeElement === $("rXfIn")));
-  // the address field only while none is saved (or while it is typed or answered)
-  paintLn("r", m === "play" && !!S.me && (!S.me.lnAddress || LN.r.dirty || !!LN.r.msg || document.activeElement === $("rLnIn")));
+  $("rX").hidden = true;   // the bounty box says it (#3251, #3720)
+  // THE BOUNTY BOX (kanban #3720, owner 2026-11-25): only after a run of the round that is on the player's record (their best counts, any
+  // place) - the X handle and the Lightning address are asked there and nowhere else, and only to take part in the bounty
+  paintBounty(m === "play" && !!run && !!api && !!S.me && !!after, model.status || null);
   const used = usedOf(S.me, openedIn()), max = S.round ? Number(S.round.maxAttempts || 5) : 5;
   $("againBtn").textContent = run && used >= max ? "Back" : narrow() ? "Again" : "Play again";
   $("replayBtn").disabled = !lastLog;

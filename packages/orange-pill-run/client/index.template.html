@@ -163,6 +163,18 @@ body.bridged .tag { margin-left: 0; }
 .notcounted { display: flex; align-items: center; gap: 8px; } .notcounted span { flex: 1; min-width: 0; }
 .notcounted button { flex: none; padding: 4px 10px; font-size: .85rem; border-color: var(--btc); color: var(--btc); }
 #rFacts { margin: 6px 0 0; }
+/* kanban #3720 (owner 2026-11-25): the bounty box after a run - optional, set apart from the score in a dashed frame */
+.bbox { margin: 10px 0 0; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 10px; background: rgba(247,147,26,.04); }
+.bbox p { margin: 0 0 6px; }
+.bbox .bhead { color: var(--btc); font-family: var(--display); font-size: .95rem; line-height: 1.3; }
+.bbox .bhead .opt { color: var(--soft); font-family: var(--body); font-weight: 400; font-size: .85rem; }
+.bbox .bnote { color: var(--soft); font-size: .8rem; line-height: 1.35; }
+.bbox .bstat { display: flex; align-items: center; gap: 8px; font-size: .86rem; font-weight: 600; color: var(--soft); line-height: 1.35; }
+.bbox .bstat span { flex: 1; min-width: 0; }
+.bbox .bchange { flex: none; padding: 3px 10px; font-size: .82rem; border-color: var(--btc); color: var(--btc); }
+#result .bbox .lnrow { margin: 0 0 6px; } #result .bbox .lnwhy { margin: 0 0 6px !important; }
+.bbox > :last-child { margin-bottom: 0 !important; }
+@media (max-height: 760px) { .bbox { padding: 6px 9px; margin-top: 8px; } .bbox .bnote { font-size: .76rem; } }
 @media (max-height: 760px) { #result .box { padding: 12px 14px; } #result .row { margin-top: 10px; } .row.r3 button { padding: 9px 6px; } .prize.rp { margin: 6px 0 0 !important; } }
 /* THE SPEAKER AND THE ROUND IN THE HUD (owner 2026-11-22: "Oben ist ungenutzter Platz"): no top row on a free round; render.js places them */
 #hudctl { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
@@ -206,11 +218,7 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
       <p class="line" id="iLine">Run yesterday's Bitcoin chart. Tap to jump. Don't fall.</p>
       <p class="prize" id="iPrize" hidden><b id="iPrizeText"></b><small id="iPrizeSmall"></small><small class="promo" id="iPromo" hidden></small></p>
       <p class="bounty small" id="iBounty" hidden></p>
-      <p class="xline" id="iX" hidden><span id="iXText"></span><button id="iXBtn" type="button" hidden>Link X</button></p>
-      <form class="lnrow" id="iXf" hidden><input id="iXfIn" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" placeholder="@yourXhandle" aria-label="Your X handle"><button id="iXfBtn" type="submit">Check</button></form>
-      <p class="lnwhy" id="iXfWhy" role="status" hidden></p>
-      <form class="lnrow" id="iLn" hidden><input id="iLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="you@lnurl-wallet.com" aria-label="Lightning address for prizes"><button id="iLnBtn" type="submit">Save</button></form>
-      <p class="lnwhy" id="iLnWhy" role="status" hidden></p>
+      <!-- kanban #3720 (owner 2026-11-25): no X handle or Lightning address here - a player just plays; the bounty box comes after a run -->
       <dl class="facts" id="iFacts" hidden></dl>
       <div class="iboard" id="iBoard" hidden><p class="iempty" id="iBEmpty" hidden></p><table id="iBTable"></table></div>
       <div class="price" id="iPrice"></div>
@@ -226,12 +234,17 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
       <div class="tw"><table id="rScore"></table></div>
       <p class="refused" id="rRefused" hidden></p>
       <p class="prize rp" id="rPrize" hidden></p>
-      <p class="notcounted" id="rNot" hidden><span id="rNotText"></span><button id="xBtn" type="button">Link X</button></p>
       <div class="facts2" id="rFacts"><span id="rRank"></span><span id="rBeat"></span><span id="rLeft"></span></div>
-      <form class="lnrow" id="rXf" hidden><input id="rXfIn" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" placeholder="@yourXhandle" aria-label="Your X handle"><button id="rXfBtn" type="submit">Check</button></form>
-      <p class="lnwhy" id="rXfWhy" role="status" hidden></p>
-      <form class="lnrow" id="rLn" hidden><input id="rLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="you@lnurl-wallet.com" aria-label="Lightning address for prizes"><button id="rLnBtn" type="submit">Save</button></form>
-      <p class="lnwhy" id="rLnWhy" role="status" hidden></p>
+      <!-- kanban #3720 (owner 2026-11-25): the bounty details after a run that counts for the round's board - fully optional -->
+      <div class="bbox" id="rBounty" hidden>
+        <p class="bhead"><b id="rBHead">Want the daily 2,500 sat bounty?</b> <span class="opt">(optional)</span></p>
+        <p class="bnote" id="rBNote">Only needed to take part in the bounty: your X handle (following <span id="rBFollow"></span>) and a Lightning address for the payout. Playing and the leaderboard work without them.<span id="rBExtra"></span></p>
+        <p class="bstat" id="rNot" hidden><span id="rNotText"></span><button class="bchange" id="rBChange" type="button" hidden>Change</button></p>
+        <form class="lnrow" id="rXf" hidden><input id="rXfIn" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" placeholder="@yourXhandle" aria-label="Your X handle"><button id="rXfBtn" type="submit">Check</button></form>
+        <p class="lnwhy" id="rXfWhy" role="status" hidden></p>
+        <form class="lnrow" id="rLn" hidden><input id="rLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="you@lnurl-wallet.com" aria-label="Lightning address for prizes"><button id="rLnBtn" type="submit">Save</button></form>
+        <p class="lnwhy" id="rLnWhy" role="status" hidden></p>
+      </div>
       <div class="xbox" id="rX" hidden><span id="rXText">Link your X account to be placed and win.</span></div>
       <div class="row r3"><button class="primary" id="againBtn">Play again</button><button id="replayBtn"><span class="lg">Watch replay</span><span class="sm">Replay</span></button><button id="rBoardBtn"><span class="lg">Leaderboard</span><span class="sm">Board</span></button></div>
     </div>

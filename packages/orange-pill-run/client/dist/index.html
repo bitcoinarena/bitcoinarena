@@ -163,6 +163,18 @@ body.bridged .tag { margin-left: 0; }
 .notcounted { display: flex; align-items: center; gap: 8px; } .notcounted span { flex: 1; min-width: 0; }
 .notcounted button { flex: none; padding: 4px 10px; font-size: .85rem; border-color: var(--btc); color: var(--btc); }
 #rFacts { margin: 6px 0 0; }
+/* kanban #3720 (owner 2026-11-25): the bounty box after a run - optional, set apart from the score in a dashed frame */
+.bbox { margin: 10px 0 0; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 10px; background: rgba(247,147,26,.04); }
+.bbox p { margin: 0 0 6px; }
+.bbox .bhead { color: var(--btc); font-family: var(--display); font-size: .95rem; line-height: 1.3; }
+.bbox .bhead .opt { color: var(--soft); font-family: var(--body); font-weight: 400; font-size: .85rem; }
+.bbox .bnote { color: var(--soft); font-size: .8rem; line-height: 1.35; }
+.bbox .bstat { display: flex; align-items: center; gap: 8px; font-size: .86rem; font-weight: 600; color: var(--soft); line-height: 1.35; }
+.bbox .bstat span { flex: 1; min-width: 0; }
+.bbox .bchange { flex: none; padding: 3px 10px; font-size: .82rem; border-color: var(--btc); color: var(--btc); }
+#result .bbox .lnrow { margin: 0 0 6px; } #result .bbox .lnwhy { margin: 0 0 6px !important; }
+.bbox > :last-child { margin-bottom: 0 !important; }
+@media (max-height: 760px) { .bbox { padding: 6px 9px; margin-top: 8px; } .bbox .bnote { font-size: .76rem; } }
 @media (max-height: 760px) { #result .box { padding: 12px 14px; } #result .row { margin-top: 10px; } .row.r3 button { padding: 9px 6px; } .prize.rp { margin: 6px 0 0 !important; } }
 /* THE SPEAKER AND THE ROUND IN THE HUD (owner 2026-11-22: "Oben ist ungenutzter Platz"): no top row on a free round; render.js places them */
 #hudctl { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
@@ -206,11 +218,7 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
       <p class="line" id="iLine">Run yesterday's Bitcoin chart. Tap to jump. Don't fall.</p>
       <p class="prize" id="iPrize" hidden><b id="iPrizeText"></b><small id="iPrizeSmall"></small><small class="promo" id="iPromo" hidden></small></p>
       <p class="bounty small" id="iBounty" hidden></p>
-      <p class="xline" id="iX" hidden><span id="iXText"></span><button id="iXBtn" type="button" hidden>Link X</button></p>
-      <form class="lnrow" id="iXf" hidden><input id="iXfIn" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" placeholder="@yourXhandle" aria-label="Your X handle"><button id="iXfBtn" type="submit">Check</button></form>
-      <p class="lnwhy" id="iXfWhy" role="status" hidden></p>
-      <form class="lnrow" id="iLn" hidden><input id="iLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="you@lnurl-wallet.com" aria-label="Lightning address for prizes"><button id="iLnBtn" type="submit">Save</button></form>
-      <p class="lnwhy" id="iLnWhy" role="status" hidden></p>
+      <!-- kanban #3720 (owner 2026-11-25): no X handle or Lightning address here - a player just plays; the bounty box comes after a run -->
       <dl class="facts" id="iFacts" hidden></dl>
       <div class="iboard" id="iBoard" hidden><p class="iempty" id="iBEmpty" hidden></p><table id="iBTable"></table></div>
       <div class="price" id="iPrice"></div>
@@ -226,12 +234,17 @@ body.bridged .snd { margin-left: auto; } body:not(.bridged) .snd { margin-left: 
       <div class="tw"><table id="rScore"></table></div>
       <p class="refused" id="rRefused" hidden></p>
       <p class="prize rp" id="rPrize" hidden></p>
-      <p class="notcounted" id="rNot" hidden><span id="rNotText"></span><button id="xBtn" type="button">Link X</button></p>
       <div class="facts2" id="rFacts"><span id="rRank"></span><span id="rBeat"></span><span id="rLeft"></span></div>
-      <form class="lnrow" id="rXf" hidden><input id="rXfIn" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" placeholder="@yourXhandle" aria-label="Your X handle"><button id="rXfBtn" type="submit">Check</button></form>
-      <p class="lnwhy" id="rXfWhy" role="status" hidden></p>
-      <form class="lnrow" id="rLn" hidden><input id="rLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="you@lnurl-wallet.com" aria-label="Lightning address for prizes"><button id="rLnBtn" type="submit">Save</button></form>
-      <p class="lnwhy" id="rLnWhy" role="status" hidden></p>
+      <!-- kanban #3720 (owner 2026-11-25): the bounty details after a run that counts for the round's board - fully optional -->
+      <div class="bbox" id="rBounty" hidden>
+        <p class="bhead"><b id="rBHead">Want the daily 2,500 sat bounty?</b> <span class="opt">(optional)</span></p>
+        <p class="bnote" id="rBNote">Only needed to take part in the bounty: your X handle (following <span id="rBFollow"></span>) and a Lightning address for the payout. Playing and the leaderboard work without them.<span id="rBExtra"></span></p>
+        <p class="bstat" id="rNot" hidden><span id="rNotText"></span><button class="bchange" id="rBChange" type="button" hidden>Change</button></p>
+        <form class="lnrow" id="rXf" hidden><input id="rXfIn" type="text" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" placeholder="@yourXhandle" aria-label="Your X handle"><button id="rXfBtn" type="submit">Check</button></form>
+        <p class="lnwhy" id="rXfWhy" role="status" hidden></p>
+        <form class="lnrow" id="rLn" hidden><input id="rLnIn" type="text" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="320" placeholder="you@lnurl-wallet.com" aria-label="Lightning address for prizes"><button id="rLnBtn" type="submit">Save</button></form>
+        <p class="lnwhy" id="rLnWhy" role="status" hidden></p>
+      </div>
       <div class="xbox" id="rX" hidden><span id="rXText">Link your X account to be placed and win.</span></div>
       <div class="row r3"><button class="primary" id="againBtn">Play again</button><button id="replayBtn"><span class="lg">Watch replay</span><span class="sm">Replay</span></button><button id="rBoardBtn"><span class="lg">Leaderboard</span><span class="sm">Board</span></button></div>
     </div>
@@ -1828,7 +1841,7 @@ function prizeLine(round, nowMs = Date.now()) {
   if (!round) return null;
   const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
   // short (owner 2026-11-22, iPhone): two lines at most on a 375 px phone
-  const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "needs X (follow @" + X_HOUSE + ") + Lightning address";   // #3534
+  const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "optional: X (follow @" + X_HOUSE + ") + Lightning address, after a run";   // #3534; #3720 (owner 2026-11-25): asked after a run, only for the bounty
   const promo = promoLine(round, nowMs);
   if (!round.test || nowMs >= FIRST_DAILY_MS) return promo ? { text, small, promo } : { text, small };
   return promo ? { text: "From " + FIRST_DAILY_WORDS + ": " + text, small, promo } : { text: "From " + FIRST_DAILY_WORDS + ": " + text, small };
@@ -1966,8 +1979,8 @@ const RULES = [
   ["Speed", "Faster finishes score much more: 20 points for every second under the level's par time. Sats, stomps, the flag (100) and the day high (50) count too; a run that reaches the flag without a hit scores ×1.5. A run that misses the flag gets no time bonus and no ×1.5. Each death adds 3 s to your run time; a run ends at 3 minutes of run time, deaths included."],
   ["Tie-break", "On equal scores the shorter run time ranks higher, then the earlier submission."],
   ["Jump", "A short tap or click is a small hop; hold longer to jump higher. On a computer: click, Space or the Up arrow."],
-  ["Play bounty", "2,500 sats, in real sats, each round. The play bounty goes to the best player with a valid Lightning address saved by one hour after the round. No X account and no valid Lightning address: no play bounty."],
-  ["X account", "To be placed and win, save your X handle in the game's X field before your first run of the round (the account must exist on X; one player per X account, first come first served) and follow @bitcoinarena_io on X. We check the follow again before the payout: an account that does not follow then is not placed. A player without one is not placed; the next player moves up."],
+  ["Play bounty", "2,500 sats, in real sats, each round. The play bounty goes to the best player with a valid Lightning address saved by one hour after the round. Taking part is optional: playing and the leaderboard work without an X account or a Lightning address; the game asks for both after a run. No X account and no valid Lightning address: no play bounty."],
+  ["X account", "To be placed and win, save your X handle in the game's bounty box, shown after a run (the account must exist on X; one player per X account, first come first served), and follow @bitcoinarena_io on X. It counts in a round when it was saved before your first run of that round; saved later, it counts from your next round. We check the follow again before the payout: an account that does not follow then is not placed. A player without one is not placed; the next player moves up."],
   ["Humans only", "Humans only. Bots, scripts, automated or assisted play are excluded."],
   ["Fair play", "Any exploit or cheat disqualifies: changing the game or its data, more than one account, playing for someone else, abusing a bug instead of reporting it. Found a bug? Report it in the bug bounty."],
   ["Review", "We review the top runs. Every payout is checked and approved by us before it is sent. Our decision is final."],
@@ -2194,7 +2207,7 @@ const { resultOf, validateLog } = __m["src/sim/replay.js"];
 const { fit, drawWorld, view, usd } = __m["client/src/render.js"];
 const { makeApi } = __m["client/src/api.js"];
 const { createEntry, entryOf } = __m["client/src/entry.js"];
-const { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, X_HOUSE, FOLLOW_URL } = __m["client/src/screens.js"];
+const { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, X_HOUSE, FOLLOW_URL, PRIZE_SATS } = __m["client/src/screens.js"];
 const { RULES, RULES_TITLE, hintText } = __m["client/src/rules.js"];
 const { makeAudio, snapWorld, worldEvents } = __m["client/src/audio.js"];
 const { makeClock, snapMovers, drawBetween } = __m["client/src/frameloop.js"];
@@ -2401,11 +2414,7 @@ function paintIntro() {
   for (const [k, v, cls] of m.facts || []) { const d = document.createElement("div"); if (cls) d.className = cls; const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; d.append(dt, dd); dl.append(d); }
   paintIntroBoard(m.board);
   $("iPrice").hidden = !m.practice;
-  // #3270: the X account on the intro, so a player can link it before the first run (it was only on the result screen)
-  $("iX").hidden = !m.x || !m.x.parts.length; paintStatus($("iXText"), m.x); $("iX").className = "xline " + (m.x ? (m.x.ok ? "ok" : "bad") : "");
-  $("iXBtn").hidden = true;   // #3328 (owner playtest 2026-11-22): the game never opens the page's My feedback dialog - the X field is right here
-  // #3328: the X handle field while no X account is linked (or while it is typed or answered)
-  { const inp = $("iXfIn"), st = XF.i; paintXf("i", !!(m.x && (m.x.link || st.dirty || st.msg || document.activeElement === inp))); }
+  // kanban #3720 (owner 2026-11-25): no X account or Lightning address on the intro - a player just plays; both sit in the bounty box after a run
   const btn = $("startBtn"); if (!btn.dataset.busy) { btn.textContent = m.button.label; btn.disabled = !!m.button.disabled; }
   if (!$("iWhy").dataset.err) $("iWhy").textContent = m.button.why || (S.err && bridge ? S.err : "");
   $("iTopUp").hidden = !m.topUp; if (m.topUp) $("iTopUp").textContent = m.topUp.label;
@@ -2414,8 +2423,6 @@ function paintIntro() {
   const tg = $("modeTag"), tt = !bridge ? "Practice" : S.round ? String(S.round.number || "") || "·" : "·";
   if (tg.textContent !== tt) tg.textContent = tt;
   tg.classList.toggle("test", !!(S.round && S.round.test)); tg.title = !bridge ? "Practice: open the game in the Arena to play the round" : S.round ? (S.round.test ? "Test round " : "Round ") + (S.round.number || "") + (m.bounty ? " · no play bounty" : "") : "";
-  // the address field right under the line while no address is saved (or while it is being typed or answered)
-  { const inp = $("iLnIn"), st = LN.i; paintLn("i", !(m.x && !m.x.ln && !st.dirty && !st.msg && document.activeElement !== inp)); }
   paintWallet();
   HOOKS.intro = m;
   // A SMALL PHONE (owner 2026-11-22, iPhone): the whole intro, Rules and Leaderboard included, fits its frame - if the 10 rows do not, the top 3
@@ -2540,8 +2547,8 @@ async function watchEntry(mine, res) {
   if (mine.payer) mine.payer.stop();
 }
 
-// ---------- the Lightning address for prizes (kanban #3250): intro and result, one field each ----------
-const LN = { i: { dirty: false, msg: null }, r: { dirty: false, msg: null } };
+// ---------- the Lightning address for prizes (kanban #3250): in the result's bounty box only (kanban #3720) ----------
+const LN = { r: { dirty: false, msg: null } };
 function paintLn(p, show = true) {
   const form = $(p + "Ln"), inp = $(p + "LnIn"), btn = $(p + "LnBtn"), why = $(p + "LnWhy"), st = LN[p];
   const on = show && !!api && !!S.me;   // signed in: GET /me answered
@@ -2558,17 +2565,17 @@ async function saveLn(p) {
   btn.dataset.busy = "1"; btn.disabled = true; st.msg = { text: "Checking your wallet …", kind: "" }; paintLn(p);
   const r = await api.post("/lnaddress", { address: inp.value.trim() }).catch(() => ({ ok: false, why: "The round service did not answer" }));
   delete btn.dataset.busy;
-  if (r.ok) { S.me = { ...S.me, lnAddress: r.lnAddress }; inp.value = r.lnAddress; st.dirty = false; st.msg = null; for (const k of ["i", "r"]) { LN[k].dirty = false; paintLn(k, k === "i" || !$("result").hidden); } }
+  if (r.ok) { S.me = { ...S.me, lnAddress: r.lnAddress }; inp.value = r.lnAddress; st.dirty = false; st.msg = null; if (!$("result").hidden && resultArgs) paintResult(resultArgs); else paintLn(p, false); }
   else { st.msg = { text: r.why || "Not saved", kind: "bad" }; paintLn(p); }
   HOOKS.ln = { ok: !!r.ok, why: r.ok ? null : r.why || null, lnAddress: S.me && S.me.lnAddress };
 }
-for (const p of ["i", "r"]) {
+for (const p of ["r"]) {
   $(p + "LnIn").addEventListener("input", () => { LN[p].dirty = true; LN[p].msg = null; paintLn(p); });
   $(p + "Ln").addEventListener("submit", (e) => { e.preventDefault(); saveLn(p); });
 }
 
-// ---------- the X handle (kanban #3328): intro and result, one field each, checked on Save ----------
-const XF = { i: { dirty: false, msg: null }, r: { dirty: false, msg: null } };
+// ---------- the X handle (kanban #3328): in the result's bounty box only (kanban #3720), checked on Save ----------
+const XF = { r: { dirty: false, msg: null } };
 function paintXf(p, show = true) {
   const form = $(p + "Xf"), inp = $(p + "XfIn"), btn = $(p + "XfBtn"), why = $(p + "XfWhy"), st = XF[p];
   const on = show && !!api && !!S.me;
@@ -2594,10 +2601,40 @@ async function saveX(p) {
   paintXf(p); paintIntro(); if (!$("result").hidden && resultArgs) paintResult(resultArgs);
   HOOKS.x = { ok: a.ok, text: a.text };
 }
-for (const p of ["i", "r"]) {
+for (const p of ["r"]) {
   $(p + "XfIn").addEventListener("input", () => { XF[p].dirty = true; XF[p].msg = null; paintXf(p); });
   $(p + "Xf").addEventListener("submit", (e) => { e.preventDefault(); saveX(p); });
 }
+
+// ---------- THE BOUNTY BOX (kanban #3720, owner 2026-11-25: "die Bounty Details ... an das Ende des Spiels ... voll optional") ----------
+// after a run that counts on the round's board: the X handle (must follow @bitcoinarena_io, never a house account - the service checks both)
+// and the Lightning address, each field while it is missing; what is saved shows filled, with Change to open the fields again
+const BB = { open: false };
+function paintBounty(on, st) {
+  const box = $("rBounty"); box.hidden = !on;
+  if (!on) { paintXf("r", false); paintLn("r", false); HOOKS.bounty = { on: false }; return; }
+  const me = S.me, sats = S.round && S.round.bountySats > 0 ? S.round.bountySats : PRIZE_SATS;
+  $("rBHead").textContent = "Want the daily " + fmtSats(sats) + " sat bounty?";
+  const f = $("rBFollow"); f.textContent = ""; f.append(followLink("@" + X_HOUSE));
+  // the service's rule (#3281): an X account counts in a round only when it was saved before the player's first run there
+  $("rBExtra").textContent = !me.x ? " An X handle saved now counts from your next round." : BB.open ? " A new X account counts from your next round." : "";
+  const hasX = !!me.x, hasLn = !!me.lnAddress;
+  const xOn = !hasX || !!(st && st.link) || BB.open || XF.r.dirty || !!XF.r.msg || document.activeElement === $("rXfIn");
+  // an X account with an open X field says its reason under the field (follow / Check again): the status line does not say it twice (phone)
+  if (st && st.link && xOn) st = { ...st, parts: st.parts.filter((x) => x.ok || !/^X /.test(x.text)) };
+  const stOn = !!(st && st.parts.length); $("rNot").hidden = !stOn; paintStatus($("rNotText"), stOn ? st : null);
+  const lnOn = !hasLn || BB.open || LN.r.dirty || !!LN.r.msg || document.activeElement === $("rLnIn");
+  const ch = $("rBChange"); ch.hidden = !((hasX && !xOn) || (hasLn && !lnOn) || BB.open); ch.textContent = BB.open ? "Done" : "Change";
+  paintXf("r", xOn); paintLn("r", lnOn);
+  HOOKS.bounty = { on: true, head: $("rBHead").textContent, note: $("rBNote").textContent, status: stOn ? $("rNotText").textContent : "", xField: !$("rXf").hidden, lnField: !$("rLn").hidden, change: ch.hidden ? null : ch.textContent };
+}
+$("rBChange").addEventListener("click", () => {
+  BB.open = !BB.open;
+  if (BB.open) { const xi = $("rXfIn"), u = S.me && S.me.x && S.me.x.username; if (u && !XF.r.dirty) xi.value = "@" + u; }
+  else { for (const k of [XF.r, LN.r]) { k.dirty = false; k.msg = null; } $("rXfIn").value = ""; }
+  if (resultArgs) paintResult(resultArgs);
+  if (BB.open) $("rXf").hidden ? $("rLnIn").focus() : $("rXfIn").focus();
+});
 
 // ---------- the screens ----------
 const cellRow = (tr, cells, cls, th) => cells.forEach((c, i) => { const td = document.createElement(th ? "th" : "td"); if (c instanceof Node) td.append(c); else td.textContent = c == null ? "" : c; if (cls && cls[i]) td.className = cls[i]; tr.append(td); });
@@ -2609,7 +2646,7 @@ function paintEntry() {
 const narrow = () => { try { return matchMedia("(max-width: 430px)").matches; } catch (_) { return false; } };
 let resultArgs = null;   // the last result screen asked (#3251): Back from a replay shows it as it stands now
 function showResult(args) {
-  if (args.mode === "play") resultArgs = args;
+  if (args.mode === "play") { if (!resultArgs || resultArgs.res !== args.res) BB.open = false; resultArgs = args; }
   if (replayOn()) { heldWhileReplay++; return; }   // the replay runs: nothing opens over it
   paintResult(args);
 }
@@ -2630,12 +2667,10 @@ function paintResult({ res, mode: m, entry: en, sending = false }) {
   // compact (owner 2026-11-22, iPhone): one facts row when the service answered; the practice and replay lines as before
   if (model.facts) { $("rRank").textContent = model.facts; $("rBeat").textContent = ""; $("rLeft").textContent = ""; }
   else { $("rRank").textContent = model.rank || ""; $("rBeat").textContent = model.beat || ""; $("rLeft").textContent = model.left || ""; }
-  $("rNot").hidden = !model.status || !model.status.parts.length; paintStatus($("rNotText"), model.status || null);
-  $("rX").hidden = true;   // the line above says it, with the button (#3251)
-  $("xBtn").hidden = true;   // #3328: no My feedback dialog from the game
-  paintXf("r", m === "play" && !!S.me && (!S.me.x || XF.r.dirty || !!XF.r.msg || document.activeElement === $("rXfIn")));
-  // the address field only while none is saved (or while it is typed or answered)
-  paintLn("r", m === "play" && !!S.me && (!S.me.lnAddress || LN.r.dirty || !!LN.r.msg || document.activeElement === $("rLnIn")));
+  $("rX").hidden = true;   // the bounty box says it (#3251, #3720)
+  // THE BOUNTY BOX (kanban #3720, owner 2026-11-25): only after a run of the round that is on the player's record (their best counts, any
+  // place) - the X handle and the Lightning address are asked there and nowhere else, and only to take part in the bounty
+  paintBounty(m === "play" && !!run && !!api && !!S.me && !!after, model.status || null);
   const used = usedOf(S.me, openedIn()), max = S.round ? Number(S.round.maxAttempts || 5) : 5;
   $("againBtn").textContent = run && used >= max ? "Back" : narrow() ? "Again" : "Play again";
   $("replayBtn").disabled = !lastLog;

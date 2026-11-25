@@ -47,10 +47,10 @@ test("#3328 the game never opens the page's My feedback dialog; the fields are e
   const main = readFileSync(new URL("../client/src/main.js", import.meta.url), "utf8");
   assert.equal(/bridge\.linkX\s*\(/.test(main), false, "no bridge.linkX() call");
   const page = readFileSync(new URL("../client/index.template.html", import.meta.url), "utf8");
-  assert.equal((page.match(/placeholder="you@lnurl-wallet.com"/g) || []).length, 2);   // #3331 (owner 2026-11-22)
+  assert.equal((page.match(/placeholder="you@lnurl-wallet.com"/g) || []).length, 1);   // #3331 (owner 2026-11-22); #3720: the result's bounty box only
   assert.equal(/placeholder="you@wallet.com"/.test(page), false);
-  for (const p of ["i", "r"]) assert.match(page, new RegExp(`id="${p}XfIn"[^>]*placeholder="@yourXhandle"`));
-  assert.equal((page.match(/>Check<\/button>/g) || []).length, 2);
+  assert.match(page, /id="rXfIn"[^>]*placeholder="@yourXhandle"/);
+  assert.equal((page.match(/>Check<\/button>/g) || []).length, 1);
 });
 
 test("#3534 not following @bitcoinarena_io: the save answer says so with the follow link, the field stays for Check again, the rules say it", async () => {
@@ -65,6 +65,6 @@ test("#3534 not following @bitcoinarena_io: the save answer says so with the fol
   assert.equal(xFieldModel("@alice", "alice", true).canSave, true);
   assert.equal(xFieldModel("@alice", "alice", false).canSave, false);
   assert.equal(needsFollow({ x: { username: "alice", follows: true }, placed: true }), false);
-  assert.equal(prizeLine({ bountySats: 2500, entrySats: 0 }, Date.UTC(2026, 10, 24)).small, "needs X (follow @bitcoinarena_io) + Lightning address");
+  assert.equal(prizeLine({ bountySats: 2500, entrySats: 0 }, Date.UTC(2026, 10, 24)).small, "optional: X (follow @bitcoinarena_io) + Lightning address, after a run");
   assert.match(RULES.find((r) => r[0] === "X account")[1], /follow @bitcoinarena_io on X/);
 });
