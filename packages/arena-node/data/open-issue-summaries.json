@@ -2355,8 +2355,20 @@
   "text": "Node software: an oversized body is rejected as bad JSON, and many handlers hide the real cause",
   "kind": "bug"
  },
+ "3537": {
+  "text": "Node software: one seat's pending record can hold a batch past the interval on an idle machine",
+  "kind": "bug"
+ },
  "3538": {
   "text": "Node software: player-facing copy says seat again, against the naming rule",
+  "kind": "bug"
+ },
+ "3539": {
+  "text": "Node software: outbound dial protection does not install on a newer runtime",
+  "kind": "bug"
+ },
+ "3540": {
+  "text": "Node software: architecture differences can make seats disagree on whether a core loads",
   "kind": "bug"
  },
  "3541": {
@@ -2765,6 +2777,150 @@
  },
  "3710": {
   "text": "BTC Up/Down game: an expired order still looks open; cancel hides it while the stake waits for the window",
+  "kind": "bug"
+ },
+ "3716": {
+  "text": "Website: Orange Pill Run's back-to-arena button does nothing",
+  "kind": "bug"
+ },
+ "3717": {
+  "text": "Federation: wallet history can list one stake twice, once under another federation with the wrong amount",
+  "kind": "bug"
+ },
+ "3721": {
+  "text": "BTC Up/Down game: past orders can show a zero net when the won and lost parts should not cancel",
+  "kind": "bug"
+ },
+ "3723": {
+  "text": "Node software: funnel hosts resolve to addresses that do not answer, so those nodes stay unreachable",
+  "kind": "bug"
+ },
+ "3724": {
+  "text": "Federation: a reserve read can be slowed by an oversized guardian reply",
+  "kind": "bug"
+ },
+ "3725": {
+  "text": "Other: a certified-batch check can be held up before its limits apply",
+  "kind": "bug"
+ },
+ "3726": {
+  "text": "Federation: a reserve close can follow a wrong record",
+  "kind": "bug"
+ },
+ "3727": {
+  "text": "Node software: lock-set views near close can still void a paid head-to-head round",
+  "kind": "bug"
+ },
+ "3728": {
+  "text": "Committees and bonds: an open vote can be slowed by unbounded ballot-shaped chain data",
+  "kind": "bug"
+ },
+ "3729": {
+  "text": "Rock Paper Scissors game: the first tap on an open round can mark a never-staked key as known",
+  "kind": "bug"
+ },
+ "3730": {
+  "text": "Settlement: one seat can outweigh the others on a lock settlement",
+  "kind": "bug"
+ },
+ "3731": {
+  "text": "Node software: after a tighter sandbox upgrade a seat can host a game its own trial refuses, so closes fail",
+  "kind": "bug"
+ },
+ "3732": {
+  "text": "Other: hosted games share one process, so one game's crash can kill the others' in-flight calls",
+  "kind": "bug"
+ },
+ "3733": {
+  "text": "Other: a relay read can leave an unfinished frame with no budget and no deadline",
+  "kind": "bug"
+ },
+ "3734": {
+  "text": "Other: one address can use up the relay's unfinished-message budget and drop honest sockets",
+  "kind": "bug"
+ },
+ "3735": {
+  "text": "Other: Orange Pill Run social checks can be taken by strangers so honest checks are refused",
+  "kind": "bug"
+ },
+ "3736": {
+  "text": "Website: Orange Pill Run can store oversized page telemetry on refused submits",
+  "kind": "bug"
+ },
+ "3737": {
+  "text": "Other: Orange Pill Run drops cached public answers on any write, so sign-in rebuilds the board",
+  "kind": "bug"
+ },
+ "3738": {
+  "text": "Settlement: a late contradicting attestation can leave one seat void and its peer final",
+  "kind": "bug"
+ },
+ "3739": {
+  "text": "Federation: a gateway seat can be taken by whoever names it first",
+  "kind": "bug"
+ },
+ "3740": {
+  "text": "Node software: a stranger can replace the transaction named for an announced grid publication",
+  "kind": "bug"
+ },
+ "3741": {
+  "text": "Other: a public equivocation read can rescan a whole mark chain on every request",
+  "kind": "bug"
+ },
+ "3742": {
+  "text": "Committees and bonds: a forfeit refund can be skipped",
+  "kind": "bug"
+ },
+ "3743": {
+  "text": "Committees and bonds: a drawn node can be dialed at an address its announcement did not name",
+  "kind": "bug"
+ },
+ "3744": {
+  "text": "Lightning payouts: a referral site's payout count can follow one explorer seat",
+  "kind": "bug"
+ },
+ "3745": {
+  "text": "Node software: a collect pass can be held long enough that a stake is not returned",
+  "kind": "bug"
+ },
+ "3746": {
+  "text": "Federation: a reserve can be marked spent from a report the seat cannot check",
+  "kind": "bug"
+ },
+ "3747": {
+  "text": "Faucet and feedback: Orange Pill Run: a near-copy of a public replay can take the bounty row",
+  "kind": "bug"
+ },
+ "3748": {
+  "text": "Other: Orange Pill Run instant refusals can lock a shared address out of the daily round",
+  "kind": "bug"
+ },
+ "3749": {
+  "text": "Other: a relayed mark can be slowed by an oversized peer answer",
+  "kind": "bug"
+ },
+ "3750": {
+  "text": "Node software: a live round's stake lock can be refused against another round and never staked",
+  "kind": "bug"
+ },
+ "3751": {
+  "text": "Committees and bonds: one box can be counted as several providers and pass as lock-grade",
+  "kind": "bug"
+ },
+ "3752": {
+  "text": "Settlement: a bad census answer can stop the whole health read",
+  "kind": "bug"
+ },
+ "3753": {
+  "text": "Website: a join can still lock a full table and spend the fees",
+  "kind": "bug"
+ },
+ "3754": {
+  "text": "Node software: after many failed run-length checks, each new check can stall the seat's own thread",
+  "kind": "bug"
+ },
+ "3755": {
+  "text": "Other: Orange Pill Run unused first attempts from fresh keys can lock a shared address out of the daily round",
   "kind": "bug"
  }
 }
