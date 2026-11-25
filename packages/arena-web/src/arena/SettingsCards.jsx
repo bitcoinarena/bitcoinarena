@@ -6,12 +6,17 @@
 // stored switch, the log copy, the seed restore, the account's deletion - and hands them over; each card is drawn into its own section.
 import React from 'react';
 
+// kanban #3698 (report #462): the lobby's own rule, arena-protocol lobby-name.js LOBBY_NAME_MAX (the field took 32); held equal by test/settings.test.mjs
+export const NAME_MAX = 24;
+
 export class NameCard extends React.Component {
-  constructor(props) { super(props); this.state = { typed: null, why: '' }; }
+  constructor(props) { super(props); this.state = { typed: null, why: '', bad: false }; }
   update() {
     const t = (this.state.typed ?? this.props.current).trim();
-    if (!t) { this.setState({ why: 'A name is needed.' }); return; }
-    this.setState({ why: this.props.onUpdate(t) || 'Updated.', typed: null });
+    if (!t) { this.setState({ why: 'A name is needed.', bad: true }); return; }
+    // kanban #3698: a refusal keeps what was typed in the field (it used to snap back to the old name) and says why as an error
+    const refused = this.props.onUpdate(t);
+    this.setState(refused ? { why: refused, bad: true } : { why: 'Updated.', bad: false, typed: null });
   }
   render() {
     const value = this.state.typed ?? this.props.current;
@@ -20,10 +25,10 @@ export class NameCard extends React.Component {
       <h3>Name</h3>
       <div className="muted">Current name</div>
       <div className="name-row">
-        <input id="arena-name-field" type="text" autoComplete="off" spellCheck={false} maxLength={32} value={value} onChange={(e) => this.setState({ typed: e.target.value })} />
+        <input id="arena-name-field" type="text" autoComplete="off" spellCheck={false} maxLength={NAME_MAX} value={value} onChange={(e) => this.setState({ typed: e.target.value })} />
         <button id="arena-name-update" type="button" className="primary" disabled={!t || t === this.props.current} onClick={() => this.update()}>Update</button>
       </div>
-      <div className="muted">{this.state.why}</div>
+      {this.state.bad ? <div className="muted bad" role="alert" style={{ color: '#f85149' }}>{this.state.why}</div> : <div className="muted">{this.state.why}</div>}
     </>);
   }
 }
