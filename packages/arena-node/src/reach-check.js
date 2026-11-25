@@ -18,19 +18,79 @@ export const REACH_PER_MINUTE = 6;
 export const REACH_ALL_PER_MINUTE = 60;
 const NONCE = /^[A-Za-z0-9_-]{16,64}$/;
 
-/** Is this an address a seat may connect back to: public unicast, v4 or v6. */
+/** The 8 groups of a v6 address (a dotted v4 tail allowed), or null. A zone (fe80::1%eth0) is link-scoped: null. */
+function v6Groups(a) {
+  if (!net.isIPv6(a) || a.includes('%')) return null;
+  let s = a.toLowerCase();
+  const dotted = s.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) {
+    if (!net.isIPv4(dotted[2])) return null;
+    const [p, q, r, t] = dotted[2].split('.').map(Number);
+    s = dotted[1] + ((p << 8) | q).toString(16) + ':' + ((r << 8) | t).toString(16);
+  }
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const part = (h) => (h ? h.split(':') : []);
+  const head = part(halves[0]), tail = halves.length === 2 ? part(halves[1]) : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  if (fill < 0 || (halves.length === 1 && head.length !== 8)) return null;
+  const g = [...head, ...Array(fill).fill('0'), ...tail].map((x) => (/^[0-9a-f]{1,4}$/.test(x) ? parseInt(x, 16) : NaN));
+  return g.length === 8 && g.every((x) => Number.isInteger(x)) ? g : null;
+}
+const v4Of = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+
+/**
+ * kanban #3700 (report #464): ONE spelling per address. A v4 address as is; any v6 spelling of a v4-mapped (::ffff:0:0/96, every
+ * form: 0:0:0:0:0:ffff:7f00:1, ::FFFF:127.0.0.1, zero-padded) or v4-compatible (::/96 but :: and ::1) address as the dotted v4 it
+ * names; any other v6 address compressed and lower case (RFC 5952); anything else (a zone, '127.1', '0x7f.0.0.1', a bare integer,
+ * brackets) as given - isPublicAddress refuses it. The check, the dial and the rate bucket all take this one spelling.
+ */
+export function canonicalAddress(ip) {
+  const a = String(ip || '').trim();
+  if (net.isIPv4(a)) return a;
+  const g = v6Groups(a);
+  if (!g) return a;
+  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0xffff || (g[5] === 0 && (g[6] !== 0 || g[7] > 1)))) return v4Of(g[6], g[7]);
+  let best = [-1, 0];
+  for (let i = 0; i < 8;) {
+    if (g[i] !== 0) { i++; continue; }
+    let j = i; while (j < 8 && g[j] === 0) j++;
+    if (j - i > best[1] && j - i > 1) best = [i, j - i];
+    i = j;
+  }
+  const hex = g.map((x) => x.toString(16));
+  if (best[0] < 0) return hex.join(':');
+  return `${hex.slice(0, best[0]).join(':')}::${hex.slice(best[0] + best[1]).join(':')}`;
+}
+
+const publicV4 = (a) => {
+  const [p, q] = a.split('.').map(Number);
+  return !(p === 0 || p === 10 || p === 127 || p >= 224 || (p === 100 && q >= 64 && q < 128) || (p === 169 && q === 254)
+    || (p === 172 && q >= 16 && q < 32) || (p === 192 && q === 168) || (p === 198 && (q === 18 || q === 19)));
+};
+
+/**
+ * Is this an address a seat may connect back to: public unicast, v4 or v6, in ANY spelling (kanban #3700: read as canonicalAddress).
+ * Refused v6 besides loopback/unspecified/ULA/link- and site-local/multicast/documentation: every range that embeds or translates a
+ * v4 address the seat cannot judge or that reaches a private one - ::/96, ::ffff:0:0/96, ::ffff:0:0:0/96 (SIIT), 64:ff9b::/96 and
+ * 64:ff9b:1::/48 (NAT64), 2001::/32 (Teredo), 2002::/16 (6to4) unless the v4 inside is public.
+ */
 export function isPublicAddress(ip) {
-  const a = String(ip || '').replace(/^::ffff:/, '');
-  if (net.isIPv4(a)) {
-    const [p, q] = a.split('.').map(Number);
-    return !(p === 0 || p === 10 || p === 127 || p >= 224 || (p === 100 && q >= 64 && q < 128) || (p === 169 && q === 254)
-      || (p === 172 && q >= 16 && q < 32) || (p === 192 && q === 168) || (p === 198 && (q === 18 || q === 19)));
-  }
-  if (net.isIPv6(a)) {
-    const l = a.toLowerCase();
-    return !(l === '::' || l === '::1' || /^f[cd]/.test(l) || /^fe[89ab]/.test(l) || /^ff/.test(l) || l.startsWith('2001:db8') || l.startsWith('64:ff9b'));
-  }
-  return false;
+  const a = canonicalAddress(ip);
+  if (net.isIPv4(a)) return publicV4(a);
+  const g = v6Groups(a);
+  if (!g) return false;
+  if (g.slice(0, 6).every((x) => x === 0)) return false;                                          // ::, ::1, ::/96
+  if (g.slice(0, 4).every((x) => x === 0) && (g[4] === 0xffff || g[4] === 0) && g[5] === 0) return false;  // ::ffff:0:a.b.c.d (SIIT), ::/80 rest
+  if (g.slice(0, 5).every((x) => x === 0)) return false;                                          // anything else under ::/80
+  const [h0, h1, h2] = g;
+  if (h0 === 0x64 && h1 === 0xff9b && (h2 === 0 || h2 === 1)) return false;                       // NAT64
+  if (h0 === 0x2001 && (h1 === 0 || h1 === 0xdb8)) return false;                                  // Teredo, documentation
+  if (h0 === 0x2002) return publicV4(v4Of(h1, h2));                                               // 6to4
+  if ((h0 & 0xfe00) === 0xfc00 || (h0 & 0xffc0) === 0xfe80 || (h0 & 0xffc0) === 0xfec0 || (h0 & 0xff00) === 0xff00) return false;
+  if (h0 === 0x100 && h1 === 0 && h2 === 0 && g[3] === 0) return false;                           // 100::/64 discard
+  if (h0 === 0x3fff && h1 < 0x1000) return false;                                                 // 3fff::/20 documentation
+  return true;
 }
 
 /**
@@ -47,16 +107,17 @@ export function isPublicAddress(ip) {
  *   proxy appends cloudflared's 127.0.0.1) and are skipped; a loopback hop can only sit at the right end if one of our proxies wrote it.
  * - cf-connecting-ip only when ARENA_TRUST_CF_CONNECTING_IP=1: a seat that only Cloudflare reaches (no funnel, no other door to the
  *   loopback port), where the edge overwrites it with the real address.
+ * Every address is read as canonicalAddress (kanban #3700): the old '::ffff:' strip turned ::ffff:808:808 into '808:808'.
  */
 const LOOPBACK = (a) => a === '127.0.0.1' || a === '::1' || /^127\./.test(a);
 export function askerAddress(req, { env = process.env } = {}) {
-  const peer = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  const peer = canonicalAddress(req.socket.remoteAddress);
   if (LOOPBACK(peer)) {
     if (env.ARENA_TRUST_CF_CONNECTING_IP === '1') {
       const cf = String(req.headers['cf-connecting-ip'] || '').trim();
-      if (cf) return cf.replace(/^::ffff:/, '');
+      if (cf) return canonicalAddress(cf);
     }
-    const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => s.trim().replace(/^::ffff:/, '')).filter(Boolean);
+    const xff = String(req.headers['x-forwarded-for'] || '').split(',').map((s) => canonicalAddress(s)).filter(Boolean);
     while (xff.length && LOOPBACK(xff[xff.length - 1])) xff.pop();
     return xff.length ? xff[xff.length - 1] : peer;
   }
@@ -71,7 +132,7 @@ export function createReachCheck({ connectBack = httpConnectBack, nowMs = () => 
   const asks = new Map();   // ip -> [ms...]
   let all = [];
   return async function reachCheck(req, body) {
-    const ip = askerAddress(req);
+    const ip = canonicalAddress(askerAddress(req));   // kanban #3700: checked, dialed and counted in one spelling
     const port = Number(body && body.port);
     const nonce = String((body && body.nonce) || '');
     if (!Number.isInteger(port) || port < 1 || port > 65535) return { status: 400, body: { ok: false, why: 'port is 1 to 65535' } };
