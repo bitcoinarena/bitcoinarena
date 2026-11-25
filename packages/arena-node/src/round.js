@@ -3436,7 +3436,8 @@ export class Round {
     const named = blockHash === undefined ? this.tipOf(roundIdBytes) : blockHash;
     const block = named && named.length === 32 ? named : new Uint8Array(32);
     if (!id) return;
-    // A PULLED RECORD KEEPS WHEN ITS PEER MADE IT (`seenMs`); a record held twice keeps the earlier time.
+    // `seenMs`: the moment of the record when the caller made it here earlier (never a peer's word - kanban #3678); a record
+    // held twice keeps the earlier time.
     const at = Number.isSafeInteger(seenMs) ? seenMs : this.now();
     // This seat's own record (pulled_from NULL), also where a peer's record of the same block was kept before.
     this.db.prepare('INSERT INTO evidence_blocks (entry_id, mark_id, block_hash, seen_ms) VALUES (?, ?, ?, ?) '
@@ -3458,7 +3459,12 @@ export class Round {
   notePulledEvidenceBlock(entryIdBytes, markId, blockHash, seenMs, peer) {
     if (!markId || markId.length !== 32 || !blockHash || blockHash.length !== 32) return false;
     const from = String(peer || '?');
-    const at = Number.isSafeInteger(seenMs) ? seenMs : this.now();
+    // WHEN THIS SEAT HELD IT, NEVER WHEN A PEER SAYS IT DID (WINDOW-10-SPEC, kanban #3678, #1559): a peer's seenMs is unsigned,
+    // and kept as named it let one seat answer seenMs: 1 and make a mark this seat recorded only after the decision instant
+    // count in that window (merged MIN into this seat's own row, or a new row at 1). A pulled record is stamped with this
+    // seat's clock at the pull; merged into a row already here it never lowers that row's time. `seenMs` is not read.
+    void seenMs;
+    const at = this.now();
     const merge = this.db.prepare('UPDATE evidence_blocks SET seen_ms = MIN(COALESCE(seen_ms, ?), ?) '
       + 'WHERE entry_id = ? AND mark_id = ? AND block_hash = ?').run(at, at, entryIdBytes, markId, blockHash);
     if (merge.changes > 0) return true;
