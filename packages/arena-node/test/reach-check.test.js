@@ -61,3 +61,28 @@ test('connecting back: the nonce matches, something else answers, nothing listen
   const closed = await httpConnectBack('127.0.0.1', port, nonce);
   assert.equal(closed.reached, false); assert.match(closed.why, /refused/);
 });
+
+// kanban #3700 (report #464): every spelling of a loopback/private address is refused, not only the one '::ffff:' prefix; the
+// seat dials and rate-limits the canonical address, so a respelling is neither a way in nor a fresh bucket.
+test('#3700 v4-mapped, v4-compatible and other embedded-v4 spellings are checked as the v4 address they name', async () => {
+  const { canonicalAddress } = await import('../src/reach-check.js');
+  for (const ip of ['0:0:0:0:0:ffff:7f00:1', '0000:0000:0000:0000:0000:ffff:a9fe:a9fe', '::ffff:7f00:1', '::FFFF:7F00:1', '::ffff:127.0.0.1',
+    '0:0:0:0:0:FFFF:127.0.0.1', '::ffff:a00:1', '::ffff:c0a8:1', '::7f00:1', '::127.0.0.1', '0:0:0:0:0:0:0:1', '0000::0001', '::',
+    '::ffff:0:7f00:1', '64:ff9b::7f00:1', '64:ff9b:1::a00:1', '2002:7f00:1::1', '2002:c0a8:1::1', 'fec0::1', 'FE80::1', 'fe80::1%eth0',
+    'FD00::1', 'FF02::1', '2001:db8::1', '2001:0:4136:e378:8000:63bf:3fff:fdd2', '[::1]', '127.1', '0x7f.0.0.1', '2130706433', '127.000.000.001', '', null])
+    assert.equal(isPublicAddress(ip), false, String(ip));
+  for (const ip of ['0:0:0:0:0:ffff:808:808', '::ffff:8.8.8.8', '2002:808:808::1', '2A01:4F8::1', '2606:4700:4700::1111'])
+    assert.equal(isPublicAddress(ip), true, ip);
+  assert.equal(canonicalAddress('0:0:0:0:0:ffff:7f00:1'), '127.0.0.1');
+  assert.equal(canonicalAddress('0000:0000:0000:0000:0000:ffff:0808:0808'), '8.8.8.8');
+  assert.equal(canonicalAddress('2A01:04F8:0:0::1'), '2a01:4f8::1');
+  let dialed = [];
+  const check = createReachCheck({ nowMs: () => 0, connectBack: async (ip) => { dialed.push(ip); return { reached: true, ms: 1 }; } });
+  const r = await check(reqFrom('127.0.0.1', '0:0:0:0:0:ffff:7f00:1'), { port: 9999, nonce: 'a'.repeat(20) });
+  assert.equal(r.status, 400, 'the report\'s request: refused'); assert.deepEqual(dialed, []);
+  const spellings = ['8.8.8.8', '::ffff:808:808', '0:0:0:0:0:ffff:808:808', '0000:0000:0000:0000:0000:ffff:0808:0808', '::FFFF:8.8.8.8', '::ffff:0808:0808', '0::ffff:808:808'];
+  const codes = [];
+  for (const s of spellings) codes.push((await check(reqFrom('127.0.0.1', s), { port: 1, nonce: 'a'.repeat(20) })).status);
+  assert.deepEqual(codes, [200, 200, 200, 200, 200, 200, 429], 'one bucket for every spelling of 8.8.8.8');
+  assert.deepEqual([...new Set(dialed)], ['8.8.8.8'], 'the canonical address is what is dialed');
+});
