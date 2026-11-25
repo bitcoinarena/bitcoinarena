@@ -30,6 +30,7 @@
 // carries no crypto, and `page-curve.js` is what the page loads beside it.
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
+import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 
 // `webcrypto` AND NOT `subtle`, which `seal.js` already declares at its own top
 // level. The bundle is a concatenation - `tools/bundle.js` refuses two private
@@ -356,9 +357,15 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
   return new Promise((resolve) => {
     let sock;
     let done = false;
+    // ONCE THE REQUEST HAS GONE OUT, NO ANSWER BUT THE WALLET'S OWN SAYS IT WAS NOT DONE (kanban #3692, bypass audit 3): a
+    // relay can forward the request, the wallet act on it, and the relay then say OK false or close. Every ending that is
+    // not the wallet's signed answer carries `sent: true` from that point, so a caller can tell "refused" from "unknown".
+    let sent = false;
     const finish = (answer) => {
       if (done) return;
       done = true;
+      if (answer.fromWallet) { const { fromWallet, ...rest } = answer; answer = rest; }
+      else if (sent && !answer.ok) answer = { ...answer, sent: true };
       clearTimeout(timer);
       try { if (sock) sock.close(); } catch { /* going away anyway */ }
       resolve(answer);
@@ -393,6 +400,7 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
       sock.send(JSON.stringify(['REQ', sub, {
         kinds: [NWC_RESPONSE], authors: [toHex(where.walletPubkey)], '#e': [event.id],
       }]));
+      sent = true;
       sock.send(JSON.stringify(['EVENT', event]));
       return undefined;
     });
@@ -405,7 +413,8 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
 
       // A RELAY THAT REFUSED THE EVENT IS AN ANSWER TOO. Without this the
       // wallet is blamed for a timeout that the relay caused.
-      if (frame[0] === 'OK' && frame[2] === false)
+      // ONLY AN OK THAT NAMES THIS REQUEST (kanban #3692): one naming another event is not about it and is passed over.
+      if (frame[0] === 'OK' && frame[2] === false && event && frame[1] === event.id)
         return finish({ ok: false, why: `the relay refused the request: ${frame[3] || 'no reason given'}` });
       if (frame[0] !== 'EVENT' || !frame[2]) return;
       // ONLY THE WALLET'S OWN ANSWER TO THIS REQUEST (kanban #1471, feedback #004 by Hexbox Tools 2026-11-11: any EVENT the relay sent was decrypted and
@@ -428,7 +437,7 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
       // sentence that says what to do.
       if (said.error)
         return finish({
-          ok: false, code: said.error.code,
+          ok: false, fromWallet: true, code: said.error.code,
           why: `the wallet refused: ${said.error.code || 'no code'} ${said.error.message || ''}`.trim(),
         });
       return finish({ ok: true, result: said.result, resultType: said.result_type });
@@ -556,12 +565,25 @@ export async function makeInvoice(where, amountMsat, options = {}) {
 export async function payInvoice(where, invoice, options = {}) {
   if (typeof invoice !== 'string' || !invoice.trim())
     return { ok: false, why: 'there is no invoice to pay' };
+  // THE PREIMAGE IS THE RECEIPT ONLY IF IT HASHES TO THE INVOICE'S PAYMENT HASH (kanban #3693, bypass audit 3): 64 hex
+  // characters were taken as proof of payment, so a wallet answering any preimage had a donation share recorded paid -
+  // zap.js sendZap already checked the hash. The hash is read here, before the wallet is asked: an invoice with none is
+  // not sent, because nothing could show it was paid.
+  let paymentHash;
+  try { paymentHash = decodeBolt11(invoice).paymentHash; } catch (e) { return { ok: false, why: `that is not an invoice this page can read: ${e.message}` }; }
+  if (!(paymentHash instanceof Uint8Array) || paymentHash.length !== 32) return { ok: false, why: 'that invoice names no payment hash, so no preimage could show it was paid' };
   const said = await nwcCall(where, {
     method: 'pay_invoice', params: { invoice: invoice.trim() },
   }, options);
+  // A RELAY'S FAILURE AFTER THE REQUEST WENT OUT IS NOT A REFUSAL (kanban #3692): the wallet may have paid, so it is unknown.
+  if (!said.ok && said.sent) return { ...said, unknown: true, why: `the wallet may have paid it: ${said.why}` };
   if (!said.ok) return said;
   const preimage = said.result && said.result.preimage;
   if (typeof preimage !== 'string' || !/^[0-9a-f]{64}$/i.test(preimage))
-    return { ok: false, why: 'the wallet said it paid and produced no preimage' };
-  return { ok: true, preimage, feesPaidMsat: said.result.fees_paid };
+    return { ok: false, unknown: true, why: 'the wallet said it paid and produced no preimage' };
+  // A WALLET THAT SAYS IT PAID WITH A PREIMAGE THAT IS NOT THE INVOICE'S IS NOT A RECEIPT, and not a refusal either:
+  // `unknown` - it may have paid, so a caller notes the payment as asked and never asks again (kanban #3693).
+  if (toHex(sha256(fromHex(preimage.toLowerCase()))) !== toHex(paymentHash))
+    return { ok: false, unknown: true, why: 'the wallet said it paid, and its preimage is not the invoice\'s' };
+  return { ok: true, preimage: preimage.toLowerCase(), feesPaidMsat: said.result.fees_paid };
 }

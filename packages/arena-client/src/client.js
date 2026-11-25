@@ -1806,7 +1806,15 @@ export class Client {
       else wallet = await payInvoice(where, answer.pr, {
         curve, random: random || ((n) => crypto.getRandomValues(new Uint8Array(n))), ...options,
       });
+      // A PAYMENT WHOSE OUTCOME THE WALLET LEFT UNKNOWN (kanban #3693: it said paid with a preimage that is not the
+      // invoice's) is neither paid nor unpaid: it stays noted as asked, so a reload reports it unknown and never asks again.
+      if (!wallet.ok && wallet.unknown) { unknown.push({ lnurl: share.lnurl, amountMsat: share.amountMsat, why: `the wallet's answer does not show it paid: ${wallet.why}` }); continue; }
       if (!wallet.ok) { unpaid(`the wallet did not pay it: ${wallet.why}`); continue; }
+      if (typeof wallet.preimage === 'string' && /^[0-9a-f]{64}$/i.test(wallet.preimage)
+        && toHex(sha256(fromHex(wallet.preimage.toLowerCase()))) !== toHex(fits.paymentHash)) {
+        unknown.push({ lnurl: share.lnurl, amountMsat: share.amountMsat, why: 'the wallet said it paid, and its preimage is not the invoice\'s' });
+        continue;
+      }
       paid.push({ lnurl: share.lnurl, url, amountMsat: share.amountMsat, paymentHash: fits.paymentHash, preimage: wallet.preimage });
       note({ state: 'paid', url });
       if (log && typeof log.record === 'function') log.record({ amountMsat: share.amountMsat, paymentHash: fits.paymentHash, roundId: entry.roundId || (this.where && this.where.roundId), kind: 'donation' });

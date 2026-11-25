@@ -211,22 +211,27 @@ test('nwcCall answers every way a wallet can fail to answer, by name', async () 
     return { port: wss.address().port, close: () => new Promise((r) => wss.close(r)) };
   };
   const refuses = await relay((sock, f) => { sock.send('not json'); sock.send(JSON.stringify({ not: 'a frame' })); if (f[0] === 'EVENT') sock.send(JSON.stringify(['OK', f[1].id, false, 'blocked: rate limit'])); });
-  assert.deepEqual(await call(where(refuses.port)), { ok: false, why: 'the relay refused the request: blocked: rate limit' });
+  assert.deepEqual(await call(where(refuses.port)), { ok: false, sent: true, why: 'the relay refused the request: blocked: rate limit' });
   await refuses.close();
   const binary = await relay((sock, f) => { if (f[0] === 'EVENT') { sock.send(Buffer.from('["EVENT"]'), { binary: true }); sock.send(JSON.stringify(['OK', f[1].id, false, 'after a binary frame'])); } });
-  assert.deepEqual(await call(where(binary.port)), { ok: false, why: 'the relay refused the request: after a binary frame' });
+  assert.deepEqual(await call(where(binary.port)), { ok: false, sent: true, why: 'the relay refused the request: after a binary frame' });
   await binary.close();
   const silent = await relay(() => {});
-  assert.deepEqual(await call(where(silent.port), { timeoutMs: 300 }), { ok: false, why: 'the wallet did not answer in 300 ms' });
+  assert.deepEqual(await call(where(silent.port), { timeoutMs: 300 }), { ok: false, sent: true, why: 'the wallet did not answer in 300 ms' });
   await silent.close();
   const hangs = await relay((sock, f) => { if (f[0] === 'EVENT') sock.close(); });
-  assert.deepEqual(await call(where(hangs.port)), { ok: false, why: 'that relay closed before the wallet answered' });
+  assert.deepEqual(await call(where(hangs.port)), { ok: false, sent: true, why: 'that relay closed before the wallet answered' });
   await hangs.close();
   const noReason = await relay((sock, f) => { if (f[0] === 'EVENT') sock.send(JSON.stringify(['OK', f[1].id, false])); });
-  assert.deepEqual(await call(where(noReason.port)), { ok: false, why: 'the relay refused the request: no reason given' });
+  assert.deepEqual(await call(where(noReason.port)), { ok: false, sent: true, why: 'the relay refused the request: no reason given' });
   await noReason.close();
+  // kanban #3692: every ending after the request went out that is not the wallet's own answer says `sent: true` - the wallet
+  // may have acted on it - and an OK false that names another event is passed over
+  const stray = await relay((sock, f) => { if (f[0] === 'EVENT') sock.send(JSON.stringify(['OK', 'ee'.repeat(32), false, 'not yours'])); });
+  assert.deepEqual(await call(where(stray.port), { timeoutMs: 300 }), { ok: false, sent: true, why: 'the wallet did not answer in 300 ms' });
+  await stray.close();
   const garbage = await relay((sock, f) => { if (f[0] === 'EVENT') sock.send(JSON.stringify(['EVENT', 'sub', { content: 'no iv here' }])); });
   // an event the relay made up - no id, no signature, not the wallet's - is not the answer (kanban #1471): it is passed over, and the wallet's own is waited for
-  assert.deepEqual(await call(where(garbage.port), { timeoutMs: 300 }), { ok: false, why: 'the wallet did not answer in 300 ms' });
+  assert.deepEqual(await call(where(garbage.port), { timeoutMs: 300 }), { ok: false, sent: true, why: 'the wallet did not answer in 300 ms' });
   await garbage.close();
 });

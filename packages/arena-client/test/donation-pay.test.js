@@ -55,6 +55,7 @@ import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // k
 const rand = (n) => new Uint8Array(randomBytes(n));
 const sha256 = (s) => new Uint8Array(createHash('sha256').update(s).digest());
 const SET = TEST_DONATION_SET_REGTEST;
+const PREIMAGES = new Map();   // kanban #3693: each issued invoice's preimage, which an honest wallet hands back on paying it
 const SET_ID = donationSetId(SET.recipients);
 const NOW = 1788700000000;
 // A PAYING ROUND NAMES ITS FEDERATION, AND ITS ENTRY ITS LOCK (RULED 2026-09-24, the enum slice's fifth cut, as
@@ -99,9 +100,11 @@ async function recipients(behave = {}) {
     if (!m[2]) return json({ tag: 'payRequest', callback: `http://127.0.0.1:18777/lnurlp/${who}/cb`, metadata,
       minSendable: 1, maxSendable: 1000000000, commentAllowed: how === 'short-comment' ? 63 : 64 });
     const amountMsat = BigInt(u.searchParams.get('amount'));
-    const paymentHash = rand(32);
+    const preimage = rand(32);
+    const paymentHash = sha256(preimage);   // kanban #3693: a real invoice's hash is the hash of its preimage
     const pr = invoiceFor({ amountMsat: how === 'wrong-amount' ? amountMsat + 1n : amountMsat, paymentHash,
       descriptionHash: sha256(how === 'wrong-hash' ? 'not the metadata' : metadata) });
+    PREIMAGES.set(pr, toHex(preimage));
     issued.push({ who, amountMsat, paymentHash: toHex(paymentHash), comment: u.searchParams.get('comment'), pr });
     json({ pr, routes: [] });
   });
@@ -116,7 +119,7 @@ async function recipients(behave = {}) {
  * `refuseMsat`: an invoice of that amount fails as lnd's NO_ROUTE does (the 666 msat share under a
  * 1000 msat min_htlc, measured live).
  */
-async function walletOnARelay({ refuseMsat = null } = {}) {
+async function walletOnARelay({ refuseMsat = null, relay = 'honest', preimageOf = (pr) => PREIMAGES.get(pr) || 'ab'.repeat(32) } = {}) {
   const walletSecret = rand(32);
   const walletPubkey = pageCurve.pointX(walletSecret);
   const asked = [];
@@ -129,6 +132,9 @@ async function walletOnARelay({ refuseMsat = null } = {}) {
       if (frame[0] === 'REQ') { subs.add(frame[1]); return; }
       if (frame[0] !== 'EVENT') return;
       const event = frame[1];
+      // kanban #3692: `relay` 'stray-ok' first sends an OK false naming some other event; 'ok-false' and 'close' forward
+      // the request to the wallet (it pays) and then tell the client OK false, or close, in place of the wallet's answer.
+      if (relay === 'stray-ok') sock.send(JSON.stringify(['OK', 'ee'.repeat(32), false, 'blocked: not yours']));
       sock.send(JSON.stringify(['OK', event.id, true, '']));
       if (event.kind !== NWC_REQUEST) return;
       const opened = await nip04Decrypt(event.content, { secret: walletSecret, theirPubkey: fromHex(event.pubkey), curve: pageCurve });
@@ -138,9 +144,11 @@ async function walletOnARelay({ refuseMsat = null } = {}) {
       const refused = refuseMsat !== null && said.method === 'pay_invoice' && decodeBolt11(said.params.invoice).amountMsat === refuseMsat;
       const content = await nip04Encrypt(JSON.stringify(refused
         ? { result_type: 'pay_invoice', error: { code: 'PAYMENT_FAILED', message: 'FAILURE_REASON_NO_ROUTE' } }
-        : { result_type: 'pay_invoice', result: { preimage: 'ab'.repeat(32), fees_paid: 0 } }),
+        : { result_type: 'pay_invoice', result: { preimage: preimageOf(said.params.invoice), fees_paid: 0 } }),
         { secret: walletSecret, theirPubkey: fromHex(event.pubkey), curve: pageCurve, random: rand });
       const reply = await signEvent({ kind: NWC_RESPONSE, tags: [['p', event.pubkey], ['e', event.id]], content, secret: walletSecret, curve: pageCurve });
+      if (relay === 'ok-false') { sock.send(JSON.stringify(['OK', event.id, false, 'error: try again'])); return; }
+      if (relay === 'close') { sock.close(); return; }
       for (const sub of subs) sock.send(JSON.stringify(['EVENT', sub, reply]));
     });
   });
@@ -148,9 +156,9 @@ async function walletOnARelay({ refuseMsat = null } = {}) {
     close: () => new Promise((r) => wss.close(r)) };
 }
 
-async function pay(entry, behave) {
+async function pay(entry, behave, walletOpts) {
   const endpoints = await recipients(behave);
-  const wallet = await walletOnARelay();
+  const wallet = await walletOnARelay(walletOpts);
   const log = spendLog();
   try {
     // THE PLAYER'S OWN CLIENT PAYS IT - the page calls this method, never a free function.
@@ -183,7 +191,7 @@ test('the player wallet pays the donation (2026-10-01): payWith gets exactly the
     const client = new Client({ base: 'http://127.0.0.1:9', core: {}, sign: async () => new Uint8Array(64), verify: () => true });
     client.stakeCommitted = true;
     const said = await client.payDonation(entry, SET, { fetcher: endpoints.fetcher, random: rand,
-      payWith: async (invoice) => { paidBy.push(invoice); return { ok: true, preimage: 'cd'.repeat(32) }; } });
+      payWith: async (invoice) => { paidBy.push(invoice); return { ok: true, preimage: PREIMAGES.get(invoice) }; } });   // kanban #3693: the invoice's own preimage
     assert.equal(said.ok, true, said.why);
     assert.equal(said.paidMsat, 2000n);
     assert.deepEqual(paidBy, endpoints.issued.map((i) => i.pr), 'the player wallet paid something other than the recipients\' invoices');
@@ -665,4 +673,39 @@ test('a majority that serves the same set is not held for the slowest node (kanb
   assert.equal(hung[6].late, true, 'the hung node is left out as late, a refusal beside it or not');
   assert.equal(hung[0].why, '404 no such round');
   assert.deepEqual(Array.from(hung[1].bytes), [9]);
+});
+
+// kanban #3693 (bypass audit 3): payInvoice took any 64 hex characters as the preimage, so a wallet answering pay_invoice
+// with a preimage that is not the invoice's had the share recorded paid (zap.js sendZap checks sha256(preimage) against
+// the invoice's payment hash). Such a share is not paid as far as this tab can tell - it is outcome unknown, noted so it
+// is not asked again, and not in the spend log.
+test('#3693 a wallet whose preimage is not the invoice\'s has no share recorded paid', async () => {
+  const entry = entryOf(2000n);
+  const { said, asked, log } = await pay(entry, {}, { preimageOf: () => 'cd'.repeat(32) });
+  assert.equal(asked.length, 2, 'the wallet was asked for both shares');
+  assert.deepEqual(said.paid, [], 'no share is recorded paid on a preimage that does not hash to its invoice');
+  assert.equal(said.ok, false);
+  assert.equal(said.unknown.length, 2, 'both shares are outcome unknown');
+  assert.equal(log.count, 0, 'nothing in the spend log');
+  console.log(`  #3693 wrong preimage: paid ${said.paid.length}, unknown ${said.unknown.length}: ${said.unknown[0] && said.unknown[0].why}`);
+});
+
+// kanban #3692 (bypass audit 3): nwcCall took any ['OK', <any id>, false] and a socket close as the final answer, so a relay
+// that forwarded pay_invoice to the wallet (which paid) and then said OK false or closed had payDonation record the share
+// 'unpaid'. After the request has gone out, a relay's word is not the wallet's: such a share is outcome unknown. And an OK
+// false that names another event is not about this request at all.
+for (const relay of ['ok-false', 'close']) {
+  test(`#3692 a relay that forwards pay_invoice and then ${relay === 'close' ? 'closes' : 'says OK false'} leaves the share unknown, not unpaid`, async () => {
+    const { said, asked } = await pay(entryOf(2000n), {}, { relay });
+    assert.equal(asked.length, 2, 'the wallet was asked for (and paid) both shares');
+    assert.deepEqual(said.failed, [], 'no share the wallet may have paid is recorded unpaid');
+    assert.equal(said.unknown.length, 2);
+    console.log(`  #3692 relay ${relay}: failed ${said.failed.length}, unknown ${said.unknown.length}: ${said.unknown[0] && said.unknown[0].why}`);
+  });
+}
+test('#3692 an OK false naming another event is passed over and the wallet\'s answer is still taken', async () => {
+  const { said, asked } = await pay(entryOf(2000n), {}, { relay: 'stray-ok' });
+  assert.equal(asked.length, 2);
+  assert.equal(said.ok, true, said.why);
+  assert.equal(said.paidMsat, 2000n);
 });
