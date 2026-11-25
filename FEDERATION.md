@@ -244,6 +244,11 @@ two. Every deposit and withdrawal above goes "through any of several gateways", 
   - it sets up LND, its channels, the gateway on it, and the peg-in from the node's wallet;
   - the node's custody agent announces the gateway (a claim signed by the node key) once its federation is founded.
 
+A gateway is the seat's that **proves** it (kanban #3739): its claim carries a signature by the gateway's Lightning key over (node key,
+federation id, gateway URL), made by the custody agent's LND, and the gateway's `routing_info` answers that key; a claim that names a
+gateway another claim proves counts for nothing. Claims without the proof count (first come) until the cut-over at testnet4 height
+169,488, then not at all.
+
 Full rules: multiplayer_p2p.md §23A.9. Code: arena-protocol `gateway-seats.js`, `gateway-claim.js`, `gateway-seating.js`, `fee.js`
 (the 2026.0.15 split); arena-node `gateway-watch.js`; the installer's `gateway.js` and `custody-agent.js`.
 
