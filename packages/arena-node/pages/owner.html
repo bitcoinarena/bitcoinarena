@@ -682,6 +682,31 @@ async function nodeFeedbackPanel() {
 // himself human (a linked X account; for the node bounty from 16 Nov 07:06 UTC an X account alone) nor earn the community bonus. Usernames checked live, the stored links and the bonus, a
 // one-time link code for the bots, all at the faucet's Season 2 doors (POST /feedback/social, /link, /verify) with a NIP-98 sign-in by the owner key
 // that signs this page's reports (the report key the bounty pays). The rules beside it, with the node bounty's rule from 2026-11-16 07:06 UTC (#2876).
+// THE KEY THIS PAGE REPORTS WITH (kanban #3756, the user 2026-11-25: an X check answered "that account is linked to another report key", and nothing
+// said which key this page reports with): the Season 2 panel shows it as an npub. NIP-19 bech32 here, as /owner/client.js comes from the node and its
+// older releases have no encoder
+const B32 = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+function npubOf(hex) {
+  if (!/^[0-9a-f]{64}$/.test(String(hex))) return '';
+  const d = []; let acc = 0, bits = 0;
+  for (let i = 0; i < 64; i += 2) { acc = ((acc << 8) | parseInt(hex.slice(i, i + 2), 16)) & 0xfff; bits += 8; while (bits >= 5) { bits -= 5; d.push((acc >> bits) & 31); } }
+  if (bits) d.push((acc << (5 - bits)) & 31);
+  const G = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let c = 1; for (const x of [3, 3, 3, 3, 0, 14, 16, 21, 2, ...d, 0, 0, 0, 0, 0, 0]) { const b = c >>> 25; c = ((c & 0x1ffffff) << 5) ^ x; for (let i = 0; i < 5; i++) if ((b >>> i) & 1) c ^= G[i]; }
+  c = (c ^ 1) >>> 0; for (let i = 0; i < 6; i++) d.push((c >>> (5 * (5 - i))) & 31);
+  return 'npub1' + d.map((v) => B32[v]).join('');
+}
+// WHAT "LINKED TO ANOTHER REPORT KEY" MEANS (kanban #3756): one key per account, and this page's key is the owner key - the game page's Feedback reports
+// with the key you play with, so an account linked there belongs to that key. The faucet does not say which key holds it (an account is no lookup of
+// its key), so the line names the likely one and the two ways out
+function heldElsewhere(results, names) {
+  const held = Object.entries(results || {}).filter(([, r]) => r && /another report key/.test(String(r.why || ''))).map(([p]) => names[p] || p);
+  if (!held.length) return '';
+  return held.join(', ') + (held.length > 1 ? ': these accounts are' : ': that account is') + ' linked to another report key, not the one this page reports with (above).'
+    + ' Often that is the key you play with on the game page: its Feedback reports with that key, this page with your owner key.'
+    + ' One key holds an account. If the other key only typed the name, a link code from this page posted from the account takes it over;'
+    + ' if it was linked with a code, it stays with that key - report from there, or ask the team in Discord or Telegram to release it.';
+}
 const S2_ROWS = [
   { p: 'x', name: 'X', ph: 'yourname on X', join: 'https://x.com/bitcoinarena_io', joinText: 'Follow @bitcoinarena_io' },
   { p: 'telegram', name: 'Telegram', ph: 'yourname on Telegram', join: 'https://t.me/bitcoinarena_io', joinText: 'Join the group' },
@@ -720,8 +745,18 @@ function nodeSocialPanel(box, el) {
   const human = el('div', { cls: 'sub fbn-s-human', role: 'status' });
   const check = el('button', { type: 'button', text: 'Check' }), code = el('button', { type: 'button', text: 'Get a link code' });
   const say = el('div', { cls: 'sub fbn-s-say', role: 'status' }), codeSay = el('div', { cls: 'sub fbn-s-code', role: 'status' });
+  // kanban #3756: the key this page reports with, once it is signed in (never asks for a key on its own); filled again after a check or a code
+  const keyText = el('code', { cls: 'fbn-s-npub', text: 'sign in to see it' }), keyCopy = el('button', { type: 'button', cls: 'fbn-s-copy', text: 'Copy' });
+  const keyLine = el('div', { cls: 'sub fbn-s-key' }, el('span', { text: 'This page reports with your owner key: ' }), keyText, keyCopy);
+  keyCopy.hidden = true;
+  const showKey = () => { const n = me ? npubOf(me.pubkey) : ''; if (!n) return; keyText.textContent = n; keyCopy.hidden = false; };
+  keyCopy.onclick = async () => { try { await navigator.clipboard.writeText(keyText.textContent); keyCopy.textContent = 'Copied'; } catch { const r = document.createRange(); r.selectNodeContents(keyText); const g = getSelection(); g.removeAllRanges(); g.addRange(r); } };
+  const elsewhere = el('div', { cls: 'sub fbn-s-elsewhere', role: 'status' });
+  const names = Object.fromEntries(S2_ROWS.map((r) => [r.p, r.name]));
   const setChip = (p, kind, text) => { const f = fields[p]; if (!f) return; f.chip.className = 'fbn-s-chip ' + kind; f.chip.textContent = text; };
   const show = (j) => {
+    showKey();
+    if (j && j.results) elsewhere.textContent = heldElsewhere(j.results, names);
     for (const [p, res] of Object.entries((j && j.results) || {})) {
       if (res && res.member === true) setChip(p, 'ok', 'member');
       else if (res && res.member === false) setChip(p, 'no', /another report key/.test(String(res.why || '')) ? res.why : (p === 'x' || p === 'nostr' ? 'not following' : 'not a member'));
@@ -755,17 +790,20 @@ function nodeSocialPanel(box, el) {
       show({ links: j.links, flags: j.flags });
     } catch (e) { codeSay.textContent = (e && e.message) || 'no code'; } finally { code.disabled = false; }
   };
-  wrap.append(head, rules, rows, el('div', { cls: 'fbn-s-foot' }, bonus, check, code), human, say, codeSay);
+  wrap.append(head, rules, keyLine, rows, el('div', { cls: 'fbn-s-foot' }, bonus, check, code), human, elsewhere, say, codeSay);
   if (!document.getElementById('fbn-s-css')) { const st = document.createElement('style'); st.id = 'fbn-s-css';
     st.textContent = '#node-feedback .fbn-social{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:10px 0}'
       + '#node-feedback .fbn-s-rules{margin:6px 0 8px;padding-left:18px}#node-feedback .fbn-s-row{display:grid;grid-template-columns:80px 1fr auto;gap:4px 8px;align-items:center}'
       + '#node-feedback .fbn-s-join{grid-column:2/4;font-size:12.5px;margin:-2px 0 6px}#node-feedback .fbn-s-chip{font-size:12px;border-radius:10px;padding:2px 8px;border:1px solid #30363d;white-space:nowrap}'
       + '#node-feedback .fbn-s-chip.ok{color:#3fb950;border-color:#3fb950}#node-feedback .fbn-s-chip.no{color:#f85149;border-color:#f85149}#node-feedback .fbn-s-chip.wait{color:#d29922}'
       + '#node-feedback .fbn-s-foot{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 0}#node-feedback .fbn-s-code{word-break:break-word}'
+      + '#node-feedback .fbn-s-key{margin:0 0 8px}#node-feedback .fbn-s-npub{word-break:break-all;font-size:12px}#node-feedback .fbn-s-copy{margin-left:6px;padding:1px 8px;font-size:12px}'
+      + '#node-feedback .fbn-s-elsewhere{color:#d29922;margin:4px 0}#node-feedback .fbn-s-elsewhere:empty{display:none}'
       + '@media (max-width:520px){#node-feedback .fbn-s-row{grid-template-columns:1fr auto}#node-feedback .fbn-s-name{grid-column:1/3}#node-feedback .fbn-s-join{grid-column:1/3}}';
     document.head.append(st); }
   const before = box.querySelector('.fbn-levels'); if (before) before.after(wrap); else box.append(wrap);
   // what the faucet holds already - only when this page is signed in (never asks for a key on its own)
+  showKey();
   if (me) s2Post('social', {}).then((j) => { if (j && j.ok) show(j); }).catch(() => {});
   return wrap;
 }
