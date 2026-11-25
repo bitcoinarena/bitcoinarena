@@ -6,7 +6,7 @@
 // lock (developers' and reserves' parts spent) and then every seat refused its handout 409, and with it the entry. Here the order is the page's: the
 // handout to every seat (arena-client postHandout), and `lock` runs only once `needed` seats took it AND the time left - the smaller of this host's
 // clock and the seats' (their 201s' x-entry-close-in-ms) - still covers `leadMs`. A refused handout or a late answer leaves nothing locked.
-import { postHandout, h2hLockRefusal } from '../../arena-client/src/join.js';
+import { postHandout, h2hLockRecheck } from '../../arena-client/src/join.js';
 
 /**
  * Answers { ok: true, put, locks } (locked, `put.posted` maps each seat to its handout post, so its entry goes after it) or { ok: false, why, put }
@@ -15,7 +15,8 @@ import { postHandout, h2hLockRefusal } from '../../arena-client/src/join.js';
 export async function handoutThenLock({ body, needed, nodes, entryCloseMs, leadMs, lock, fetcher = fetch, waitMs = 6000, graceMs = 300, now = () => Date.now() }) {
   const put = await postHandout({ body, handout: { needed } }, nodes, { fetcher, needed, waitMs, graceMs });
   if (!put.ok) return { ok: false, why: `handout: ${put.why}${put.refused.length ? ` (${put.refused[0].slice(0, 160)})` : ''} - nothing was locked`, put };
-  const late = h2hLockRefusal({ put, entryCloseMs, leadMs, now: now() });
+  // kanban #3694: the seats asked again right before the lock (the table may have filled since the handout)
+  const late = await h2hLockRecheck({ stake: { body, handout: { needed } }, nodes, needed, put, entryCloseMs, leadMs, fetcher, waitMs, graceMs, now });
   if (late) return { ok: false, why: late, put };
   return { ok: true, put, locks: await lock() };
 }

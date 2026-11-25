@@ -16197,6 +16197,20 @@ function h2hLockRefusal({ put = null, entryCloseMs, leadMs, now = Date.now() } =
 }
 
 /**
+ * MAY A HEAD-TO-HEAD ORDER LOCK NOW, THE SEATS ASKED AGAIN? (kanban #3694, bypass audit of #2634 / #1485) The seats check the table (#2634: full)
+ * and the close (#1485) at POST /handout only, and the funding runs after it with no bound: a table whose last seat was taken in that gap was
+ * locked on anyway, and every seat refused the entry ("already seats ... 2 players") with the lock's fee parts spent. Right before the lock the
+ * handout is posted once more (the same bytes: a seat that holds it takes it again, and every door check runs on it), and nothing is locked
+ * unless `needed` seats still take it; then h2hLockRefusal on that fresh answer. Answers null (lock) or why not (nothing is locked).
+ * The gap left is the lock's own time (2-3 s), the one the #1485 lead covers.
+ */
+async function h2hLockRecheck({ stake, nodes, needed, put = null, entryCloseMs, leadMs, fetcher = fetch, waitMs = 6000, graceMs = 300, now = () => Date.now() } = {}) {
+  const fresh = await postHandout(stake, nodes, { fetcher, needed, waitMs, graceMs });
+  if (!fresh.ok) return `the seats no longer take this handout - ${fresh.refused.length ? fresh.refused[0].slice(0, 200) : fresh.why} - nothing was locked`;
+  return h2hLockRefusal({ put: fresh.seatCloseAtMs !== null && fresh.seatCloseAtMs !== undefined ? fresh : put, entryCloseMs, leadMs, now: now() });
+}
+
+/**
  * DOES THIS ROUND ASK FOR MONEY?
  *
  * One line, and it lives HERE rather than in the page for the reason the hold
@@ -44291,7 +44305,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          settlementBy: settlementBy,
          stakeFor: stakeFor, fetchSettlementSignerNodes: fetchSettlementSignerNodes,
          roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,
-         seatClockAheadMs: seatClockAheadMs, h2hLockRefusal: h2hLockRefusal,
+         seatClockAheadMs: seatClockAheadMs, h2hLockRefusal: h2hLockRefusal, h2hLockRecheck: h2hLockRecheck,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,
          lockStake: lockStake, handLock: handLock, lockSecretFor: lockSecretFor, lockLine: lockLine, inviteForRound: inviteForRound,
