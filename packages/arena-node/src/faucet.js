@@ -205,6 +205,7 @@ export function feedbackDecide({ text, ip = null, build = '', game = '', round =
 // re-posting made-up rounds every second pushed every real player's table out of its reading. Each row now names the callers (ipKey) that said
 // it; the list ranks them per network (below), and since #1912 a caller's extra rows are ranked behind, never deleted.
 export const OPPONENT_WANT_MS = 12000, OPPONENT_WANTS_MOST = 64, OPPONENT_WANTS_PER_CALLER = 2;
+export const OPPONENT_TAP_KEYS = 8;   // kanban #3729: distinct verified tap keys kept per round (a row's memory stays bounded)
 // A TAP IS SIGNED (kanban #2087, the owner 2026-11-14: "a signed tap only"): the bare `tapped: true` the door took was anyone's, so one caller
 // posting a real open round with it sent the bot to an empty table and past the real player's. A tap now counts only as { key, sig }: the
 // tapping tab's identity key and its Schnorr signature over presenceId(round, key) - the presence proof it says at the round's seats
@@ -224,10 +225,15 @@ export function opponentWant(wants, round, nowMs = Date.now(), tap = null, who =
   if (who) by.add(who);
   // kanban #2901: the signed tap's key is kept (only a key whose signature over this round verified), so the bot can come at once for a key it
   // already saw play - a key is public; the bot still stakes for a known key only (rps-opponent.mjs KNOWN)
+  // EVERY KEY THAT TAPPED, AND THE TAP KEY ONLY WHEN ONE KEY DID (kanban #3309, #3729, audit faucet a5-2-1 + a8-1-1): one key per row let a
+  // stranger who read the public round id sign a tap of a real player's round with his own fresh key and own the row's key - the newest tap
+  // won (#3309), and keeping the first only moved the race to a stranger who taps first (#3729) - and the test opponent then learnt his
+  // never-staked key as KNOWN once the player's lock verified. A tap key does not say which entry it played, so two keys on one round name
+  // no single key; the row lists them all (at most OPPONENT_TAP_KEYS) for the known-player fast path, which needs no single one
   const signed = tapSigned(round, tap), was = wants.get(round);
-  // THE FIRST VERIFIED TAP KEY OF A ROUND STAYS (kanban #3309, audit faucet a5-2-1): the newest one replaced it, so a stranger who read GET /opponent
-  // signed a tap of a real player's round with his own key, and the test opponent learnt his never-staked key as KNOWN once the player's lock verified
-  wants.set(round, { at: nowMs, tapped: signed || was?.tapped === true, tapKey: was?.tapKey || (signed ? String(tap.key) : null), by });
+  const tapKeys = new Set(was?.tapKeys || []);
+  if (signed && tapKeys.size < OPPONENT_TAP_KEYS) tapKeys.add(String(tap.key));
+  wants.set(round, { at: nowMs, tapped: signed || was?.tapped === true, tapKeys, by });
   return { ok: true };
 }
 // ONE NETWORK, NOT ONE ADDRESS (kanban #1718, #1781): an IPv6 caller is keyed by its /64, and any home line holds a /56 (256 /64s), so the cap of 2
@@ -261,5 +267,5 @@ function opponentEvict(wants, newNet) {
 export const opponentWants = (wants, nowMs = Date.now()) => {
   const live = [...wants].filter(([, x]) => nowMs - x.at <= OPPONENT_WANT_MS).sort((a, b) => b[1].at - a[1].at), seen = new Map();
   const ranked = live.map(([round, x]) => { const nets = netsOf(round, x); const rank = Math.min(...nets.map((n) => seen.get(n) || 0)); for (const n of nets) seen.set(n, (seen.get(n) || 0) + 1); return { round, x, rank }; });
-  return ranked.sort((a, b) => a.rank - b.rank || b.x.at - a.x.at).map(({ round, x }) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped, tapKey: x.tapKey || null }));
+  return ranked.sort((a, b) => a.rank - b.rank || b.x.at - a.x.at).map(({ round, x }) => ({ round, agoMs: nowMs - x.at, tapped: x.tapped, tapKey: x.tapKeys && x.tapKeys.size === 1 ? [...x.tapKeys][0] : null, tapKeys: x.tapKeys ? [...x.tapKeys] : [] }));
 };

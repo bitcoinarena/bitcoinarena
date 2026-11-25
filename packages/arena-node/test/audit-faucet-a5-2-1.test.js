@@ -3,7 +3,8 @@
 // signs a tap of a real player's open round with his OWN key replaces the player's tapKey. tools/rps-opponent.mjs then learns w.tapKey as a
 // KNOWN player as soon as the real player's stake lock verifies (rps-opponent.mjs:334 knownAdd(String(w.tapKey))) - the stranger's key, which
 // never staked - and from then on his signed taps alone send the bot into empty rounds ('a known player tapped', :316).
-// Safe behaviour asserted: a later tap by ANOTHER key does not replace the key that tapped the round first.
+// Safe behaviour asserted: a later tap by ANOTHER key does not become the round's tap key. Since #3729 two keys on one round name no single
+// tap key (tapKey null, both in tapKeys; opponent-tap-keys-3729.test.js); before, the key that tapped first stayed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
@@ -33,5 +34,6 @@ test('a stranger\'s signed tap on a real player\'s round does not replace the pl
   assert.equal(opponentWant(wants, round, now + 500, sTap, '198.51.100.9').ok, true);
   const row = opponentWants(wants, now + 600).find((x) => x.round === round);
   assert.ok(row);
-  assert.equal(row.tapKey, pTap.key, `the round's tap key is now the stranger's (${String(row.tapKey).slice(0, 8)}), not the player's (${pTap.key.slice(0, 8)})`);
+  assert.notEqual(row.tapKey, sTap.key, `the round's tap key is now the stranger's (${String(row.tapKey).slice(0, 8)}), not the player's (${pTap.key.slice(0, 8)})`);
+  assert.equal(row.tapKey, null, 'two keys tapped: no single tap key (kanban #3729)');
 });
