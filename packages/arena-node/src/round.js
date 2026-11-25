@@ -3557,7 +3557,8 @@ export class Round {
     const named = blockHash === undefined ? this.tipOf(roundIdBytes) : blockHash;
     const block = named && named.length === 32 ? named : new Uint8Array(32);
     if (!id) return;
-    // A PULLED RECORD KEEPS WHEN ITS PEER MADE IT (`seenMs`); a record held twice keeps the earlier time.
+    // `seenMs`: the moment of the record (a pulled one: verify.js, never earlier than this seat's own record - kanban #3678); a
+    // record held twice keeps the earlier time.
     const at = Number.isSafeInteger(seenMs) ? seenMs : this.now();
     // This seat's own record (pulled_from NULL), also where a peer's record of the same block was kept before.
     this.db.prepare('INSERT INTO evidence_blocks (entry_id, mark_id, block_hash, seen_ms) VALUES (?, ?, ?, ?) '
@@ -3579,7 +3580,15 @@ export class Round {
   notePulledEvidenceBlock(entryIdBytes, markId, blockHash, seenMs, peer) {
     if (!markId || markId.length !== 32 || !blockHash || blockHash.length !== 32) return false;
     const from = String(peer || '?');
-    const at = Number.isSafeInteger(seenMs) ? seenMs : this.now();
+    // A PEER'S WORD NEVER BACKDATES A MARK THIS SEAT RECORDED ITSELF (WINDOW-10-SPEC, kanban #3678, #1559): a peer's seenMs is
+    // unsigned, and kept as named it let one seat answer seenMs: 1 and make a mark this seat recorded only after the decision
+    // instant count in that window (merged MIN into this seat's own row, or a new row at 1). For a mark this seat holds a
+    // record of itself, a pulled record is never earlier than this seat's own earliest record of it. A mark this seat never
+    // held itself keeps the time its peer made the record (the late mark whose forward was lost, M3.3-34 path 2, ruled).
+    const ownAt = this.db.prepare('SELECT MIN(seen_ms) t FROM evidence_blocks WHERE entry_id = ? AND mark_id = ? AND pulled_from IS NULL')
+      .get(entryIdBytes, markId).t;
+    let at = Number.isSafeInteger(seenMs) && seenMs >= 0 ? Math.min(seenMs, this.now()) : this.now();
+    if (ownAt !== null && ownAt !== undefined && Number(ownAt) > at) at = Number(ownAt);
     const merge = this.db.prepare('UPDATE evidence_blocks SET seen_ms = MIN(COALESCE(seen_ms, ?), ?) '
       + 'WHERE entry_id = ? AND mark_id = ? AND block_hash = ?').run(at, at, entryIdBytes, markId, blockHash);
     if (merge.changes > 0) return true;
@@ -3598,6 +3607,13 @@ export class Round {
     this.db.prepare('INSERT OR IGNORE INTO evidence_blocks (entry_id, mark_id, block_hash, seen_ms, pulled_from) VALUES (?, ?, ?, ?, ?)')
       .run(entryIdBytes, markId, blockHash, at, from);
     return true;
+  }
+
+  /** This seat's own earliest record of a mark (pulled_from NULL), or null - a peer's time never comes before it (kanban #3678). */
+  ownEvidenceAt(entryIdBytes, markId) {
+    const t = this.db.prepare('SELECT MIN(seen_ms) t FROM evidence_blocks WHERE entry_id = ? AND mark_id = ? AND pulled_from IS NULL')
+      .get(entryIdBytes, markId).t;
+    return t === null || t === undefined ? null : Number(t);
   }
 
   /**
