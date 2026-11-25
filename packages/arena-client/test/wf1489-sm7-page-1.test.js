@@ -83,7 +83,7 @@ test('wf1489-sm7-page-1: a round of another federation found by the 24 h scan is
   const b = html.indexOf(SCAN_END, a); assert.ok(b > a);
   const slice = html.slice(a, b + SCAN_END.length);
   const ARENACLIENT = { ...PL, toHex, fromHex, findOwedRounds: (ask) => PL.findOwedRounds({ ...ask, fetcher: signedSeats(seats).fetcher }) };
-  const window = { ARENA_CURVE: pageCurve, ARENA_TRACK: () => {}, ARENA_BROWSER_STORE: () => storage,
+  const window = { ARENA_OPR_IN_PLAY: () => false, /* kanban #3335: the page defines it beside the scan; no Orange Pill Run in play */ ARENA_CURVE: pageCurve, ARENA_TRACK: () => {}, ARENA_BROWSER_STORE: () => storage,
     ARENA_FED_LOADS: new Map([[toHex(FED_B), { federation: toHex(FED_B), invite: INVITE_B }]]) };
   let looked = 0;
   const findTheRoundsOwed = pageFunction(PAGE, ['window', 'ARENACLIENT', 'collectSeed', 'vault', 'OWED_LOOKBACK_MS', 'lookThePayout'], [slice], 'return findTheRoundsOwed;')(

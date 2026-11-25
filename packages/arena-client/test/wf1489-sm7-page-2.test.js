@@ -73,7 +73,7 @@ test('wf1489-sm7-page-2: an order whose collect record was lost is found again b
   const a = html.indexOf(SCAN_FROM); assert.ok(a > 0, 'index.html holds findTheRoundsOwed');
   const b = html.indexOf(SCAN_END, a); assert.ok(b > a);
   const ARENACLIENT = { ...PL, toHex, fromHex, findOwedRounds: (ask) => PL.findOwedRounds({ ...ask, fetcher: signedSeats(seats).fetcher }) };
-  const window = { ARENA_CURVE: pageCurve, ARENA_TRACK: () => {}, ARENA_BROWSER_STORE: () => storage };
+  const window = { ARENA_OPR_IN_PLAY: () => false, /* kanban #3335: the page defines it beside the scan; no Orange Pill Run in play */ ARENA_CURVE: pageCurve, ARENA_TRACK: () => {}, ARENA_BROWSER_STORE: () => storage };
   const findTheRoundsOwed = pageFunction(PAGE, ['window', 'ARENACLIENT', 'collectSeed', 'vault', 'OWED_LOOKBACK_MS', 'lookThePayout'],
     [html.slice(a, b + SCAN_END.length)], 'return findTheRoundsOwed;')(window, ARENACLIENT, () => seed, () => storage, 24 * 3600 * 1000, () => {});
   await findTheRoundsOwed({ federation: INVITE, nodes: NODES });

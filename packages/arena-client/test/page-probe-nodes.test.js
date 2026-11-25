@@ -35,5 +35,6 @@ test('the probe runs every 30 s, not every 2 s', () => {
 test('the lobby paint waits 30 s while the player is in a run', () => {
   assert.match(html, /const LOBBY_IN_RUN_MS = 30000;/);
   assert.match(html, /const inRun = \(\) => !!\(window\.ARENA_JOIN && window\.ARENA_JOIN\.state === 'joined' && window\.ARENA_UNITY_LOBBY && window\.ARENA_UNITY_LOBBY\.showing === false\);/);
-  assert.match(html, /setInterval\(\(\) => \{ if \(painting\) return; if \(inRun\(\) && Date\.now\(\) - \(window\.ARENA_LOBBY_PAINTED_AT \|\| 0\) < LOBBY_IN_RUN_MS\) return;/);
+  // kanban #3335: an Orange Pill Run in play holds the paint as well (its check sits before the in-run one)
+  assert.match(html, /setInterval\(\(\) => \{ if \(painting\) return; (if \(window\.ARENA_OPR_IN_PLAY && window\.ARENA_OPR_IN_PLAY\(\)\) return; )?if \(inRun\(\) && Date\.now\(\) - \(window\.ARENA_LOBBY_PAINTED_AT \|\| 0\) < LOBBY_IN_RUN_MS\) return;/);
 });

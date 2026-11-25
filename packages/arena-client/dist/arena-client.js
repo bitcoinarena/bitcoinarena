@@ -28692,6 +28692,30 @@ async function entryAnswered(fetcher, url, body, ms = ENTRY_ANSWER_MS) {
 }
 const entryWords = (bytes) => new TextDecoder().decode(bytes.subarray(0, 4096)).trim();
 
+// THE HOME SEAT'S SILENCE IS NOT ITS REFUSAL (kanban #3673, state audit #1489 sm1-page-1, regression of #3596): the seat's door runs its
+// federation checks (gateways, guardian bonds, fees) BEFORE round.enter and answers 201 after, so a seat slower than ENTRY_ANSWER_MS
+// still took the entry - and relayed it to every seat - while join had thrown: the page said "Not joined", the stake lock stayed named in
+// an entry every seat held (#1839) and was handed to none, and the entry was voided at the start deadline. A home seat that does not
+// answer in time is asked GET /entry?id= (with the peers it relays to) until ENTRY_HELD_WAIT_MS: an entry a seat holds is a joined entry;
+// only a seat's own refusal - or no seat holding it by then - ends the join.
+const ENTRY_HELD_WAIT_MS = 60000;
+const ENTRY_HELD_EVERY_MS = 1000;
+async function entryHeldAnywhere(mine, seats, { until, fetcher = (...a) => fetch(...a) } = {}) {
+  const id = toHex(mine);
+  while (Date.now() < until) {
+    const held = await Promise.all(seats.map(async (seat) => {
+      try {
+        const r = await fetcher(`${String(seat).replace(/\/+$/, '')}/entry?id=${id}`, { signal: AbortSignal.timeout(ENTRY_ANSWER_MS) });
+        if (r.status !== 200) return false;
+        return agrees(mine, entryId(decodeEntryContract(new Uint8Array(await r.arrayBuffer()))), 'entry');
+      } catch { return false; }
+    }));
+    if (held.some(Boolean)) return true;
+    await new Promise((res) => setTimeout(res, ENTRY_HELD_EVERY_MS));
+  }
+  return false;
+}
+
 const OPENED_ROUNDS = new Map();
 
 /**
@@ -29059,7 +29083,14 @@ class Client {
     // THE ENTRY THE STAKE LOCK IS NAMED IN, KEPT BEFORE THE ENTRY GOES OUT (kanban #1162): a lock already named in another entry throws here,
     // and this entry is not sent - the seats that took the first refuse the lock under any other
     if (this.stakeLock && typeof this.stakeLock.onNamed === 'function') this.stakeLock.onNamed(mine);
-    const r = await postEntry(`${this.base}/entry`, encodeEntryContract(entry));
+    let r;
+    try { r = await postEntry(`${this.base}/entry`, encodeEntryContract(entry)); } catch (e) {
+      // a seat's own refusal stands; silence is asked about (kanban #3673)
+      if (/^the node refused the entry/.test(String(e && e.message))) throw e;
+      const seats = [this.base, ...(Array.isArray(this.peers) ? this.peers : [])];
+      if (!(await entryHeldAnywhere(mine, seats, { until: Date.now() + ENTRY_HELD_WAIT_MS }))) throw e;
+      r = { status: 201, bytes: mine };
+    }
 
     // WHO THIS CLIENT JOINED, kept for the ghost field. A reload keeps the
     // player's key (sessionStorage) and draws a NEW entry, so the signer node this tab

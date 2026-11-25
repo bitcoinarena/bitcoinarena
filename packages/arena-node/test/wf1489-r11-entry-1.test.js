@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { lockRound, lockAndPlay, closeRound, untilSettled } from './lock-round-fixture.js';
+import { lockRound, lockAndPlay, closeRound, untilSettled, proposerOf } from './lock-round-fixture.js';
 import { b32 } from './window-fixture.js';
 import { skipTo, testNow } from './test-clock.js';
 import { NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -61,8 +61,28 @@ test('#1489 r11-entry-1 the fee lock of a head-to-head entry left outside the se
     skipTo(Number(w.c.entryCloseMs) + 500);
     await reveal(w, a, ROCK, s1); await reveal(w, b, SCISSORS, s2); await reveal(w, c, SCISSORS, s3);
     await closeRound(w);
-    const settled = await untilSettled(w);
+    // kanban #3662: ACCEPTED at BOTH signer nodes - the forfeit needs both, and the one that did not submit the settlement finds it in the
+    // federation a moment later (this test failed ~1 in 2-4 asking in between: that node answered "not a qualifier, so its stake lock is not
+    // forfeited", the seats themselves the same at both)
+    const settled = await untilSettled(w, 30000, { every: true });
     assert.equal(settled.state, 'ACCEPTED', settled.why);
+    // THAT INTERLEAVING, MADE SURE (kanban #3662): the other node's settlement held at SUBMITTING, as it stands before it finds the transaction.
+    // Its answer says the lock comes back once its settlement is ACCEPTED - not that it is not forfeited - and it does, once it is
+    { const other = w.nodes.find((d) => d !== proposerOf(w));
+      const row = other.round.lockSettlement(w.rid);
+      assert.ok(row && row.state === 'ACCEPTED', `the other node holds its settlement ACCEPTED: ${JSON.stringify(row && row.state)}`);
+      other.round.putLockSettlement({ roundId: w.rid, txid: row.txid, message: row.message, signature: row.signature, state: 'SUBMITTING', why: row.why });
+      const early = await fetch(`${base(other)}/forfeit?round=${toHex(w.rid)}&entry=${toHex(out.eid)}`);
+      const earlyWhy = await early.text();
+      const earlyFee = await fetch(`${base(other)}/forfeit?round=${toHex(w.rid)}&entry=${toHex(out.eid)}&lock=fee`);
+      const earlyFeeWhy = await earlyFee.text();
+      other.round.putLockSettlement({ roundId: w.rid, txid: row.txid, message: row.message, signature: row.signature, state: 'ACCEPTED', why: row.why });
+      console.log('  FACTS r11-entry-1 before ACCEPTED:', JSON.stringify({ stake: [early.status, earlyWhy.slice(0, 200)], fee: [earlyFee.status, earlyFeeWhy.slice(0, 200)] }));
+      assert.equal(early.status, 409, earlyWhy);
+      assert.match(earlyWhy, /got no seat; its lock comes back once the round's settlement is ACCEPTED at this signer node \(not yet: ask again\)/, 'the stake: not yet, not "not forfeited"');
+      assert.equal(earlyFee.status, 409, earlyFeeWhy);
+      assert.match(earlyFeeWhy, /got no seat; its lock comes back once the round's settlement is ACCEPTED at this signer node \(not yet: ask again\)/, 'the fee lock: not yet');
+    }
     const st = await fetch(`${base(w.nodes[0])}/forfeit?round=${toHex(w.rid)}&entry=${toHex(out.eid)}`);
     const stWhy = st.status === 200 ? 'signed' : (await st.text()).slice(0, 200);
     const fe = await fetch(`${base(w.nodes[0])}/forfeit?round=${toHex(w.rid)}&entry=${toHex(out.eid)}&lock=fee`);
