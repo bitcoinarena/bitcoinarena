@@ -50,3 +50,36 @@ test('the games list, Settings or any page over it: no stall; the count starts w
 test('a tab in the background is not stalled; back in front the 90 s start again', () => {
   assert.equal(run({ seconds: 300, hidden: (t) => t < 150000 }).failedAt, 239, 'last hidden at 149 s');
 });
+
+// kanban #3703 (report #467): before Unity loads, the bar is drawn from the boot steps (ARENA_BOOT_STEP, --boot) while #pct still holds
+// Unity's '0%'; the stall said '"Opening your wallet …" (0%)' under a bar at ~60 %. It says the step's percent until Unity's own shows.
+function stallWith({ unity }) {
+  let now = 0, tick = null;
+  const boot = { contains: () => true };
+  const err = { textContent: '', classList: { contains: () => false } };
+  const pct = unity ? { textContent: '42 %  ·  9.4 / 22.3 MB', dataset: { from: 'unity' } } : { textContent: '0%', dataset: {} };
+  const stage = { textContent: 'Connecting …' };
+  const bar = { style: { setProperty() {} } };
+  const document = { getElementById: (id) => ({ boot, stage, bar })[id] || null, elementFromPoint: () => 'boot-child', hidden: false,
+    documentElement: { classList: { add() {} } } };
+  const window = { innerWidth: 390, innerHeight: 844 };
+  const failed = [];
+  pageFunction(PAGE, ['document', 'window', 'boot', 'err', 'pct', 'stage', 'STAGES', 'fail', 'setInterval', 'clearInterval', 'Date', 'console'],
+    [WATCH, HELPERS])(
+    document, window, boot, err, pct, stage, [[0, 'Loading the program …']], (m) => failed.push(m), (fn) => { tick = fn; return 1; }, () => { tick = null; },
+    { now: () => now }, { error: () => {} });
+  if (!unity) { window.ARENA_BOOT_STEP(30, 'Reading the rounds …'); window.ARENA_BOOT_STEP(65, 'Opening your wallet …'); }
+  else stage.textContent = 'Loading the program …';   // Unity's line, after the page's first boot step
+  for (; now <= 120000 && tick; now += 1000) tick();
+  return { failed, stalled: window.ARENA_LOAD_STALLED };
+}
+
+test('#3703 a stall before Unity names the boot step\'s percent, the one the bar shows; after, Unity\'s own', () => {
+  const before = stallWith({ unity: false });
+  assert.equal(before.failed.length, 1);
+  assert.match(before.failed[0], /stopped at "Opening your wallet …" \(65 %\)/);
+  assert.doesNotMatch(before.failed[0], /\(0\s*%\)/);
+  assert.equal(before.stalled.pct, '65 %');
+  const after = stallWith({ unity: true });
+  assert.match(after.failed[0], /stopped at "Loading the program …" \(42 %  ·  9\.4 \/ 22\.3 MB\)/);
+});

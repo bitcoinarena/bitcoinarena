@@ -3560,6 +3560,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     }
     function show(p) {
       const clamped = Math.max(0, Math.min(1, p));
+      pct.dataset.from = 'unity';   // kanban #3703: from here the bar and #pct are Unity's; before, the bar is the boot step's (bootPct)
       bar.style.transform = 'translateX(' + (clamped * 100 - 100).toFixed(1) + '%)';
       // a sub-step already says more than Unity's 0.9 does: it keeps the line until 100 %
       if (clamped < 1 && subStep >= 91) return;
@@ -3635,9 +3636,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (now !== loadSeen || !LOADING_LINES.has(stage.textContent) || loadWaitsOnPlayer()) { loadSeen = now; loadChangedAt = Date.now(); return; }
       if (Date.now() - loadChangedAt < LOAD_STALL_S * 1000) return;
       clearInterval(loadWatch);
-      window.ARENA_LOAD_STALLED = { stage: stage.textContent, pct: pct.textContent, afterS: LOAD_STALL_S };
-      console.error('[arena] loading stalled at "' + stage.textContent + '" (' + pct.textContent + ') for ' + LOAD_STALL_S + ' s');
-      fail(stallMessage(stage.textContent, pct.textContent));
+      // THE PERCENT THE BAR SHOWS (kanban #3703, report #467: '"Opening your wallet …" (0%)' under a bar at ~60 %): before Unity's own
+      // progress the bar is drawn from the boot step (--boot = bootPct) while #pct still holds Unity's 0
+      const shown = pct.dataset && pct.dataset.from === 'unity' ? pct.textContent : bootPct + ' %';
+      window.ARENA_LOAD_STALLED = { stage: stage.textContent, pct: shown, afterS: LOAD_STALL_S };
+      console.error('[arena] loading stalled at "' + stage.textContent + '" (' + shown + ') for ' + LOAD_STALL_S + ' s');
+      fail(stallMessage(stage.textContent, shown));
     }, 1000);
     // A SCREEN THAT WAITS ON THE PLAYER IS NOT A STALL (playtest 2026-10-16: the red "Nothing has loaded for
     // 90 seconds ... "Connecting …" (0%)" under a page that had loaded - after making a Nostr account, and back from the
