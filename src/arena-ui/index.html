@@ -11132,7 +11132,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       try { owned = await itemsOwnedNow(shop.game.name, seats, { fresh: true }); say(''); } catch (e) { say('What you own could not be read: ' + e.message, true); }
       // THE ITEMS (kanban #564: drawn by React, window.ArenaShop - ShopItems): the page hands over what is sold, what is owned, the items
       // played with, and its rules - the switch kept per game, the purchase (buyShopItem), what is owned read again after it
-      const paint = () => window.ArenaShop.draw(list, { items: shop.items, owned, use: itemsUse(shop.game.name),
+      // BUY ONLY WITH A PAID ROUND TO READ THE DONATION SETS FROM (kanban #3699, report #463: Buy was on with none listed, and the purchase
+      // could only fail after the click): the lobby's or one the game's own seats list (shopPaidRows); none anywhere: Buy off, and said
+      const CLOSED = 'Buying opens when a paid round of this game is listed.';
+      let closed = 'Looking for a paid round of this game …';
+      const paint = () => window.ArenaShop.draw(list, { items: shop.items, owned, use: itemsUse(shop.game.name), closed,
         picture: (id) => ITEM_PICTURE[id], what: (id) => ITEM_WHAT[id], price: (priceSat) => window.ARENA_ITEM_PRICE(priceSat),
         onUse: (id, on) => { const now = new Set(itemsUse(shop.game.name) || owned.map((x) => x.itemId)); if (on) now.add(id); else now.delete(id);
           setItemsUse(shop.game.name, [...now]); paint(); },
@@ -11145,6 +11149,20 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           else say('Not bought (' + got.step + '): ' + got.why, true);
         } });
       paint();
+      const rows = await shopPaidRows(shop).catch(() => []);
+      closed = rows.length ? null : CLOSED;
+      if (closed) say(closed);
+      paint();
+    }
+    // THE PAID ROUNDS A PURCHASE READS THE DONATION SETS FROM (kanban #3699): every round the lobby lists of the shop's game, else one its
+    // own seats list (GET /rounds, paidRoundFromSeats - the donate popup's way), the newest census first: the sets are the same in every
+    // paid round of a game, and a set is in force from the height it was signed at
+    async function shopPaidRows(shop) {
+      const ids = new Set((window.ARENA_GAMES_FULL || []).filter((g) => g.name === shop.game.name).map((g) => g.id));
+      const listed = [...(window.ARENA_LOBBY_ROWS || []), ...(window.ARENA_LOBBY || []).map((x) => x && x.raw)];
+      const rows = listed.filter((r) => r && !r.free && r.contract && ids.has(r.game));
+      if (!rows.length) { const one = await paidRoundFromSeats([shop.game]); if (one) rows.push(one); }
+      return rows.sort((a, b) => Number(b.contract.censusHeight || 0) - Number(a.contract.censusHeight || 0));
     }
     // A PURCHASE: a federation this wallet holds the price in, the round's two donation sets read from a listed round of the game
     // (its seats sign them), the served list from every seat - then buyItem pays, signs and hands the record to the seats
@@ -11168,11 +11186,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       }
       if (!wallet) return { ok: false, step: 'wallet', why: 'your wallet holds less than ' + String(window.ARENA_ITEM_PRICE(it.priceSat)) + ' sat in any one federation: deposit first' };
       if (typeof wallet.paySubmit !== 'function') return { ok: false, step: 'wallet', why: 'this page\'s wallet cannot pay an item yet (its lock client has no paySubmit)' };
-      const ids = new Set((window.ARENA_GAMES_FULL || []).filter((g) => g.name === shop.game.name).map((g) => g.id));
-      const row = (window.ARENA_LOBBY || []).map((x) => x.raw).find((r) => r && !r.free && r.contract && ids.has(r.game));
-      if (!row) return { ok: false, step: 'donation', why: 'no paid round of this game is listed to read its donation sets from' };
-      const ds = await ARENACLIENT.fetchDonationSet({ round: Object.assign({}, row.contract, { id: ARENACLIENT.fromHex(row.id) }),
-        nodes: (row.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true });
+      // kanban #3699: the lobby's paid rounds of the game, else one from its own seats; the first of up to five that gives the sets
+      const rows = await shopPaidRows(shop);
+      if (!rows.length) return { ok: false, step: 'donation', why: 'no paid round of this game is listed to read its donation sets from' };
+      let ds = null, row = null;
+      for (const r of rows.slice(0, 5)) {
+        row = r;
+        ds = await ARENACLIENT.fetchDonationSet({ round: Object.assign({}, r.contract, { id: ARENACLIENT.fromHex(r.id) }),
+          nodes: (r.said || []).map((c) => c.node).filter(Boolean), verifyEd25519: pageEd25519Verify, keepBySet: true }).catch((e) => ({ ok: false, why: e.message }));
+        if (ds.ok && ds.target) break;
+      }
       if (!ds.ok || !ds.target) return { ok: false, step: 'donation', why: ds.why || 'the round names no donation sets' };
       // ONLY BONDED NODES ARE A COMMITTEE (kanban #1896): the served list counts a round's committee only when its keys are nodes of a
       // census this page checked - that round's, checked here as a join checks it when no census is held yet

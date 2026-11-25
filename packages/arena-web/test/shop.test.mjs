@@ -41,3 +41,10 @@ test('Buy is off while its purchase runs, on again after; the switch hands its i
   label.props.children[0].props.onChange({ target: { checked: false } });
   assert.deepEqual(used, [['hat', false]]);
 });
+
+// kanban #3699 (report #463): with no paid round of the game listed the page hands `closed` (why), and Buy is drawn off with it
+test('#3699 Buy is off, saying why, while the page says buying is closed', () => {
+  const h = html({ use: null, closed: 'Buying opens when a paid round of this game is listed.' });
+  assert.match(h, /<button type="button" class="buy" disabled="" title="Buying opens when a paid round of this game is listed\.">Buy · 220 sat<\/button>/);
+  assert.match(html({ use: null, closed: null }), /<button type="button" class="buy">Buy · 220 sat<\/button>/);
+});
