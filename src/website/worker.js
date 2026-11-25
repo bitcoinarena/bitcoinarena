@@ -50,16 +50,28 @@ const edgeUrl = (key) => `https://bitcoinarena.io/__season-cache/${encodeURIComp
 // fastest seat showed any ranking it liked (a made-up leader, real players left out) for 30 minutes, and the tester report read it from KV.
 // Now all three are read: a board two of them answer with the same rows is taken (each seat's answer names its own node, so the rows are
 // compared); else each row two of them list the same way; fewer than two answers keep the last copy.
-const agreedBoard = (texts) => {
-  const boards = texts.map((t) => { try { const b = JSON.parse(t); return b && typeof b === 'object' && Array.isArray(b.rows) ? b : null; } catch { return null; } }).filter(Boolean);
+// EVERY FIELD, NOT ONLY THE ROWS (kanban #3677, #1489 r1-faucet-1): the rows were compared but the first agreeing seat's board was served
+// whole, so one seat set rounds, days, leftOut, agree and seats. A board naming another window than the one asked is not counted; each other
+// field is served only where two seats send the same bytes for it, else left out (`node` names one seat and is always null).
+const agreedBoard = (texts, days = null) => {
+  const boards = texts.map((t) => { try { const b = JSON.parse(t); return b && typeof b === 'object' && Array.isArray(b.rows) ? b : null; } catch { return null; } })
+    .filter(Boolean).filter((b) => days === null || b.days === undefined || Number(b.days) === days);
   if (boards.length < 2) throw new Error(`${boards.length} of ${SEASON_SEATS.length} seats answered a board: one seat's word is not the board`);
+  const twoSay = (vals) => vals.find((v, i) => v !== undefined && vals.some((o, j) => j !== i && o === v));
+  const out = {};
+  for (const k of new Set(boards.flatMap((b) => Object.keys(b)))) {
+    if (k === 'rows' || k === 'node' || k === 'merged') continue;
+    const v = twoSay(boards.map((b) => (Object.prototype.hasOwnProperty.call(b, k) ? JSON.stringify(b[k]) : undefined)));
+    if (v !== undefined) out[k] = JSON.parse(v);
+  }
+  out.node = null;
   const rowsOf = boards.map((b) => JSON.stringify(b.rows));
-  const same = rowsOf.findIndex((r, i) => rowsOf.some((o, j) => j !== i && o === r));
-  if (same >= 0) return JSON.stringify(boards[same]);
+  const same = twoSay(rowsOf);
+  if (same !== undefined) return JSON.stringify({ ...out, rows: JSON.parse(same) });
   const count = new Map(); for (const b of boards) for (const r of new Set(b.rows.map((x) => JSON.stringify(x)))) count.set(r, (count.get(r) || 0) + 1);
   const rows = [], seen = new Set();
   for (const b of boards) for (const x of b.rows) { const k = JSON.stringify(x); if (count.get(k) >= 2 && !seen.has(k)) { seen.add(k); rows.push(x); } }
-  return JSON.stringify({ ...boards[0], node: null, rows, merged: true });
+  return JSON.stringify({ ...out, rows, merged: true });
 };
 // one read of a board from the seats per isolate at a time; the answer goes to memory and the edge cache, never to KV
 const fetchSeason = (game, days) => {
@@ -68,7 +80,7 @@ const fetchSeason = (game, days) => {
   const p = (async () => {
     try {
       const said = await Promise.allSettled(SEASON_SEATS.map(async (s) => { const r = await fetch(`${s}/season?game=${game}&days=${days}&scope=network`, { signal: AbortSignal.timeout(25000) }); if (!r.ok) throw new Error(String(r.status)); return textUpTo(r, SEASON_ANSWER_MAX); }));
-      const body = agreedBoard(said.filter((x) => x.status === 'fulfilled').map((x) => x.value));   // kanban #2698
+      const body = agreedBoard(said.filter((x) => x.status === 'fulfilled').map((x) => x.value), days);   // kanban #2698, #3677
       const kept = `{"at":${Date.now()},"season":${body}}`;
       seasonMem.set(key, kept); seasonFailed.delete(key);
       const edge = edgeCache();
