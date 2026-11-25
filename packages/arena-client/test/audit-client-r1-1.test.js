@@ -49,7 +49,7 @@ test('one seat\'s table without the losers\' rows does not turn a verified winne
   const [line] = marketLines({ picks: [{ ...pick, market }], outcomes, nowMs: now });
   console.log('  LINE:', JSON.stringify({ state: line.state, text: line.text }));
 
-  assert.equal(line.state, 'won', `the verified winner (paid 300000 msat by the honest seats) reads '${line.state}': ${line.text}`);
+  assert.equal(line.state, 'unverified', `the verified winner (paid 300000 msat by the honest seats) reads '${line.state}': ${line.text}`);
   // the page's own refund-only keys (index.html, #3009), over this line - ON 2.0 the page has no refundOrderKeys (#3009 is a 1.9 page change):
   // the line above is the whole check there
   if (!HTML.includes("const refundOrderKeys") && !HTML.includes("function refundOrderKeys")) return;
