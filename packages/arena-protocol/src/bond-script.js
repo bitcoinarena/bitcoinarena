@@ -131,7 +131,10 @@ function legacyOutpoint(outpoint) {
  * seated. A census below this height is read as it was written (template 1 counts, as before #3548); from it on, #3548's rule. No
  * posted round names a census height at or above it, so the seats' censuses from here on and the clients agree.
  */
-export const BOND_V1_RULE_FROM_CENSUS = Object.freeze({ testnet4: 163069 });
+// 163197 (not 163069, measured 2026-11-25 03:18-04:05Z): a Next Block series with census height 163196 was posted ~21:20Z by a seat not yet
+// rolled to #3548, so its root counts the bond; the 7 seats rolled before it refused the series and its rounds never seated (4 of 9 drawn).
+// Every root written after the roll ended (22:51Z) is at 163227 or later and leaves the bond out.
+export const BOND_V1_RULE_FROM_CENSUS = Object.freeze({ testnet4: 163197 });
 
 export function legacyV1Counts(network, confirmationHeight, outpoint, censusHeight) {
   const before = BOND_V1_BEFORE[network];
