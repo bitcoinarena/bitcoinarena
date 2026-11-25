@@ -7277,6 +7277,26 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       go.addEventListener('pointerdown', (e) => e.stopPropagation());
       go.addEventListener('click', (e) => { e.stopPropagation(); set(!consoleOpen()); });
     })();
+    // kanban #3708 (feedback #468): hours after an Up/Down order's refund the panel still read "stake locked in the round's federation:
+    // 99000 msat at b1f0f668…:0, back to your key from federation block 165386 if nobody settles it", on every page: the lock line was
+    // painted for whatever lock the tab held (ARENA_STAKE_LOCK, set at the join and never cleared, or the newest kept record's), refunded
+    // or not. A lock whose collect record in this browser is done - refunded, paid out or collected - is not "locked" any more.
+    // ARENA_LOCK_DONE(storage, lock): that record's `done`, else null.
+    window.ARENA_LOCK_DONE = (storage, lock) => {
+      try {
+        if (!lock || !lock.outpoint || !(lock.outpoint.txid instanceof Uint8Array)) return null;
+        const at = ARENACLIENT.toHex(lock.outpoint.txid).toLowerCase() + ':' + String(lock.outpoint.outIdx);
+        for (let i = 0; i < storage.length; i++) {
+          const k = storage.key(i); if (!k || !k.startsWith('arena.collect.')) continue;
+          let r = null; try { r = JSON.parse(storage.getItem(k)); } catch { continue; }
+          if (r && r.done && r.stakeLock && String(r.stakeLock.outpoint).toLowerCase() === at) return r.done;
+        }
+      } catch { /* not read: the lock is said as before */ }
+      return null;
+    };
+    window.ARENA_LOCK_SHOWN_LINE = (storage, lock) => (window.ARENA_LOCK_DONE(storage, lock)
+      ? 'this round\'s stake lock is closed: nothing of it is held in the federation any more' : ARENACLIENT.lockLine(lock));
+    // </lock-done-3708>
     function paintWallet() {
       const el = document.getElementById('arena-wallet');
       if (!el || !wallet || typeof ARENACLIENT === 'undefined') return;
@@ -7303,7 +7323,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (shown && ARENACLIENT.roundLocks(shown)) {
         const lockShown = window.ARENA_STAKE_LOCK || (window.ARENA_COLLECT && window.ARENA_COLLECT.stakeLock);
         window.ArenaText.say(document.getElementById('arena-owed'), lockShown
-          ? ARENACLIENT.lockLine(lockShown)
+          ? window.ARENA_LOCK_SHOWN_LINE(vault(), lockShown)
           : 'this round\'s stake goes into a federation lock: pay the deposit shown below');
         // WHAT IS OWED, AS LOOKED AT (W4 / 6d): still in the federation until the player withdraws.
         window.ArenaText.say(document.getElementById('arena-settled'), window.ARENA_COLLECT_LINE || ARENACLIENT.owedToLine(window.ARENA_OWED));
