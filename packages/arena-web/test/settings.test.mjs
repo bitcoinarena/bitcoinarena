@@ -14,7 +14,7 @@ const html = (c) => renderToStaticMarkup(React.createElement(React.Fragment, nul
 test('the name: the current one shown, Update only for another, the lobby\'s answer said', () => {
   const said = [];
   const n = live(NameCard, { current: 'brave-otter-0042', onUpdate: (t) => { said.push(t); return ''; } });
-  assert.match(html(n), /<input id="arena-name-field" type="text" autoComplete="off" spellCheck="false" maxLength="32" value="brave-otter-0042"\/><button id="arena-name-update" type="button" class="primary" disabled="">Update<\/button>/i);
+  assert.match(html(n), /<input id="arena-name-field" type="text" autoComplete="off" spellCheck="false" maxLength="24" value="brave-otter-0042"\/><button id="arena-name-update" type="button" class="primary" disabled="">Update<\/button>/i);
   n.state.typed = ' satoshi ';
   assert.match(html(n), /<button id="arena-name-update" type="button" class="primary">Update<\/button>/);
   n.update();
@@ -113,4 +113,21 @@ test('the account card carries the ids the page CSS spaces it by', async () => {
   a.ask();
   const h = before + html(a);   // Delete shows before the ask, the confirm after it
   for (const id of new Set([...page.matchAll(/#arena-set-account #(arena-acct-[a-z]+)/g)].map((m) => m[1]))) assert.ok(h.includes(`id="${id}"`), id);
+});
+
+// kanban #3698 (report #462): the field takes no more than the lobby's rule (arena-protocol LOBBY_NAME_MAX, 24), and a refused name
+// stays in the field with the reason said as an error, not swapped back for the old name.
+test('#3698 the name field holds at most LOBBY_NAME_MAX characters; a refusal keeps the typed name and says why in red', async () => {
+  const { LOBBY_NAME_MAX } = await import('../../arena-protocol/src/lobby-name.js');
+  const n = live(NameCard, { current: 'brave-otter-0042', onUpdate: (t) => (t.length > 3 ? 'a name is at most 3 characters' : '') });
+  assert.match(html(n), new RegExp(`id="arena-name-field"[^>]*maxLength="${LOBBY_NAME_MAX}"`));
+  n.state.typed = 'satoshi-nakamoto';
+  n.update();
+  assert.equal(n.state.typed, 'satoshi-nakamoto', 'the refused name stays in the field');
+  assert.match(html(n), /value="satoshi-nakamoto"/);
+  assert.match(html(n), /<div class="muted bad" role="alert" style="color:#f85149">a name is at most 3 characters<\/div>/);
+  n.state.typed = 'sat';
+  n.update();
+  assert.equal(n.state.typed, null, 'taken: the field shows the current name again');
+  assert.match(html(n), /<div class="muted">Updated\.<\/div>/);
 });
