@@ -2930,5 +2930,9 @@
  "3760": {
   "text": "Other: audit checks that need a signed origin run have to be rebuilt on runs naming real inputs",
   "kind": "bug"
+ },
+ "3762": {
+  "text": "Settlement: a paid round can stay unsettled when a run names the origin",
+  "kind": "bug"
  }
 }
