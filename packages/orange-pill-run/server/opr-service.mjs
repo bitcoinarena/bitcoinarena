@@ -313,7 +313,12 @@ export function createOpr(o = {}) {
   // fresh key without end (20,000 rows in 42 s, each read again by ipFull, ipCrowd and the board). A first attempt is also refused once the
   // address has ipUnplayedShare x its kept-run share of attempts that keep nothing (never sent, timed out, refused with no log): 100 in a daily
   // round - ten times the kept runs, so a few throw-away attempts never lock a shared address, and the rows of one address stay bounded
-  const KEPT = "(state IN ('scored', 'awaiting') OR (state = 'rejected' AND log IS NOT NULL))";
+  // ONLY A RUN THAT TOOK ITS GAME TIME (kanban #3748, audit opr a8-2-3): a refusal that stored its log counted as kept, and the wrong-version and
+  // no-replay refusals store one and are answered at once - ten instant 20-byte submits from two free keys locked a shared address for the round
+  // again. Every refusal that keeps a log is answered before the run's game time is known to be waited (wrong version, no replay, too fast), so
+  // only scored runs ('awaiting': one waiting for its entry) count as kept; a refused run with its log counts with the attempts that keep nothing
+  // (still bounded by ipUnplayedShare, and its log by the #3355 network budget)
+  const KEPT = "(state IN ('scored', 'awaiting'))";
   const ipFull = (r, key, { first = false } = {}) => {
     if (!key) return false;
     const share = cfg.ipAttemptsShare * r.max_attempts;
