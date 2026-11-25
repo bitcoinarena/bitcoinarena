@@ -237,6 +237,25 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     w.keys.add(key);
     return true;
   };
+  // kanban #3676 (#1489 r1-census-1, the gap #2831 left): a proposer bonded in the census held now was not held to any budget - one bonded
+  // node posting (or listing at its GET /proposals) one signed proposal naming a different real block each time made every honest seat
+  // derive a census per height it named, as many a minute as it posted. Now each bonded proposer has a window of its own, door and pull
+  // apart, of BONDED_CENSUS_KEYS new (network, height) keys a minute: an honest proposer names one block, and strangers' posts still
+  // never shut it out. The map is keyed by keys the current census names, so it is as large as that census at most.
+  const BONDED_CENSUS_KEYS = 2;
+  const bondedWindows = new Map();
+  const bondedCensusKey = (proposerHex, key, which) => {
+    const now = Date.now(), at = `${which}:${proposerHex}`;
+    let w = bondedWindows.get(at);
+    if (!w || now - w.from >= DOOR_CENSUS_WINDOW_MS) {
+      if (bondedWindows.size >= 4096) for (const [k, v] of bondedWindows) if (now - v.from >= DOOR_CENSUS_WINDOW_MS) bondedWindows.delete(k);
+      w = { from: now, keys: new Set() }; bondedWindows.set(at, w);
+    }
+    if (w.keys.has(key)) return true;
+    if (w.keys.size >= BONDED_CENSUS_KEYS) return false;
+    w.keys.add(key);
+    return true;
+  };
   const api = {
     async add({ proposal: hex, blockHash } = {}, { own = false } = {}) {
       if (!/^[0-9a-f]+$/i.test(String(hex || '')) || String(hex).length < 130) return { ok: false, status: 400, why: 'a proposal is the hex of its body and its 64-byte signature' };
@@ -281,7 +300,8 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
             // census (no derivation), names the bonded node keys; only posters it does not name share the DOOR_CENSUS_KEYS window
             let bondedHere = false;
             if (typeof censusNow === 'function') { try { const now = censusNow(); bondedHere = Array.isArray(now) && now.some((e) => e && xOnly(e.pubkey) === xOnly(p.proposer)); } catch { bondedHere = false; } }
-            if ((!own || own === 'peer') && !bondedHere && !doorCensusKey(`${net}:${h}`, own === 'peer' ? 'peer' : 'door')) return { ok: false, status: 503, why: 'this seat reads only a few new censuses a minute for posted proposals: ask again shortly' };
+            const which = own === 'peer' ? 'peer' : 'door';
+            if ((!own || own === 'peer') && !(bondedHere ? bondedCensusKey(xOnly(p.proposer), `${net}:${h}`, which) : doorCensusKey(`${net}:${h}`, which))) return { ok: false, status: 503, why: 'this seat reads only a few new censuses a minute for posted proposals: ask again shortly' };
             let census = null; try { census = await censusAt(net, h); } catch { census = null; }
             if (Array.isArray(census) && !census.some((e) => e && xOnly(e.pubkey) === xOnly(p.proposer)))
               return { ok: false, status: 422, why: `the proposer holds no active bond in the census at height ${h} (27A.7.2)` };
