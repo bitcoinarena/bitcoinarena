@@ -39,7 +39,7 @@ import { matchProofId, presenceId } from '../../arena-protocol/src/match.js';
 import { encodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
-import { botMayEnter, BOT_LEAD_MS } from '../src/opponent-trigger.js';   // kanban #2842: it stakes only on a verified stake lock
+import { botMayEnter, BOT_LEAD_MS, tapKeysOf, tapKeyToLearn } from '../src/opponent-trigger.js';   // kanban #2842: it stakes only on a verified stake lock
 
 const env = process.env;
 const nodes = String(env.NODES || '').split(',').map((u) => u.trim().replace(/\/+$/, '')).filter(Boolean);
@@ -313,7 +313,8 @@ const pass = async () => {
     // Read beside the loop so it never holds up another table; the first seat that answers is enough
     // A KNOWN PLAYER'S TAP BRINGS THE BOT AT ONCE (kanban #2901): the faucet now passes the signed tap's key; a key the bot saw play before
     // (its lock verified at a seat) gets the bot on the tap, 2-4 s before its entry reaches the seats - a fresh key's tap still waits (#2842)
-    if (w.tapped && w.tapKey && KNOWN.has(String(w.tapKey)) && left >= Math.max(MIN_LEFT_MS, botLeadMs(lockMsSeen) + 1000)) { go(w, k, 'a known player tapped'); continue; }
+    // ANY KNOWN KEY AMONG THE ROUND'S TAPS (kanban #3729): a stranger's extra tap on the round leaves it no single tap key, and must not cost a known player the fast path
+    if (w.tapped && tapKeysOf(w).some((t) => KNOWN.has(t)) && left >= Math.max(MIN_LEFT_MS, botLeadMs(lockMsSeen) + 1000)) { go(w, k, 'a known player tapped'); continue; }
     if (k.asking) continue;
     k.asking = true;
     Promise.any(nodes.slice(0, 5).map(async (n) => {
@@ -331,7 +332,9 @@ const pass = async () => {
         // learnt (kept in KNOWN_FILE); its next entry brings the bot straight away, without waiting for this round's lock to be verified - a fresh
         // key still needs a verified lock (#2842), so a stranger's free tap never sends the bot to an empty table
         for (const e of entries) if (e.player && locks.has(e.entry) && !botKeys.has(String(e.player))) knownAdd(String(e.player));
-        if (w.tapKey && entries.some((e) => locks.has(e.entry) && !botKeys.has(String(e.player || '')))) knownAdd(String(w.tapKey));   // kanban #2901: the tapping key played
+        // kanban #2901: the tapping key played - only the round's one tap key, beside its one non-bot entry whose lock verified (#3309, #3729:
+        // a stranger's tap on a real player's round, before or after the player's, no longer gets his never-staked key into KNOWN)
+        { const t = tapKeyToLearn({ tapKeys: tapKeysOf(w), entries, locks, botKeys }); if (t) knownAdd(t); }
         const others = entries.filter((e) => e && e.entry && !botKeys.has(String(e.player || '')));
         if (others.length === 1 && KNOWN.has(String(others[0].player || '')) && Number(k.c.entryCloseMs) - Date.now() >= MIN_LEFT_MS) { go(w, k, 'a known player entered'); return; }
         // A POSTED STAKE LOCK IS ENOUGH (kanban #2901, the owner 2026-11-16 "mach den Lock des Bots viel schneller"; measured 18:41Z: the seats verified the
