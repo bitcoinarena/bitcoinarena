@@ -2922,5 +2922,13 @@
  "3755": {
   "text": "Other: Orange Pill Run unused first attempts from fresh keys can lock a shared address out of the daily round",
   "kind": "bug"
+ },
+ "3758": {
+  "text": "Other: a Unity run that ends at the origin is never signed and stays held",
+  "kind": "bug"
+ },
+ "3760": {
+  "text": "Other: audit checks that need a signed origin run have to be rebuilt on runs naming real inputs",
+  "kind": "bug"
  }
 }
