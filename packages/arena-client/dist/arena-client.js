@@ -21417,20 +21417,44 @@ async function refundStake({ round, roundId, invite, seed, curve, LockClient, st
 // `lock`: 'stake', or 'fee' - a market order's fee lock, which the seats return whole for an order the book
 // never filled and claim at resolution for one it did
 // `check` (kanban #1163, forfeitCheck): an answer whose signature does not verify here is no forfeit - the next signer node is asked
+// EVERY SEAT AT ONCE, ONE ASK PER SOURCE (kanban #3745, audit client-a8-2-1; the #3060 bound of handRefusedLock): the seats were asked one
+// after another, SEAT_READ_MS each, and only exact spellings were folded - a link naming one box under nine paths that takes GET /forfeit and
+// never answers held every look of the record 9 x 15 s, past COLLECT_RECORD_MS, on every pass: the stake owed by forfeit never came back by
+// itself, not even after its expiry. Now each seat URL (its spellings with and without trailing slashes once) is asked at once, each bounded by
+// SEAT_READ_MS, so one ask of the forfeit takes at most SEAT_READ_MS however many paths the link names. With `check`, the first answer that
+// verifies is the forfeit (whoever gave it: the signature is checked here, and the others are let go); without one, the first in the list's
+// order that answered, as before.
 async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch, lock = 'stake', check = null } = {}) {
-  const refused = [];
   const verified = async (j) => { if (typeof check !== 'function') return true; const v = await check(j); return v !== false; };
-  for (const node of [...new Set(nodes || [])]) {
+  const done = new AbortController();
+  const signal = () => (AbortSignal.any ? AbortSignal.any([done.signal, AbortSignal.timeout(SEAT_READ_MS)]) : AbortSignal.timeout(SEAT_READ_MS));
+  const seats = [];
+  { const seen = new Set(); for (const n of nodes || []) { const k = String(n).replace(/\/+$/, ''); if (!seen.has(k)) { seen.add(k); seats.push(n); } } }   // the first spelling asks
+  let settle = null;
+  const first = new Promise((ok) => { settle = ok; });
+  const asks = seats.map(async (node) => {
     try {
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}${lock === 'fee' ? '&lock=fee' : ''}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
-      if (!r.ok) { refused.push(`${node}: ${r.status} ${(await r.text()).trim()}`); continue; }
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}${lock === 'fee' ? '&lock=fee' : ''}`, { signal: signal() });
+      if (!r.ok) return { said: `${node}: ${r.status} ${(await r.text()).trim()}` };
       const j = await r.json();
-      if (!/^[0-9a-f]{128}$/.test(String(j.signature))) { refused.push(`${node}: answered no signature`); continue; }
-      if (!(await verified(j))) { refused.push(`${node}: its forfeit's signature does not verify`); continue; }
-      return { ok: true, signature: j.signature, contractId: j.contractId, claimPk: j.claimPk, from: node };
-    } catch (e) { refused.push(`${node}: ${e.message}`); }
-  }
-  return { ok: false, why: `no signer node gave a forfeit of this lock: ${refused.join('; ')}`, refused };
+      if (!/^[0-9a-f]{128}$/.test(String(j.signature))) return { said: `${node}: answered no signature` };
+      if (!(await verified(j))) return { said: `${node}: its forfeit's signature does not verify` };
+      const got = { ok: true, signature: j.signature, contractId: j.contractId, claimPk: j.claimPk, from: node };
+      if (typeof check === 'function') settle(got);
+      return { got };
+    } catch (e) { return { said: `${node}: ${e.message}` }; }
+  });
+  const all = Promise.all(asks).then((said) => {
+    const got = said.find((x) => x.got);
+    return got ? got.got : null;
+  });
+  try {
+    const got = await Promise.race([first, all]);
+    if (got) return got;
+    const said = await Promise.all(asks);
+    const refused = said.map((x) => x.said).filter(Boolean);
+    return { ok: false, why: `no signer node gave a forfeit of this lock: ${refused.join('; ')}`, refused };
+  } finally { done.abort(); }
 }
 
 /**
