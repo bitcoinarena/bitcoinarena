@@ -125,13 +125,13 @@ test('#2641 the social check: members linked to the key with their reads, one ke
   const a = await socialCheck(s, K(1), { x: 'ann', discord: 'ann', telegram: 'ann', armada: 'npub1ann', other: 'x' }, resolvers, { nowMs: () => t0 });
   assert.deepEqual(Object.fromEntries(Object.entries(a.results).map(([k, v]) => [k, v.member])), { telegram: null, discord: true, x: true, armada: true });
   assert.equal(a.results.telegram.unseen, true);
-  // typed names are found and linked, and give nothing until proven by a code from the account (kanban #2645, #2657)
-  assert.deepEqual(a.flags, { telegram: false, discord: false, x: false, armada: false, nostr: false }); assert.equal(a.bonusPct, 0);
-  assert.equal(a.results.x.needsCode, true);
+  // typed names found live are linked and count (kanban #3722; before: #2645, #2657 asked for a link code)
+  assert.deepEqual(a.flags, { telegram: false, discord: true, x: true, armada: true, nostr: false }); assert.equal(a.bonusPct, 40);
+  assert.equal(a.results.x.needsCode, undefined);
   assert.equal(a.links.length, 3); assert.equal(a.links.every((l) => l.proof === 'name'), true);
   prove(s, K(1), 'discord', '201', 'ann', t0); prove(s, K(1), 'armada', 'a'.repeat(64), 'npub1ann', t0);
-  assert.deepEqual(s.flagsOf(K(1), { nowMs: t0 }), { telegram: false, discord: true, x: false, armada: true, nostr: false }, 'proven by code: counted');
-  assert.equal(bonusPct(s.flagsOf(K(1), { nowMs: t0 })), 20);
+  assert.deepEqual(s.flagsOf(K(1), { nowMs: t0 }), { telegram: false, discord: true, x: true, armada: true, nostr: false }, 'proven by code: still counted');
+  assert.equal(bonusPct(s.flagsOf(K(1), { nowMs: t0 })), 40);
   assert.equal(a.links.some((l) => 'userId' in l), false, 'no platform ids go back');
   // a non-member links nothing; empty names are not asked
   const b = await socialCheck(s, K(2), { x: 'bob', discord: '', armada: '   ' }, resolvers, { nowMs: () => t0 });

@@ -31,9 +31,7 @@ export async function socialCheck(S2, pubkey, asked, resolvers, { nowMs = () => 
       const c = S2.claimName(pubkey, p, { userId: String(r.userId), username: out.username || raw, nowMs: nowMs() });
       if (!c.ok) { results[p] = { member: null, why: c.why, username: out.username }; continue; }
       S2.record(pubkey, p, { member: true, why: out.why, cause: 'form', nowMs: nowMs() });
-      // FOUND, NOT PROVEN (kanban #2645, #2657): a typed name gives no bonus until the account posts this key's link code
-      const l = S2.links(pubkey).find((x) => x.platform === p);
-      if (l && l.proof !== 'code' && !(p === 'nostr' && String(l.userId || '').toLowerCase() === String(pubkey).toLowerCase())) out.needsCode = true;
+      // FOUND COUNTS (kanban #3722, the owner 2026-11-25: "Link code muss nicht sein"): no link code is asked for any more (#2645 needsCode gone)
     } else if (out.member === true) out.member = null;
     results[p] = out;
   }
