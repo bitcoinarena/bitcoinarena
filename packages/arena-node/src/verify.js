@@ -1585,8 +1585,13 @@ export class Verifier {
           const have = held.get(x.mark);
           if (have === undefined || have >= EVIDENCE_RECORDS_PER_MARK) continue;
           held.set(x.mark, have + 1);
-          this.round.noteEvidenceBlock(roundIdBytes, entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')), Uint8Array.from(Buffer.from(x.block, 'hex')),
-            Number.isSafeInteger(x.seenMs) ? x.seenMs : undefined);
+          // A PEER'S WORD NEVER BACKDATES A MARK THIS SEAT RECORDED ITSELF (WINDOW-10-SPEC, kanban #3678, #1559): its seenMs is unsigned;
+          // a mark this seat holds its own record of keeps no time earlier than that record; a mark it never held itself (a pulled
+          // pair, M3.3-34 path 2, ruled) keeps the time the peer made it. Never a time after this seat's clock.
+          let at = Number.isSafeInteger(x.seenMs) && x.seenMs >= 0 ? Math.min(x.seenMs, this.round.now()) : undefined;
+          const ownAt = this.round.ownEvidenceAt(entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')));
+          if (ownAt !== null) at = Math.max(at ?? ownAt, ownAt);
+          this.round.noteEvidenceBlock(roundIdBytes, entryId, Uint8Array.from(Buffer.from(x.mark, 'hex')), Uint8Array.from(Buffer.from(x.block, 'hex')), at);
         }
       } catch { /* a signer node that cannot answer shows nothing */ }
     }

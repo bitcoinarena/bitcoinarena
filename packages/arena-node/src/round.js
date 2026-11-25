@@ -3557,8 +3557,8 @@ export class Round {
     const named = blockHash === undefined ? this.tipOf(roundIdBytes) : blockHash;
     const block = named && named.length === 32 ? named : new Uint8Array(32);
     if (!id) return;
-    // `seenMs`: the moment of the record when the caller made it here earlier (never a peer's word - kanban #3678); a record
-    // held twice keeps the earlier time.
+    // `seenMs`: the moment of the record (a pulled one: verify.js, never earlier than this seat's own record - kanban #3678); a
+    // record held twice keeps the earlier time.
     const at = Number.isSafeInteger(seenMs) ? seenMs : this.now();
     // This seat's own record (pulled_from NULL), also where a peer's record of the same block was kept before.
     this.db.prepare('INSERT INTO evidence_blocks (entry_id, mark_id, block_hash, seen_ms) VALUES (?, ?, ?, ?) '
@@ -3607,6 +3607,13 @@ export class Round {
     this.db.prepare('INSERT OR IGNORE INTO evidence_blocks (entry_id, mark_id, block_hash, seen_ms, pulled_from) VALUES (?, ?, ?, ?, ?)')
       .run(entryIdBytes, markId, blockHash, at, from);
     return true;
+  }
+
+  /** This seat's own earliest record of a mark (pulled_from NULL), or null - a peer's time never comes before it (kanban #3678). */
+  ownEvidenceAt(entryIdBytes, markId) {
+    const t = this.db.prepare('SELECT MIN(seen_ms) t FROM evidence_blocks WHERE entry_id = ? AND mark_id = ? AND pulled_from IS NULL')
+      .get(entryIdBytes, markId).t;
+    return t === null || t === undefined ? null : Number(t);
   }
 
   /**
