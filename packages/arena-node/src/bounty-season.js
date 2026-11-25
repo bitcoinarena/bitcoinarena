@@ -347,10 +347,11 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     // not human, no social bonus - for every report, past and future
     const bots = botXHandles(), listed = (n) => bots.has(String(n || '').replace(/^@/, '').toLowerCase());
     if (links.some((l) => l.platform === 'x' && (listed(l.username) || (bots.size && namesOf.all('x', String(l.userId)).some((r) => listed(r.username)))))) return { ...f, bot: true };
-    // ONLY AN ACCOUNT PROVEN BY ITS OWN ACTION COUNTS (kanban #2645, #2657; the owner 2026-11-23: the game and the bounty are independent): a name typed
-    // in the form is found live, but anybody can type a real member's name - it links (and is shown) and gives no bonus and no human flag until a
-    // link code is posted from the account (proof 'code'); a Nostr key counts typed when it is the report key itself (signed in with it)
-    const owned = (l) => l.proof === 'code' || (l.platform === 'nostr' && String(l.userId || '').toLowerCase() === String(pubkey).toLowerCase());
+    // A NAME FOUND LIVE COUNTS LIKE A POSTED CODE (kanban #3722, the owner 2026-11-25: "Link code muss nicht sein, entfern das"; before: #2645, #2657
+    // counted only proof 'code'): an account typed in the form and found live as a member (proof 'name') counts once its last read said member and is
+    // fresh - X makes the reporter human, each platform gives its bonus. The link code stays an optional way (proof 'code'); one key per account
+    // (claimName); the bot list above and the owner's real-user mark below are unchanged. A Nostr key also counts when it is the report key itself
+    const owned = (l) => l.proof === 'code' || l.proof === 'name' || (l.platform === 'nostr' && String(l.userId || '').toLowerCase() === String(pubkey).toLowerCase());
     for (const l of links) if (owned(l) && l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
     // THE OWNER'S REAL-USER MARK MAKES A HUMAN (owner 2026-11-23: "Wenn der X hat, dann ist er ein echter User"): human share, no extra bonus
     try { if (realUserOf(pubkey)) f.realUser = true; } catch (_) {}

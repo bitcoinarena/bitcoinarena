@@ -17,15 +17,15 @@ const members = {
   nostr: async (n) => ({ userId: n, member: true, why: 'follows' }),
 };
 
-test('#2645 typed names of real members give no bonus and no human flag', async () => {
+test('#2645 typed names of real members count since #3722 (the owner 2026-11-25: the link code is no longer needed)', async () => {
   const s = openBountySeason();
   const r = await socialCheck(s, K(1), { x: 'realmember', discord: 'realmember', telegram: 'realmember' }, members);
-  assert.equal(r.bonusPct, 0, 'a stranger who typed three members\' names gets +' + r.bonusPct + ' %');
-  assert.deepEqual(r.flags, { telegram: false, discord: false, x: false, armada: false, nostr: false });
+  assert.deepEqual(r.flags, { telegram: true, discord: true, x: true, armada: false, nostr: false });
   assert.equal(r.results.x.member, true, 'the name is still found and shown');
-  assert.equal(r.results.x.needsCode, true, 'the answer says a link code from the account is needed');
-  const p = s.plan({ id: 'r1'.padEnd(64, '0'), pubkey: K(1) }, { level: 'high' });
-  assert.equal(p.bonusPct, 0); assert.equal(p.sats, seasonHigh(s));
+  assert.equal(r.results.x.needsCode, undefined, 'no link code is asked for');
+  // one key per account stays: another key cannot take the same names
+  const r2 = await socialCheck(s, K(5), { x: 'realmember' }, members);
+  assert.match(r2.results.x.why, /another report key/); assert.equal(r2.flags.x, false);
   s.close();
 });
 
@@ -44,9 +44,7 @@ test('#2645 a Nostr key counts when it is the report key itself, not another typ
   await socialCheck(s, K(3), { nostr: K(3) }, members);
   assert.equal(s.flagsOf(K(3)).nostr, true, 'the signed-in key\'s own follow is its own action');
   await socialCheck(s, K(4), { nostr: K(9) }, members);
-  assert.equal(s.flagsOf(K(4)).nostr, false, 'another person\'s typed npub counts');
+  assert.equal(s.flagsOf(K(4)).nostr, true, 'a typed npub found following counts since #3722');
   s.close();
 });
 
-// what a high approval pays with no bonus, from the season's own rule
-function seasonHigh(s) { return s.plan({ id: 'zz'.padEnd(64, '0'), pubkey: K(99) }, { level: 'high' }).sats; }
