@@ -473,9 +473,14 @@ async function readMetrics(env) {
   const names = new Map();
   for (const [, x] of byQuorum(progSeats, (p) => JSON.stringify([p.site, p.name]), () => 1n)) names.set(x.row.site, x.row.name);
   const refSeats = refAnswered.map((a) => a.body.sites);
-  for (const [site, x] of byQuorum(refSeats, (r) => (r ? r.site : null), (r) => heldMsatOf(r.msat))) {
-    sites.set(site, { msat: x.v, payouts: x.row && Number.isSafeInteger(x.row.payouts) ? x.row.payouts : 0 });
-  }
+  // A SITE'S PAYOUTS COUNT IS AGREED ON ITS OWN (kanban #3744, gap in #1534/#1821/#2059): it was read from the row byQuorum served for the msat -
+  // the first seat's (in SEATS order) whose msat equals the median - so one seat that copied the honest fee set the count on the Metrics page.
+  // It is now a byQuorum of its own: a count (a safe integer >= 0) a strict majority of all seats list for the site, the lower median over all
+  // answering seats; without such a majority the site shows 0 payouts.
+  const siteOf = (r) => (r ? r.site : null);
+  const payouts = new Map();
+  for (const [site, x] of byQuorum(refSeats, siteOf, (r) => (Number.isSafeInteger(r.payouts) && r.payouts >= 0 ? BigInt(r.payouts) : null))) payouts.set(site, Number(x.v));
+  for (const [site, x] of byQuorum(refSeats, siteOf, (r) => heldMsatOf(r.msat))) sites.set(site, { msat: x.v, payouts: payouts.get(site) || 0 });
   for (const [site] of names) if (!sites.has(site)) sites.set(site, { msat: 0n, payouts: 0 });
   const sum = (it) => [...it].reduce((t, m) => t + m, 0n);
   const resOk = quorum(resSeats.length), refOk = quorum(refSeats.length);
