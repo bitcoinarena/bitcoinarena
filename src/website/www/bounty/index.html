@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bitcoin Arena: bug bounty, Season 2</title>
-<meta name="description" content="Find bugs in Bitcoin Arena and earn real sats over Lightning: the Season 2 rules, and the log of Season 1.">
-<meta property="og:title" content="Bitcoin Arena: bug bounty, Season 2">
-<meta property="og:description" content="The rules of the Bitcoin Arena bug bounty, Season 2, and the log of Season 1.">
+<title>Bitcoin Arena: bug bounty, Season 3</title>
+<meta name="description" content="Find bugs in Bitcoin Arena and earn real sats over Lightning: the Season 3 rules, and the log of Seasons 1 and 2.">
+<meta property="og:title" content="Bitcoin Arena: bug bounty, Season 3">
+<meta property="og:description" content="The rules of the Bitcoin Arena bug bounty, Season 3, and the log of Seasons 1 and 2.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://bitcoinarena.io/bounty/">
 <meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
@@ -49,7 +49,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
   main { max-width: 760px; } h2 { font-size: 22px; margin: 34px 0 10px; } h3 { font-size: 17px; margin: 0 0 10px; }
   .hero { padding: 26px 22px; border-radius: 16px; background: radial-gradient(120% 140% at 0% 0%, rgba(247,147,26,.22), transparent 60%), var(--panel); border: 1px solid var(--line); }
   .hero .tag { display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--btc); margin-bottom: 8px; }
-  .hero h1 { font-size: clamp(28px, 7vw, 40px); line-height: 1.1; } .hero .lead { color: var(--text); font-size: 18px; margin: 10px 0 6px; } .hero .when { font-size: 14px; margin: 0; } .hero .go { margin: 16px 0 0; }
+  .hero h1 { font-size: clamp(28px, 7vw, 40px); line-height: 1.1; } .hero .lead { color: var(--text); font-size: 18px; margin: 10px 0 6px; } .hero .when { font-size: 14px; margin: 0; } .hero .ends { font-size: 14px; font-weight: 600; color: var(--text); margin: 0 0 8px; font-variant-numeric: tabular-nums; } .hero .go { margin: 16px 0 0; }
   .toc { font-size: 13px; color: var(--dim); }
   .steps { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; counter-reset: s; }
   .steps li { position: relative; padding: 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); margin: 0; display: flex; flex-direction: column; gap: 4px; color: var(--dim); font-size: 14px; }
@@ -116,13 +116,21 @@ function arenaPotBanner(s) {
 <main>
   <div id="pot-banner" role="status" hidden></div>
   <section class="hero">
-    <div class="tag">Bug bounty &middot; Season 2 &middot; 15 Nov 18:00 CET - 22 Nov 18:00 CET</div>
+    <div class="tag">Bug bounty &middot; Season 3 &middot; 22 Nov 18:00 CET - 29 Nov 18:00 CET</div>
+    <p class="ends" id="season-ends" data-end="2026-11-29T17:00:00Z">Ends 29 Nov 2026, 17:00 UTC</p>
     <h1>Find bugs. Earn sats.</h1>
     <p class="lead">Play, report, get paid over Lightning.</p>
     <p class="when">Anything that breaks, loses money or confuses you counts as a bug. Link your X account for the full level. You are paid in real sats over Lightning.</p>
     <a class="go" href="https://testnet.bitcoinarena.io/">Play a round</a>
   </section>
 
+<script>/* kanban #3342: the countdown to the end of Season 3 (2026-11-29 17:00 UTC; the faucet's nextSeasonMs when it answers) */
+(function () { var el = document.getElementById('season-ends'); if (!el) return; var end = Date.parse(el.getAttribute('data-end')), t = null;
+  function draw() { var left = end - Date.now(); if (!(left > 0)) { el.textContent = 'Season 3 has ended (29 Nov 2026, 17:00 UTC).'; if (t) clearInterval(t); return; }
+    var m = Math.floor(left / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60;
+    el.textContent = 'Ends in ' + (d ? d + ' d ' + h + ' h' : h ? h + ' h ' + mi + ' min' : Math.max(1, mi) + ' min') + ' (29 Nov 2026, 17:00 UTC)'; }
+  window.arenaSeasonEnd = function (ms) { if (ms > 0) { end = ms; draw(); } };
+  draw(); t = setInterval(draw, 30000); })();</script>
   <ol class="steps steps3" id="how-to-report">
     <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg></span><b>Play a round</b></li>
     <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 4h16v12H7l-3 3zM7 8v2h10V8zm0 4v2h7v-2z"/></svg></span><b>Use the Feedback function</b><span>at the bottom of the game page</span></li>
@@ -160,12 +168,12 @@ function arenaPotBanner(s) {
 
   <div class="duo">
     <section class="card" id="budget"><h3>Season pot</h3>
-      <div class="pot"><b id="pot-used">&hellip;</b> <span>/ <span id="pot-size">120,000</span> sats</span></div>
+      <div class="pot"><b id="pot-used">&hellip;</b> <span>/ <span id="pot-size">100,000</span> sats</span></div>
       <div class="bar"><i id="pot-bar"></i></div>
-      <p class="note">Season 2: 120,000 sats for reports, bonuses and nodes (100,000 a season from Season 3). A season runs one week. When the pot is used up, there are no more bounties that season - nothing carries over to the next one.</p>
+      <p class="note">Season 3: <span class="pot-size2">100,000</span> sats for reports, bonuses and nodes, 22 Nov 17:00 UTC to 29 Nov 17:00 UTC. A season runs one week. When the pot is used up, there are no more bounties that season - nothing carries over to the next one.</p>
     </section>
-    <section class="card" id="draw"><h3>Draw prize 50,000 sat: the top 5</h3>
-      <ol class="podium"><li><b>1</b>20,000</li><li><b>2</b>12,000</li><li><b>3</b>8,000</li><li><b>4</b>6,000</li><li><b>5</b>4,000</li></ol>
+    <section class="card" id="draw" hidden><h3>Draw prize <span class="draw-prize">50,000</span> sat: the top 5</h3>
+      <ol class="podium" id="draw-podium"><li><b>1</b>20,000</li><li><b>2</b>12,000</li><li><b>3</b>8,000</li><li><b>4</b>6,000</li><li><b>5</b>4,000</li></ol>
       <p class="note">At the end of the season we draw five winners among reporters who are members of Telegram, Discord or Armada. The seed is a Bitcoin block, so anyone can check it.</p>
     </section>
   </div>
@@ -178,8 +186,8 @@ function arenaPotBanner(s) {
       <li id="bots">Humans 100 %, bots 15 %: a linked X (Twitter) account proves you are human. Without a linked X account a report counts as a bot report and gets 15 %. Bots that try to game this may be excluded; an accepted bug from such a bot still gets only 15 %.</li>
       <li id="node-bounty">Run a node for a day: 10,000 sats, the first 3 nodes a season. From 16 Nov 2026 07:06 UTC the 10,000 sat node bounty is only for humans with a linked X account. Node reports from bots are rewarded like any other feedback.</li>
       <li id="no-game-results">Winning a round is never paid. Test sats have no value.</li>
-      <li>Draw: one confirmed report this season and a member of Telegram, Discord or Armada; one entry per person. Seed: the first Bitcoin block after Season 2 ends (2026-11-22 17:00 UTC). Draw prize 50,000 sat, apart from the 120,000 pot. <a href="draw.mjs">draw.mjs</a></li>
-      <li id="no-carry">The pot is 120,000 sats in Season 2 (100,000 a season from Season 3; a season runs one week). The draw prize, 50,000 sat, is apart from it. When it is used up, there are no more bounties that season - nothing carries over to the next one.</li>
+      <li id="draw-rule" hidden>Draw: one confirmed report this season and a member of Telegram, Discord or Armada; one entry per person. Seed: the first Bitcoin block after Season 3 ends (2026-11-29 17:00 UTC). Draw prize <span class="draw-prize">50,000</span> sat, apart from the pot. <a href="draw.mjs">draw.mjs</a></li>
+      <li id="no-carry">The pot is <span class="pot-size2">100,000</span> sats in Season 3 (a season runs one week). When it is used up, there are no more bounties that season - nothing carries over to the next one.</li>
       <li>We check every report and decide its level. Our decision is final.</li>
     </ul>
   </details>
@@ -195,7 +203,11 @@ function arenaPotBanner(s) {
       fetch('/api/faucet/feedback/season').then(function (r) { if (!r.ok) throw 0; return r.json(); }).then(function (s) {
         document.getElementById('pot-used').textContent = fmt(s.usedSats);
         /* kanban #2784: the pot's size from the faucet (Season 2: 120,000) */
-        if (s.potSats) { var ps = document.getElementById('pot-size'); if (ps) ps.textContent = fmt(s.potSats); }
+        if (s.potSats) { var ps = document.getElementById('pot-size'); if (ps) ps.textContent = fmt(s.potSats); document.querySelectorAll('.pot-size2').forEach(function (e) { e.textContent = fmt(s.potSats); }); }
+        /* kanban #3342: the draw only when the faucet names a prize for this season; the podium's split is the 50,000 one */
+        if (Number(s.drawPrizeSats) > 0) { document.querySelectorAll('.draw-prize').forEach(function (e) { e.textContent = fmt(s.drawPrizeSats); }); ['draw', 'draw-rule'].forEach(function (id) { var e = document.getElementById(id); if (e) e.hidden = false; }); var pd = document.getElementById('draw-podium'); if (pd && Number(s.drawPrizeSats) !== 50000) pd.hidden = true; }
+        /* kanban #3342: the countdown to the faucet's season end while it is Season 3 */
+        if (Number(s.season) === 3 && Number(s.nextSeasonMs) > 0 && typeof window.arenaSeasonEnd === 'function') window.arenaSeasonEnd(Number(s.nextSeasonMs));
         document.getElementById('pot-bar').style.width = Math.min(100, Math.round(100 * s.usedSats / s.potSats)) + '%';
         /* kanban #2789: the pot warning on top */
         var ban = typeof arenaPotBanner === 'function' ? arenaPotBanner(s) : null, box = document.getElementById('pot-banner');
@@ -218,6 +230,24 @@ function arenaPotBanner(s) {
         if (!document.querySelector('#s2-open td:nth-child(2)')) document.getElementById('s2-open').innerHTML = '<tr><td colspan="2">Not readable just now.</td></tr>'; });
     })();
   </script>
+
+  <h2 id="payouts">Season 3 payouts</h2>
+  <table id="rows-cur"><thead><tr><th>Season</th><th>Date</th><th>For</th><th>Channel</th><th>Sats</th></tr></thead><tbody></tbody></table>
+  <p id="sum-cur" style="margin-top:14px"></p>
+
+  <details id="season-2" style="margin-top:28px"><summary style="cursor:pointer;font-size:20px;font-weight:600">Season 2 (2026-11-15 to 2026-11-22): rules and payouts</summary>
+  <p>Season 2 ran from 15 Nov 2026, 17:00 UTC to 22 Nov 2026, 17:00 UTC.</p>
+  <ul>
+    <li><b>Pot: 120,000 sats</b> for reports, bonuses and nodes. Nothing carried over to Season 3.</li>
+    <li><b>Levels:</b> useful 500, low 1,000, medium 2,000, high 5,000, critical 10,000 sats; a gap in a fix or another variant 1,000 sats.</li>
+    <li><b>Humans 100 %, bots 15 %:</b> a linked X (Twitter) account proved a human. Up to +60 % bonus for humans.</li>
+    <li><b>Node bounty:</b> 10,000 sats for the first 3 nodes; from 16 Nov 2026 07:06 UTC only for humans with a linked X account.</li>
+    <li><b>Draw prize 50,000 sat</b> (20,000 / 12,000 / 8,000 / 6,000 / 4,000), apart from the pot, among reporters with a confirmed report who are members of Telegram, Discord or Armada. Seed: the first Bitcoin block after 22 Nov 2026, 17:00 UTC. <a href="draw.mjs">draw.mjs</a></li>
+  </ul>
+  <h3 style="font-size:17px;margin:20px 0 0">Every Season 2 payout</h3>
+  <table id="rows-s2"><thead><tr><th>Season</th><th>Date</th><th>For</th><th>Channel</th><th>Sats</th></tr></thead><tbody></tbody></table>
+  <p id="sum-s2" style="margin-top:14px"></p>
+  </details>
 
   <span id="season-1"></span><details id="week-1" style="margin-top:28px"><summary style="cursor:pointer;font-size:20px;font-weight:600">Season 1 (2026-11-11 to 2026-11-13): rules and payouts<a class="rl" href="#week-1" aria-label="Link to this rule" title="Copy the link to this rule"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M7.78 4.3 9.3 2.78a3.25 3.25 0 0 1 4.6 4.6l-2.5 2.5a3.25 3.25 0 0 1-4.6 0 .75.75 0 0 1 1.06-1.06 1.75 1.75 0 0 0 2.48 0l2.5-2.5a1.75 1.75 0 0 0-2.48-2.48L8.84 5.36A.75.75 0 0 1 7.78 4.3Zm-3.56 7.46 2.5-2.5a1.75 1.75 0 0 1 2.48 0 .75.75 0 1 0 1.06-1.06 3.25 3.25 0 0 0-4.6 0l-2.5 2.5a3.25 3.25 0 0 0 4.6 4.6l1.52-1.52a.75.75 0 1 0-1.06-1.06L6.7 14.24a1.75 1.75 0 0 1-2.48-2.48Z"/></svg></a></summary>
 
@@ -249,20 +279,28 @@ function arenaPotBanner(s) {
     <li><b>From one bounty wallet, over Lightning,</b> kept only for this. Every payout is listed below with its report.</li>
     <li>The network's reserves never pay a single report. They may top up the bounty wallet once a year, by a public proposal and vote.</li>
   </ul>
-  <h3 style="font-size:17px;margin:20px 0 0">Every payout</h3>
+  <h3 style="font-size:17px;margin:20px 0 0">Every Season 1 payout</h3>
   <table id="rows"><thead><tr><th>Season</th><th>Date</th><th>For</th><th>Channel</th><th>Sats</th></tr></thead><tbody></tbody></table>
   <p id="sum" style="margin-top:14px"></p>
   <script>
   (function () {
-    var body = document.querySelector('#rows tbody'), TIER = { critical: 10000, high: 5000, medium: 2000, low: 1000, useful: 500 };
+    var TIER = { critical: 10000, high: 5000, medium: 2000, low: 1000, useful: 500 };
+    /* kanban #3342: each row in its season's table - Season 1 and Season 2 in their history folds, this season (and any later one) on top */
+    var TABLES = { 'Season 1': ['rows', 'sum'], 'Season 2': ['rows-s2', 'sum-s2'] }, CUR = ['rows-cur', 'sum-cur'];
+    var where = function (se) { return TABLES[se] || CUR; };
     fetch('/api/faucet/feedback/paid-log').then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); }).then(function (l) { if (!Array.isArray(l) || !l.length) throw new Error('empty'); return l; }).catch(function () { return fetch('log.json').then(function (r) { return r.ok ? r.json() : []; }).catch(function () { return []; }); }).then(function (list) {
-      var total = 0, by = {}, seasons = {}, owed = {}, tiers = {};   // kanban #2868: each row's own season; #3327: an approved one not yet claimed is a row too (state 'approved')
-      list.forEach(function (p) { var tr = document.createElement('tr'), due = p.state === 'approved'; [String(p.season || 'Season 1'), due ? 'approved, not yet claimed' : p.date, p.reason, p.channel, Number(p.sats).toLocaleString('en-US')].forEach(function (x) { var td = document.createElement('td'); td.textContent = x; tr.appendChild(td); }); body.appendChild(tr); total += Number(p.sats); by[p.channel] = (by[p.channel] || 0) + Number(p.sats); var se = String(p.season || 'Season 1'); if (due) owed[se] = (owed[se] || 0) + Number(p.sats); else seasons[se] = (seasons[se] || 0) + Number(p.sats);
-        var m = /\((critical|high|medium|low|useful)\)$/.exec(String(p.reason || '')); if (se === 'Season 1' && m && Number(p.sats) === TIER[m[1]]) tiers[m[1]] = (tiers[m[1]] || 0) + 1; });
+      var seasons = {}, owed = {}, tiers = {}, used = {};   // kanban #2868: each row's own season; #3327: an approved one not yet claimed is a row too (state 'approved')
+      list.forEach(function (p) { var se = String(p.season || 'Season 1'), t = where(se), body = document.querySelector('#' + t[0] + ' tbody'); if (!body) return; used[t[0]] = true;
+        var tr = document.createElement('tr'), due = p.state === 'approved'; [se, due ? 'approved, not yet claimed' : p.date, p.reason, p.channel, Number(p.sats).toLocaleString('en-US')].forEach(function (x) { var td = document.createElement('td'); td.textContent = x; tr.appendChild(td); }); body.appendChild(tr);
+        if (due) owed[se] = (owed[se] || 0) + Number(p.sats); else seasons[se] = (seasons[se] || 0) + Number(p.sats);
+        var m = /\((critical|high|medium|low|useful)\)$/.exec(String(p.reason || '')); if (se === 'Season 1' && !due && m && Number(p.sats) === TIER[m[1]]) tiers[m[1]] = (tiers[m[1]] || 0) + 1; });
       var tl = Object.keys(TIER).filter(function (k) { return tiers[k]; }).map(function (k) { return k + ' ' + TIER[k].toLocaleString('en-US') + ' (' + tiers[k] + (tiers[k] === 1 ? ' report' : '') + ')'; });
       if (tl.length) document.getElementById('s1-tiers').textContent = tl.join(', ');
-      if (!list.length) { var tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 5; td.textContent = 'Nothing paid yet.'; tr.appendChild(td); body.appendChild(tr); }
-      else document.getElementById('sum').textContent = Object.keys(Object.assign({}, seasons, owed)).sort().map(function (k) { return k + ': ' + (seasons[k] || 0).toLocaleString('en-US') + ' sats paid' + (owed[k] ? ' + ' + owed[k].toLocaleString('en-US') + ' approved, not yet claimed = ' + ((seasons[k] || 0) + owed[k]).toLocaleString('en-US') + ' from the pot' : ''); }).join('; ') + '.';
+      var line = function (k) { return k + ': ' + (seasons[k] || 0).toLocaleString('en-US') + ' sats paid' + (owed[k] ? ' + ' + owed[k].toLocaleString('en-US') + ' approved, not yet claimed = ' + ((seasons[k] || 0) + owed[k]).toLocaleString('en-US') + ' from the pot' : ''); };
+      [['rows', 'sum'], ['rows-s2', 'sum-s2'], CUR].forEach(function (t) {
+        var ks = Object.keys(Object.assign({}, seasons, owed)).filter(function (k) { return where(k)[0] === t[0]; }).sort();
+        if (!used[t[0]]) { var b = document.querySelector('#' + t[0] + ' tbody'); if (b) { var tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 5; td.textContent = 'Nothing paid yet.'; tr.appendChild(td); b.appendChild(tr); } return; }
+        var sm = document.getElementById(t[1]); if (sm) sm.textContent = ks.map(line).join('; ') + '.'; });
     });
   })();
   </script>

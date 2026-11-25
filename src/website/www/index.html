@@ -16,7 +16,7 @@
 <meta name="twitter:title" content="Bitcoin Arena · Play for sats. Settle on Bitcoin.">
 <meta name="twitter:description" content="Games and markets on a federated network of independent nodes, on testnet. No single company or node holds the money.">
 <meta name="twitter:image" content="https://testnet.bitcoinarena.io/arena-og-stadium.png">
-<meta name="description" content="Games and prediction markets for bitcoin, run by independent nodes. Tick Tock, Next Block · Rock Paper Scissors · Bitcoin Up or Down. Held by a federation, fully Nostr native, live on Bitcoin testnet4.">
+<meta name="description" content="Games and prediction markets for bitcoin, run by independent nodes. Tick Tock, Next Block · Rock Paper Scissors · Bitcoin Up or Down · Orange Pill Run. Held by a federation, fully Nostr native, live on Bitcoin testnet4.">
 <meta name="theme-color" content="#0f0a10">
 <!-- kanban #1455 (the owner 2026-11-11: "Live auf Startseite", "logo ist aktualisiert, und auch header image für die homepage"): the new stadium logo and hero on the start page; the site's other pages keep /favicon.ico -->
 <link rel="icon" type="image/png" sizes="32x32" href="/img/logo/favicon-32.png">
@@ -103,7 +103,7 @@
   }
 
   /* games */
-  .games { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; margin-top: 30px; }
+  .games { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; margin-top: 30px; }
   .games > * { min-width: 0; }
   .game { display: flex; flex-direction: column; }
   .game img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; background: #07060a; }
@@ -370,9 +370,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
 </header>
 
 <section id="games"><div class="wrap">
-  <h2>Three games, live on testnet4</h2>
+  <h2>Four games, live on testnet4</h2>
   <p class="lead">Same nodes, federations and Lightning as a paid game.</p>
   <div class="games">
+    <article class="game">
+      <img src="/media/orange-pill-run-v1.jpg" alt="Orange Pill Run in play: the runner on yesterday's Bitcoin candles, coins and a rug pull ahead" width="960" height="540">
+      <div class="kind">Daily run · free to play</div>
+      <h3>Orange Pill Run</h3>
+      <p>Run through yesterday's Bitcoin chart. Free to play, 5 tries a day. The best run each day wins 2,500 sats.</p>
+      <p class="count">Daily until Nov 29</p>
+      <a class="btn" href="https://testnet.bitcoinarena.io/?game=orange-pill-run" data-umami-event="site-play" data-umami-event-game="orange-pill-run">Play Orange Pill Run</a>
+    </article>
     <article class="game">
       <img src="/media/nextblock-v2.jpg" alt="Tick Tock, Next Block in play: a truck on the road to the miners, tanks and the price war ahead" width="960" height="540">
       <div class="kind">Skill game · rounds</div>
