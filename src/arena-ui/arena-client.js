@@ -4918,6 +4918,211 @@ function noQuorumOutcome({ signatures, needed, equivocationProven, state }) {
  */
 const SETTLEMENT_THRESHOLD = 5;
 
+// ---- arena-protocol/src/bech32.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+/**
+ * BECH32 (BIP-173), FOR LNURL (LUD-01).
+ *
+ * An LNURL is a URL written in bech32 under the human-readable part `lnurl`,
+ * with no length limit. The donation set names its recipients as LNURLs
+ * (§22A), and before this nothing in the repo could turn one into the URL a
+ * wallet has to ask - `donation.js` only folded their case. Written out here
+ * because it is sixty lines and a dependency for sixty lines is a dependency
+ * that decides which address gets paid.
+ *
+ * CASE IS THE ENCODING'S: an all-lowercase and an all-uppercase string are the
+ * same address, mixed case is not an address at all (BIP-173), folded in ASCII
+ * as `canonicalLnurl` folds it.
+ */
+const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+const GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+
+function polymod(values) {
+  let chk = 1;
+  for (const v of values) {
+    const top = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= GENERATOR[i];
+  }
+  return chk >>> 0;
+}
+
+const hrpExpand = (hrp) => [...hrp].map((c) => c.charCodeAt(0) >> 5).concat([0], [...hrp].map((c) => c.charCodeAt(0) & 31));
+const asciiLower = (s) => s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+const asciiUpper = (s) => s.replace(/[a-z]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 32));
+
+/** 5-bit words under `hrp`, with the six-word checksum. */
+function bech32Encode(hrp, words) {
+  const chk = polymod([...hrpExpand(hrp), ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
+  const sum = [];
+  for (let i = 0; i < 6; i++) sum.push((chk >>> (5 * (5 - i))) & 31);
+  return `${hrp}1${[...words, ...sum].map((w) => CHARSET[w]).join('')}`;
+}
+
+/** `{ hrp, words }` of a bech32 string, or a throw naming what is wrong. `limit` is BIP-173's 90; LNURL has none. */
+function bech32Decode(str, { limit = 90 } = {}) {
+  if (typeof str !== 'string') throw new Error('a bech32 string is a string');
+  if (str.length > limit) throw new Error(`a bech32 string is at most ${limit} characters`);
+  for (const c of str) {
+    const code = c.charCodeAt(0);
+    if (code < 33 || code > 126) throw new Error('a bech32 string is printable ASCII');
+  }
+  if (str !== asciiLower(str) && str !== asciiUpper(str)) throw new Error('bech32 does not allow mixed case');
+  const s = asciiLower(str);
+  const at = s.lastIndexOf('1');
+  if (at < 1) throw new Error('a bech32 string names a human-readable part before its separator');
+  if (at + 7 > s.length) throw new Error('a bech32 string ends in a six-character checksum');
+  const hrp = s.slice(0, at);
+  const words = [];
+  for (const c of s.slice(at + 1)) {
+    const w = CHARSET.indexOf(c);
+    if (w < 0) throw new Error(`"${c}" is not a bech32 character`);
+    words.push(w);
+  }
+  if (polymod([...hrpExpand(hrp), ...words]) !== 1) throw new Error('that bech32 checksum does not verify');
+  return { hrp, words: words.slice(0, -6) };
+}
+
+/** Regroups bits: 8 -> 5 with padding, 5 -> 8 without (and the leftover must be zeros). */
+function convertBits(data, from, to, pad) {
+  let acc = 0;
+  let bits = 0;
+  const out = [];
+  const max = (1 << to) - 1;
+  for (const v of data) {
+    if (v < 0 || v >> from) throw new Error('a value is wider than its group');
+    acc = ((acc << from) | v) & 0xffffff;
+    bits += from;
+    while (bits >= to) { bits -= to; out.push((acc >> bits) & max); }
+  }
+  if (pad) { if (bits > 0) out.push((acc << (to - bits)) & max); }
+  else if (bits >= from || ((acc << (to - bits)) & max)) throw new Error('bech32 data carries non-zero padding');
+  return out;
+}
+
+/** The LNURL of a URL: lowercase, `lnurl` + bech32 of its UTF-8 bytes. */
+function lnurlFor(url) {
+  return bech32Encode('lnurl', convertBits([...new TextEncoder().encode(String(url))], 8, 5, true));
+}
+
+/** The URL an LNURL names, or a throw: it must be bech32 under `lnurl`. */
+function urlOfLnurl(lnurl) {
+  const { hrp, words } = bech32Decode(lnurl, { limit: Infinity });
+  if (hrp !== 'lnurl') throw new Error(`that is bech32 under "${hrp}", not an LNURL`);
+  return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(convertBits(words, 5, 8, false)));
+}
+
+// ---- arena-protocol/src/bolt11.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+/**
+ * A BOLT11 INVOICE, READ (M3.2 item 6e): the network, the amount, the payment
+ * hash, the description and the description hash - what a donor's page must
+ * check before its wallet pays an invoice a recipient's LNURL endpoint handed
+ * it (LUD-06: the amount is the one asked, the description hash is the
+ * endpoint's own metadata). `decodeBolt11` does not check the node's
+ * signature: the wallet that pays does that. WHO IS PAID is `invoicePayee`
+ * (kanban #1154): the key the signature recovers to, with the curve the caller
+ * brings - this package carries none.
+ *
+ * Tested against the examples BOLT11 itself publishes.
+ */
+
+
+
+const NETWORKS = { bc: 'bitcoin', tb: 'testnet', tbs: 'signet', bcrt: 'regtest', sb: 'simnet' };
+const MSAT_PER_UNIT = { m: 100000000n, u: 100000n, n: 100n };     // p: a tenth of a msat, below
+const TAG_PAYMENT_HASH = 1;        // 'p'
+const TAG_DESCRIPTION = 13;        // 'd'
+const TAG_DESCRIPTION_HASH = 23;   // 'h'
+const TAG_PAYEE = 19;              // 'n'
+const SIGNATURE_WORDS = 104;       // 65 bytes
+
+/** The amount a BOLT11 prefix names, in msat, or null for "any amount". */
+function hrpAmountMsat(hrp) {
+  const m = String(hrp).match(/^ln(bcrt|bc|tbs|tb|sb)(\d*)([munp]?)$/);
+  if (!m) throw new Error(`"${hrp}" is not a BOLT11 prefix`);
+  if (!m[2]) {
+    if (m[3]) throw new Error('an amount multiplier with no amount');
+    return null;
+  }
+  if (m[2].length > 1 && m[2][0] === '0') throw new Error('a BOLT11 amount has no leading zero');
+  const n = BigInt(m[2]);
+  if (!m[3]) return n * 100000000000n;
+  if (m[3] === 'p') {
+    // BOLT11: "if the `p` multiplier is used the last decimal of `amount` MUST be `0`"
+    if (n % 10n !== 0n) throw new Error('a pico amount must end in 0: there is no tenth of a millisatoshi');
+    return n / 10n;
+  }
+  return n * MSAT_PER_UNIT[m[3]];
+}
+
+const bytesOf = (words) => Uint8Array.from(convertBits(words, 5, 8, false));
+
+function decodeBolt11(invoice) {
+  const { hrp, words } = bech32Decode(String(invoice).trim(), { limit: Infinity });
+  const network = NETWORKS[(hrp.match(/^ln(bcrt|bc|tbs|tb|sb)/) || [])[1]];
+  const amountMsat = hrpAmountMsat(hrp);
+  if (words.length < 7 + SIGNATURE_WORDS) throw new Error('that invoice is too short to carry a timestamp and a signature');
+  const data = words.slice(0, words.length - SIGNATURE_WORDS);
+  let timestamp = 0;
+  for (let i = 0; i < 7; i++) timestamp = timestamp * 32 + data[i];
+  let paymentHash = null;
+  let descriptionHash = null;
+  let description = null;
+  let payee = null;
+  for (let at = 7; at < data.length;) {
+    if (at + 3 > data.length) throw new Error('a tagged field is cut short');
+    const type = data[at];
+    const len = data[at + 1] * 32 + data[at + 2];
+    at += 3;
+    if (at + len > data.length) throw new Error('a tagged field runs past the invoice');
+    const field = data.slice(at, at + len);
+    at += len;
+    // BOLT11: a reader MUST skip a p or h field whose length is not 52 words.
+    if (type === TAG_PAYMENT_HASH && len === 52 && !paymentHash) paymentHash = bytesOf(field);
+    else if (type === TAG_DESCRIPTION_HASH && len === 52 && !descriptionHash) descriptionHash = bytesOf(field);
+    else if (type === TAG_DESCRIPTION && description === null) description = new TextDecoder('utf-8', { fatal: true }).decode(bytesOf(field));
+    // BOLT11: a reader MUST skip an n field whose length is not 53 words
+    else if (type === TAG_PAYEE && len === 53 && !payee) payee = bytesOf(field);
+  }
+  if (!paymentHash) throw new Error('that invoice names no payment hash');
+  return { network, amountMsat, timestamp, paymentHash, descriptionHash, description, payee };
+}
+
+/**
+ * WHAT A BOLT11 INVOICE'S NODE SIGNED (BOLT11 "signature"): sha256 of the human-readable part's UTF-8 bytes and the data part without
+ * the signature, zero-padded to a byte; with the 64-byte signature and its recovery id, as the invoice carries them.
+ */
+function bolt11SignedDigest(invoice) {
+  const { hrp, words } = bech32Decode(String(invoice).trim(), { limit: Infinity });
+  if (words.length < 7 + SIGNATURE_WORDS) throw new Error('that invoice is too short to carry a timestamp and a signature');
+  const data = words.slice(0, words.length - SIGNATURE_WORDS);
+  const sig = bytesOf(words.slice(words.length - SIGNATURE_WORDS));
+  const hrpBytes = new TextEncoder().encode(hrp);
+  const body = Uint8Array.from(convertBits(data, 5, 8, true));
+  const msg = new Uint8Array(hrpBytes.length + body.length);
+  msg.set(hrpBytes, 0); msg.set(body, hrpBytes.length);
+  return { digest: sha256(msg), signature: sig.subarray(0, 64), recovery: sig[64] };
+}
+
+/**
+ * WHO A BOLT11 INVOICE PAYS (kanban #1154): the 33-byte node key its signature recovers to, hex - and, where the invoice names its payee
+ * (the n field), only if that is the key that signed. `recover(sig64, bit, digest)` is the caller's curve (arena-node curve.js
+ * `messageCurve.recover`). Throws on an invoice whose signature recovers to no key or to another than it names.
+ */
+function invoicePayee(invoice, recover) {
+  if (typeof recover !== 'function') throw new Error('no curve to recover an invoice\'s payee with');
+  const { digest, signature, recovery } = bolt11SignedDigest(invoice);
+  if (recovery > 3) throw new Error('that invoice\'s signature carries no recovery id');
+  let key;
+  try { key = recover(signature, recovery, digest); } catch (e) { throw new Error(`that invoice's signature recovers to no key: ${e.message}`); }
+  const named = decodeBolt11(invoice).payee;
+  if (named && toHex(named) !== toHex(key)) throw new Error('that invoice names a payee that did not sign it');
+  return toHex(key);
+}
+
 // ---- arena-client/src/nwc.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -4949,6 +5154,7 @@ const SETTLEMENT_THRESHOLD = 5;
 //
 // THE CURVE IS INJECTED, like everywhere else in this package: `arena-client`
 // carries no crypto, and `page-curve.js` is what the page loads beside it.
+
 
 
 
@@ -5277,9 +5483,15 @@ function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
   return new Promise((resolve) => {
     let sock;
     let done = false;
+    // ONCE THE REQUEST HAS GONE OUT, NO ANSWER BUT THE WALLET'S OWN SAYS IT WAS NOT DONE (kanban #3692, bypass audit 3): a
+    // relay can forward the request, the wallet act on it, and the relay then say OK false or close. Every ending that is
+    // not the wallet's signed answer carries `sent: true` from that point, so a caller can tell "refused" from "unknown".
+    let sent = false;
     const finish = (answer) => {
       if (done) return;
       done = true;
+      if (answer.fromWallet) { const { fromWallet, ...rest } = answer; answer = rest; }
+      else if (sent && !answer.ok) answer = { ...answer, sent: true };
       clearTimeout(timer);
       try { if (sock) sock.close(); } catch { /* going away anyway */ }
       resolve(answer);
@@ -5314,6 +5526,7 @@ function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
       sock.send(JSON.stringify(['REQ', sub, {
         kinds: [NWC_RESPONSE], authors: [toHex(where.walletPubkey)], '#e': [event.id],
       }]));
+      sent = true;
       sock.send(JSON.stringify(['EVENT', event]));
       return undefined;
     });
@@ -5326,7 +5539,8 @@ function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
 
       // A RELAY THAT REFUSED THE EVENT IS AN ANSWER TOO. Without this the
       // wallet is blamed for a timeout that the relay caused.
-      if (frame[0] === 'OK' && frame[2] === false)
+      // ONLY AN OK THAT NAMES THIS REQUEST (kanban #3692): one naming another event is not about it and is passed over.
+      if (frame[0] === 'OK' && frame[2] === false && event && frame[1] === event.id)
         return finish({ ok: false, why: `the relay refused the request: ${frame[3] || 'no reason given'}` });
       if (frame[0] !== 'EVENT' || !frame[2]) return;
       // ONLY THE WALLET'S OWN ANSWER TO THIS REQUEST (kanban #1471, feedback #004 by Hexbox Tools 2026-11-11: any EVENT the relay sent was decrypted and
@@ -5349,7 +5563,7 @@ function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
       // sentence that says what to do.
       if (said.error)
         return finish({
-          ok: false, code: said.error.code,
+          ok: false, fromWallet: true, code: said.error.code,
           why: `the wallet refused: ${said.error.code || 'no code'} ${said.error.message || ''}`.trim(),
         });
       return finish({ ok: true, result: said.result, resultType: said.result_type });
@@ -5477,14 +5691,27 @@ async function makeInvoice(where, amountMsat, options = {}) {
 async function payInvoice(where, invoice, options = {}) {
   if (typeof invoice !== 'string' || !invoice.trim())
     return { ok: false, why: 'there is no invoice to pay' };
+  // THE PREIMAGE IS THE RECEIPT ONLY IF IT HASHES TO THE INVOICE'S PAYMENT HASH (kanban #3693, bypass audit 3): 64 hex
+  // characters were taken as proof of payment, so a wallet answering any preimage had a donation share recorded paid -
+  // zap.js sendZap already checked the hash. The hash is read here, before the wallet is asked: an invoice with none is
+  // not sent, because nothing could show it was paid.
+  let paymentHash;
+  try { paymentHash = decodeBolt11(invoice).paymentHash; } catch (e) { return { ok: false, why: `that is not an invoice this page can read: ${e.message}` }; }
+  if (!(paymentHash instanceof Uint8Array) || paymentHash.length !== 32) return { ok: false, why: 'that invoice names no payment hash, so no preimage could show it was paid' };
   const said = await nwcCall(where, {
     method: 'pay_invoice', params: { invoice: invoice.trim() },
   }, options);
+  // A RELAY'S FAILURE AFTER THE REQUEST WENT OUT IS NOT A REFUSAL (kanban #3692): the wallet may have paid, so it is unknown.
+  if (!said.ok && said.sent) return { ...said, unknown: true, why: `the wallet may have paid it: ${said.why}` };
   if (!said.ok) return said;
   const preimage = said.result && said.result.preimage;
   if (typeof preimage !== 'string' || !/^[0-9a-f]{64}$/i.test(preimage))
-    return { ok: false, why: 'the wallet said it paid and produced no preimage' };
-  return { ok: true, preimage, feesPaidMsat: said.result.fees_paid };
+    return { ok: false, unknown: true, why: 'the wallet said it paid and produced no preimage' };
+  // A WALLET THAT SAYS IT PAID WITH A PREIMAGE THAT IS NOT THE INVOICE'S IS NOT A RECEIPT, and not a refusal either:
+  // `unknown` - it may have paid, so a caller notes the payment as asked and never asks again (kanban #3693).
+  if (toHex(sha256(fromHex(preimage.toLowerCase()))) !== toHex(paymentHash))
+    return { ok: false, unknown: true, why: 'the wallet said it paid, and its preimage is not the invoice\'s' };
+  return { ok: true, preimage: preimage.toLowerCase(), feesPaidMsat: said.result.fees_paid };
 }
 
 // ---- arena-protocol/src/first-mark.js
@@ -6407,9 +6634,23 @@ function legacyOutpoint(outpoint) {
 }
 
 /** Whether a template-1 bond counts on `network`: everywhere it is read without a cutoff, else a listed outpoint or an early one. */
-function legacyV1Counts(network, confirmationHeight, outpoint) {
+/**
+ * FROM WHICH CENSUS HEIGHT THE #3548 RULE IS READ (kanban #3669). The seats posted Next Block and Up/Down rounds up to 72 h ahead
+ * with census heights 163,017-163,068 before #3548 reached them (the roll of 2026-11-24 ended 22:51Z); those roots count a template-1
+ * bond confirmed at 162,922. A client reading #3548 refused that bond, its census hash differed from the round's, and no paid join was
+ * seated. A census below this height is read as it was written (template 1 counts, as before #3548); from it on, #3548's rule. No
+ * posted round names a census height at or above it, so the seats' censuses from here on and the clients agree.
+ */
+// 163197 (not 163069, measured 2026-11-25 03:18-04:05Z): a Next Block series with census height 163196 was posted ~21:20Z by a seat not yet
+// rolled to #3548, so its root counts the bond; the 7 seats rolled before it refused the series and its rounds never seated (4 of 9 drawn).
+// Every root written after the roll ended (22:51Z) is at 163227 or later and leaves the bond out.
+const BOND_V1_RULE_FROM_CENSUS = Object.freeze({ testnet4: 163197 });
+
+function legacyV1Counts(network, confirmationHeight, outpoint, censusHeight) {
   const before = BOND_V1_BEFORE[network];
   if (before === undefined) return { ok: true };
+  const from = BOND_V1_RULE_FROM_CENSUS[network];
+  if (Number.isInteger(from) && Number.isInteger(censusHeight) && censusHeight < from) return { ok: true };   // kanban #3669
   const op = legacyOutpoint(outpoint);
   if (op && network === 'testnet4' && TESTNET4_LEGACY_V1_BONDS.includes(op)) return { ok: true };
   if (Number.isInteger(confirmationHeight) && confirmationHeight < before) return { ok: true };
@@ -6450,8 +6691,8 @@ function bondMaturityOf(advert, { genesisMaturity, network } = {}) {
  * (kanban #3548: on testnet4 only the legacy genesis bonds; `bondMaturityOf` refuses it on mainnet). `outpoint` is
  * { txid, vout }, the txid as internal-order bytes or display hex.
  */
-function maturityStands(advert, confirmationHeight, network, outpoint) {
-  if (advert && advert.bondScriptTemplateVersion === BOND_SCRIPT_TEMPLATE_VERSION) return legacyV1Counts(network, confirmationHeight, outpoint);
+function maturityStands(advert, confirmationHeight, network, outpoint, censusHeight) {
+  if (advert && advert.bondScriptTemplateVersion === BOND_SCRIPT_TEMPLATE_VERSION) return legacyV1Counts(network, confirmationHeight, outpoint, censusHeight);
   if (!advert || (advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V2 && advert.bondScriptTemplateVersion !== BOND_TEMPLATE_V3)) return { ok: true };
   const offset = BOND_MATURITY_OFFSET[network];
   if (!Number.isInteger(offset)) return { ok: false, why: `no bond maturity offset is set for ${network}` };
@@ -14079,7 +14320,7 @@ function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, view, v
     // view was brought, else the entry's own height. One block short is a bond its node could take back before the
     // network's maturity, and it is excluded by name.
     const confirmed = chainSays ? chainSays.height : e.height;
-    const matures = maturityStands(read.advert, confirmed, network, { txid: e.txid, vout: e.vout });
+    const matures = maturityStands(read.advert, confirmed, network, { txid: e.txid, vout: e.vout }, contract.censusHeight);   // #3669
     if (!matures.ok) { excluded.push({ ...e, ...heldOut, why: matures.why }); continue; }
     // A TEMPLATE-3 BOND NAMES A KEY NEWEST WITHIN census_confirmations OF ITS CONFIRMATION (5A.3B, kanban #1031). `bond.standingKeys` is the reader's list.
     const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
@@ -23760,211 +24001,6 @@ function seatVoice(answers, keyOf) {
     if (first === null) { first = a; k0 = k; } else if (k !== k0) return null;
   }
   return first;
-}
-
-// ---- arena-protocol/src/bech32.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-/**
- * BECH32 (BIP-173), FOR LNURL (LUD-01).
- *
- * An LNURL is a URL written in bech32 under the human-readable part `lnurl`,
- * with no length limit. The donation set names its recipients as LNURLs
- * (§22A), and before this nothing in the repo could turn one into the URL a
- * wallet has to ask - `donation.js` only folded their case. Written out here
- * because it is sixty lines and a dependency for sixty lines is a dependency
- * that decides which address gets paid.
- *
- * CASE IS THE ENCODING'S: an all-lowercase and an all-uppercase string are the
- * same address, mixed case is not an address at all (BIP-173), folded in ASCII
- * as `canonicalLnurl` folds it.
- */
-const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-const GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
-
-function polymod(values) {
-  let chk = 1;
-  for (const v of values) {
-    const top = chk >>> 25;
-    chk = ((chk & 0x1ffffff) << 5) ^ v;
-    for (let i = 0; i < 5; i++) if ((top >>> i) & 1) chk ^= GENERATOR[i];
-  }
-  return chk >>> 0;
-}
-
-const hrpExpand = (hrp) => [...hrp].map((c) => c.charCodeAt(0) >> 5).concat([0], [...hrp].map((c) => c.charCodeAt(0) & 31));
-const asciiLower = (s) => s.replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
-const asciiUpper = (s) => s.replace(/[a-z]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 32));
-
-/** 5-bit words under `hrp`, with the six-word checksum. */
-function bech32Encode(hrp, words) {
-  const chk = polymod([...hrpExpand(hrp), ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
-  const sum = [];
-  for (let i = 0; i < 6; i++) sum.push((chk >>> (5 * (5 - i))) & 31);
-  return `${hrp}1${[...words, ...sum].map((w) => CHARSET[w]).join('')}`;
-}
-
-/** `{ hrp, words }` of a bech32 string, or a throw naming what is wrong. `limit` is BIP-173's 90; LNURL has none. */
-function bech32Decode(str, { limit = 90 } = {}) {
-  if (typeof str !== 'string') throw new Error('a bech32 string is a string');
-  if (str.length > limit) throw new Error(`a bech32 string is at most ${limit} characters`);
-  for (const c of str) {
-    const code = c.charCodeAt(0);
-    if (code < 33 || code > 126) throw new Error('a bech32 string is printable ASCII');
-  }
-  if (str !== asciiLower(str) && str !== asciiUpper(str)) throw new Error('bech32 does not allow mixed case');
-  const s = asciiLower(str);
-  const at = s.lastIndexOf('1');
-  if (at < 1) throw new Error('a bech32 string names a human-readable part before its separator');
-  if (at + 7 > s.length) throw new Error('a bech32 string ends in a six-character checksum');
-  const hrp = s.slice(0, at);
-  const words = [];
-  for (const c of s.slice(at + 1)) {
-    const w = CHARSET.indexOf(c);
-    if (w < 0) throw new Error(`"${c}" is not a bech32 character`);
-    words.push(w);
-  }
-  if (polymod([...hrpExpand(hrp), ...words]) !== 1) throw new Error('that bech32 checksum does not verify');
-  return { hrp, words: words.slice(0, -6) };
-}
-
-/** Regroups bits: 8 -> 5 with padding, 5 -> 8 without (and the leftover must be zeros). */
-function convertBits(data, from, to, pad) {
-  let acc = 0;
-  let bits = 0;
-  const out = [];
-  const max = (1 << to) - 1;
-  for (const v of data) {
-    if (v < 0 || v >> from) throw new Error('a value is wider than its group');
-    acc = ((acc << from) | v) & 0xffffff;
-    bits += from;
-    while (bits >= to) { bits -= to; out.push((acc >> bits) & max); }
-  }
-  if (pad) { if (bits > 0) out.push((acc << (to - bits)) & max); }
-  else if (bits >= from || ((acc << (to - bits)) & max)) throw new Error('bech32 data carries non-zero padding');
-  return out;
-}
-
-/** The LNURL of a URL: lowercase, `lnurl` + bech32 of its UTF-8 bytes. */
-function lnurlFor(url) {
-  return bech32Encode('lnurl', convertBits([...new TextEncoder().encode(String(url))], 8, 5, true));
-}
-
-/** The URL an LNURL names, or a throw: it must be bech32 under `lnurl`. */
-function urlOfLnurl(lnurl) {
-  const { hrp, words } = bech32Decode(lnurl, { limit: Infinity });
-  if (hrp !== 'lnurl') throw new Error(`that is bech32 under "${hrp}", not an LNURL`);
-  return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(convertBits(words, 5, 8, false)));
-}
-
-// ---- arena-protocol/src/bolt11.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-/**
- * A BOLT11 INVOICE, READ (M3.2 item 6e): the network, the amount, the payment
- * hash, the description and the description hash - what a donor's page must
- * check before its wallet pays an invoice a recipient's LNURL endpoint handed
- * it (LUD-06: the amount is the one asked, the description hash is the
- * endpoint's own metadata). `decodeBolt11` does not check the node's
- * signature: the wallet that pays does that. WHO IS PAID is `invoicePayee`
- * (kanban #1154): the key the signature recovers to, with the curve the caller
- * brings - this package carries none.
- *
- * Tested against the examples BOLT11 itself publishes.
- */
-
-
-
-const NETWORKS = { bc: 'bitcoin', tb: 'testnet', tbs: 'signet', bcrt: 'regtest', sb: 'simnet' };
-const MSAT_PER_UNIT = { m: 100000000n, u: 100000n, n: 100n };     // p: a tenth of a msat, below
-const TAG_PAYMENT_HASH = 1;        // 'p'
-const TAG_DESCRIPTION = 13;        // 'd'
-const TAG_DESCRIPTION_HASH = 23;   // 'h'
-const TAG_PAYEE = 19;              // 'n'
-const SIGNATURE_WORDS = 104;       // 65 bytes
-
-/** The amount a BOLT11 prefix names, in msat, or null for "any amount". */
-function hrpAmountMsat(hrp) {
-  const m = String(hrp).match(/^ln(bcrt|bc|tbs|tb|sb)(\d*)([munp]?)$/);
-  if (!m) throw new Error(`"${hrp}" is not a BOLT11 prefix`);
-  if (!m[2]) {
-    if (m[3]) throw new Error('an amount multiplier with no amount');
-    return null;
-  }
-  if (m[2].length > 1 && m[2][0] === '0') throw new Error('a BOLT11 amount has no leading zero');
-  const n = BigInt(m[2]);
-  if (!m[3]) return n * 100000000000n;
-  if (m[3] === 'p') {
-    // BOLT11: "if the `p` multiplier is used the last decimal of `amount` MUST be `0`"
-    if (n % 10n !== 0n) throw new Error('a pico amount must end in 0: there is no tenth of a millisatoshi');
-    return n / 10n;
-  }
-  return n * MSAT_PER_UNIT[m[3]];
-}
-
-const bytesOf = (words) => Uint8Array.from(convertBits(words, 5, 8, false));
-
-function decodeBolt11(invoice) {
-  const { hrp, words } = bech32Decode(String(invoice).trim(), { limit: Infinity });
-  const network = NETWORKS[(hrp.match(/^ln(bcrt|bc|tbs|tb|sb)/) || [])[1]];
-  const amountMsat = hrpAmountMsat(hrp);
-  if (words.length < 7 + SIGNATURE_WORDS) throw new Error('that invoice is too short to carry a timestamp and a signature');
-  const data = words.slice(0, words.length - SIGNATURE_WORDS);
-  let timestamp = 0;
-  for (let i = 0; i < 7; i++) timestamp = timestamp * 32 + data[i];
-  let paymentHash = null;
-  let descriptionHash = null;
-  let description = null;
-  let payee = null;
-  for (let at = 7; at < data.length;) {
-    if (at + 3 > data.length) throw new Error('a tagged field is cut short');
-    const type = data[at];
-    const len = data[at + 1] * 32 + data[at + 2];
-    at += 3;
-    if (at + len > data.length) throw new Error('a tagged field runs past the invoice');
-    const field = data.slice(at, at + len);
-    at += len;
-    // BOLT11: a reader MUST skip a p or h field whose length is not 52 words.
-    if (type === TAG_PAYMENT_HASH && len === 52 && !paymentHash) paymentHash = bytesOf(field);
-    else if (type === TAG_DESCRIPTION_HASH && len === 52 && !descriptionHash) descriptionHash = bytesOf(field);
-    else if (type === TAG_DESCRIPTION && description === null) description = new TextDecoder('utf-8', { fatal: true }).decode(bytesOf(field));
-    // BOLT11: a reader MUST skip an n field whose length is not 53 words
-    else if (type === TAG_PAYEE && len === 53 && !payee) payee = bytesOf(field);
-  }
-  if (!paymentHash) throw new Error('that invoice names no payment hash');
-  return { network, amountMsat, timestamp, paymentHash, descriptionHash, description, payee };
-}
-
-/**
- * WHAT A BOLT11 INVOICE'S NODE SIGNED (BOLT11 "signature"): sha256 of the human-readable part's UTF-8 bytes and the data part without
- * the signature, zero-padded to a byte; with the 64-byte signature and its recovery id, as the invoice carries them.
- */
-function bolt11SignedDigest(invoice) {
-  const { hrp, words } = bech32Decode(String(invoice).trim(), { limit: Infinity });
-  if (words.length < 7 + SIGNATURE_WORDS) throw new Error('that invoice is too short to carry a timestamp and a signature');
-  const data = words.slice(0, words.length - SIGNATURE_WORDS);
-  const sig = bytesOf(words.slice(words.length - SIGNATURE_WORDS));
-  const hrpBytes = new TextEncoder().encode(hrp);
-  const body = Uint8Array.from(convertBits(data, 5, 8, true));
-  const msg = new Uint8Array(hrpBytes.length + body.length);
-  msg.set(hrpBytes, 0); msg.set(body, hrpBytes.length);
-  return { digest: sha256(msg), signature: sig.subarray(0, 64), recovery: sig[64] };
-}
-
-/**
- * WHO A BOLT11 INVOICE PAYS (kanban #1154): the 33-byte node key its signature recovers to, hex - and, where the invoice names its payee
- * (the n field), only if that is the key that signed. `recover(sig64, bit, digest)` is the caller's curve (arena-node curve.js
- * `messageCurve.recover`). Throws on an invoice whose signature recovers to no key or to another than it names.
- */
-function invoicePayee(invoice, recover) {
-  if (typeof recover !== 'function') throw new Error('no curve to recover an invoice\'s payee with');
-  const { digest, signature, recovery } = bolt11SignedDigest(invoice);
-  if (recovery > 3) throw new Error('that invoice\'s signature carries no recovery id');
-  let key;
-  try { key = recover(signature, recovery, digest); } catch (e) { throw new Error(`that invoice's signature recovers to no key: ${e.message}`); }
-  const named = decodeBolt11(invoice).payee;
-  if (named && toHex(named) !== toHex(key)) throw new Error('that invoice names a payee that did not sign it');
-  return toHex(key);
 }
 
 // ---- arena-protocol/src/test-federation.js
@@ -34871,7 +34907,13 @@ class Client {
    * `ticks` is five Q16.16 words each, exactly what the core's `step` takes.
    * Nothing is computed from them here; they are carried.
    */
-  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [], tapes = [], attests = [] }) {
+  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [], tapes = [], attests = [], again = null }) {
+    // THE SAME SIGNED FRAME AGAIN, NEVER A SECOND ONE ON THE SAME HEAD (kanban #3696/#3697, bypass audit 3): `again` is a
+    // frame this client signed and sent on this head whose answer was lost or was a stake wait. Measured before: the
+    // client signed a second, longer batch on the same previousHash (474 B, then 2574 B, both at firstTick 0); a home seat
+    // that kept the first handed it to the honest peer, which took it (first one wins) and refused the player's real
+    // chain - home 120 ticks, peer 15 for good. Whoever holds the first frame now holds the start of the real chain.
+    if (again) return this.#batchFrame(again.b, again.bytes);
     const b = {
       roundId, entryId,
       previousHash: this.batchHead,
@@ -34887,6 +34929,11 @@ class Client {
     // nobody who only knows this entry's public id can write ticks or a load into it. The same signed frame goes to
     // every peer below.
     const bytes = await signBatch(b, this.sign);
+    return this.#batchFrame(b, bytes);
+  }
+
+  async #batchFrame(b, bytes) {
+    const { roundId, entryId, ticks } = b;
     // KEPT BEFORE IT GOES OUT (kanban #1567): a batch the node took whose answer was lost is still this client's own
     this.signedFrames.set(toHex(batchId(b)), bytes);
     // THE HOME SEAT IS FED WHAT THE PEERS CARRIED WITHOUT IT FIRST (kanban #3215, wf1489 r1120b refute 12-s2-2): an honest home seat
@@ -34925,9 +34972,9 @@ class Client {
         const why = typeof answer === 'string' ? answer : 'the node answered the batch with a binary frame, not a tick count';
         this.homeRefusedWhy = why;
         this.#wakeMarks();
-        return { batch: b, answer: why, accepted: ticks.length, homeRefused: why };
+        return { batch: b, bytes, answer: why, accepted: ticks.length, homeRefused: why };
       }
-      return { batch: b, answer };
+      return { batch: b, bytes, answer };
     }
     this.batchHead = batchId(b);
     this.nextTick = b.firstTick + ticks.length;
@@ -34941,7 +34988,7 @@ class Client {
     this.homeHolds = this.published.length;
     if (this.peers.length) this.pumpPeers();
     this.#wakeMarks();
-    return { batch: b, answer, accepted: Number(answer) };
+    return { batch: b, bytes, answer, accepted: Number(answer) };
   }
 
   /**
@@ -34990,8 +35037,12 @@ class Client {
     this.pumpPeers();
     await this.awaitPeers();
     const took = this.peers.filter((base) => this.peerFeed(base).next > at).length;
-    const need = Math.min(this.peers.length, receiptsForLive({ gameVerifySlots: this.gameVerifySlots, nodes: this.nodes }));
-    if (took >= need) return true;
+    // ONE SEAT THAT TOOK IT IS ENOUGH TO KEEP IT (kanban #3711, spec ruling 2026-11-25 on the rest of #3696): once any seat
+    // holds a batch on a head the client never signs a second one there - two signed batches on one previousHash are a §13B
+    // fork. It stays on the chain, is resent as it is to the home seat (#homeCatchUp) and every seat (their feeds), and the
+    // run goes on on top of it; a home seat that refuses its content keeps that view, and §13C settles the split at the close.
+    // Measured before: one peer of two took it, it was spliced out, and the run ended as a node fault at the resume.
+    if (took >= 1) return true;
     this.published.splice(at, 1);
     for (const base of this.peers) { const f = this.peerFeed(base); if (f.next > at) f.next = at; }
     return false;
@@ -35086,7 +35137,15 @@ class Client {
       else wallet = await payInvoice(where, answer.pr, {
         curve, random: random || ((n) => crypto.getRandomValues(new Uint8Array(n))), ...options,
       });
+      // A PAYMENT WHOSE OUTCOME THE WALLET LEFT UNKNOWN (kanban #3693: it said paid with a preimage that is not the
+      // invoice's) is neither paid nor unpaid: it stays noted as asked, so a reload reports it unknown and never asks again.
+      if (!wallet.ok && wallet.unknown) { unknown.push({ lnurl: share.lnurl, amountMsat: share.amountMsat, why: `the wallet's answer does not show it paid: ${wallet.why}` }); continue; }
       if (!wallet.ok) { unpaid(`the wallet did not pay it: ${wallet.why}`); continue; }
+      if (typeof wallet.preimage === 'string' && /^[0-9a-f]{64}$/i.test(wallet.preimage)
+        && toHex(sha256(fromHex(wallet.preimage.toLowerCase()))) !== toHex(fits.paymentHash)) {
+        unknown.push({ lnurl: share.lnurl, amountMsat: share.amountMsat, why: 'the wallet said it paid, and its preimage is not the invoice\'s' });
+        continue;
+      }
       paid.push({ lnurl: share.lnurl, url, amountMsat: share.amountMsat, paymentHash: fits.paymentHash, preimage: wallet.preimage });
       note({ state: 'paid', url });
       if (log && typeof log.record === 'function') log.record({ amountMsat: share.amountMsat, paymentHash: fits.paymentHash, roundId: entry.roundId || (this.where && this.where.roundId), kind: 'donation' });
@@ -35995,27 +36054,44 @@ class Client {
     }
     if (this.sock && this.sock.bufferedAmount > 262144) return null;
 
-    const words = this.hold.slice(0, this.chunk);
+    // A FRAME ALREADY SIGNED ON THIS HEAD GOES OUT AGAIN AS IT WAS (kanban #3696/#3697): its words, loads, samples, tapes and
+    // attests were put back at the front of what is held, so exactly as many of each are taken out again, and the same bytes
+    // are sent - the words held since wait for the next batch. A head that moved (resume found the seat took it) drops it.
+    const pending = this.unanswered;
+    const again = pending && toHex(pending.b.previousHash) === toHex(this.batchHead) && pending.b.firstTick === this.nextTick
+      && this.hold.length >= pending.b.ticks.length ? pending : null;
+    if (!again) this.unanswered = null;
+    const take = (list, n) => [list.slice(0, n), list.slice(n)];
+    const words = again ? this.hold.slice(0, again.b.ticks.length) : this.hold.slice(0, this.chunk);
     this.hold = this.hold.slice(words.length);
     this.held = this.hold.length;
+    let loads, samples, tapes, attests;
+    if (again) {
+      [loads, this.loads] = take(this.loads, (again.b.loads || []).length);
+      [samples, this.samples] = take(this.samples, (again.b.samples || []).length);
+      [tapes, this.tapes] = take(this.tapes, (again.b.tapes || []).length);
+      [attests, this.attests] = take(this.attests, (again.b.attests || []).length);
+    } else {
 
     // THE LOADS THIS BATCH COVERS, and no others. A load names an absolute
     // tick and the node checks it against the ticks the batch carries, so one
     // declared while these words were still held goes out with them and one
     // declared after waits for the batch that reaches it.
     const through = this.nextTick + words.length;
-    const loads = this.loads.filter(([at]) => at < through);
+    loads = this.loads.filter(([at]) => at < through);
     const later = this.loads.filter(([at]) => at >= through);
     this.loads = later;
-    const samples = this.samples.filter(([at]) => at < through);
+    samples = this.samples.filter(([at]) => at < through);
     this.samples = this.samples.filter(([at]) => at >= through);
-    const tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
+    tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
     this.tapes = this.tapes.filter((t) => !tapes.includes(t));
     // the committee's word on the samples and the tape this batch carries, and on nothing else (§11)
-    const attests = this.attests.filter(([at, kind]) => (kind === 0 || kind === 2 ? samples : tapes).some((x) => x[0] === at));
+    attests = this.attests.filter(([at, kind]) => (kind === 0 || kind === 2 ? samples : tapes).some((x) => x[0] === at));
     this.attests = this.attests.filter((a) => !attests.includes(a));
+    }
 
-    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests }).then((r) => {
+    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests, again }).then((r) => {
+      this.unanswered = null;
       if (r.accepted) {
         this.batchesSent++;
         // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
@@ -36043,6 +36119,7 @@ class Client {
           // is (`resume`, which drops any the node did take) and the next
           // drain sends the rest.
           this.batchesInterrupted++;
+          this.unanswered = { b: r.batch, bytes: r.bytes };   // kanban #3696: sent again as it is, not signed again
         } else if (typeof r.answer === 'string' && r.answer.startsWith(`error ${STAKE_NOT_SEEN}`)) {
           // THE STAKE IS STILL ON ITS WAY (23.1 step 5). Measured before this:
           // a player paying at wallet speed had the first batch answered "not
@@ -36051,6 +36128,7 @@ class Client {
           // ends the run when the hold is full, which is that rule's job.
           this.stakeWaits++;
           this.stakeWhy = r.answer;
+          this.unanswered = { b: r.batch, bytes: r.bytes };   // kanban #3697: the stake wait asks with the same frame again
         } else {
           this.refusals++;
           this.refusedWhy = typeof r.answer === 'string' ? r.answer : 'the node did not say';
@@ -39108,7 +39186,7 @@ function readEntryFromEvidence(item, { contract, headers, firstHeight, bond, ver
   const seen = recognizeBond(tx, vout, advert, { network, bond, ...(ancestor ? { ancestor: true } : {}) });
   if (!seen.ok) return { ok: false, why: seen.why };
   bondSats = seen.valueSats;
-  const matures = maturityStands(advert, height, network, { txid: tx.txid, vout });
+  const matures = maturityStands(advert, height, network, { txid: tx.txid, vout }, contract.censusHeight);   // #3669
   if (!matures.ok) return { ok: false, why: matures.why };
   const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
   if (!named.ok) return { ok: false, why: named.why };
@@ -49442,15 +49520,29 @@ function zapTotals(receipts, options = {}) {
 
 
 
+
 /** How long a relay is given to answer a read, in ms. */
 const ZAP_READ_MS = 8000;
 /** The amounts the page offers, in sat. */
 const ZAP_CHOICES_SAT = Object.freeze([21, 100, 1000]);
 
-const zapFetchJson = async (fetcher, url) => {
-  const r = await fetcher(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`${new URL(url).host} answered ${r.status}`);
-  return r.json();
+/** The most a Lightning address server's answer (pay request, invoice) is read to, in bytes (kanban #3675). */
+const ZAP_ANSWER_BYTES_MAX = 64 * 1024;
+
+// kanban #3675: every read of the address server ends within ZAP_READ_MS (the request aborted, and the wait ended even for a
+// fetcher that ignores the signal) and is read up to ZAP_ANSWER_BYTES_MAX. Before, a host that took the connection and never
+// answered held sendZap for good, and the page's zap dialog stayed busy and could not be closed.
+const zapFetchJson = async (fetcher, url, readMs = ZAP_READ_MS) => {
+  const ac = new AbortController();
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => { ac.abort(); reject(new Error(`${new URL(url).host} gave no answer in ${readMs} ms`)); }, readMs); });
+  try {
+    return await Promise.race([late, (async () => {
+      const r = await fetcher(url, { cache: 'no-store', signal: ac.signal });
+      if (!r.ok) throw new Error(`${new URL(url).host} answered ${r.status}`);
+      return readJsonUpTo(r, ZAP_ANSWER_BYTES_MAX);
+    })()]);
+  } finally { clearTimeout(timer); }
 };
 
 /**
