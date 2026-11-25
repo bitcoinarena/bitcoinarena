@@ -95,7 +95,9 @@ test('install from another seat: signed by the owner, checked, kept; loaded at t
     assert.equal(core.adapter, undefined);
     assert.deepEqual(sandboxFor(core).call('decide', { moves: [{ key: 'a', move: 0 }, { key: 'b', move: 2 }] }), { a: 'WIN', b: 'LOSS' });
     // seat-title.json: the title this seat gave it, kept apart from the package a seat handed over (kanban #1716, #1780)
-    assert.deepEqual(readdirSync(join(dir, RPS_ID)).sort().map((f) => f.split('-')[0]), ['client', 'core', 'package.json', 'seat']);
+    // trial-passed.json: the trial's verdict this seat keeps per version, so a restart does not run it again (kanban #3679)
+    assert.deepEqual(readdirSync(join(dir, RPS_ID)).sort().map((f) => f.split('-')[0]), ['client', 'core', 'package.json', 'seat', 'trial']);
+    assert.ok(existsSync(join(dir, RPS_ID, 'trial-passed.json')));
     assert.ok(existsSync(join(dir, RPS_ID, 'seat-title.json')));
     assert.equal(got.registrations[0].title, j.name, 'reloaded under the title this seat wrote');
   } finally { await a.close(); await b.close(); }
