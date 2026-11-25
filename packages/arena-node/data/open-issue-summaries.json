@@ -2650,5 +2650,109 @@
  "3668": {
   "text": "BTC Up/Down game: past orders of a round still running on the previous app version vanish after a page switch",
   "kind": "bug"
+ },
+ "3670": {
+  "text": "Faucet and feedback: one answering seat can mark a never-played key as a player",
+  "kind": "bug"
+ },
+ "3671": {
+  "text": "Other: a late proposal can fail from a stale snapshot while another seat passes it",
+  "kind": "bug"
+ },
+ "3672": {
+  "text": "Other: an update can restart node services the owner had already stopped",
+  "kind": "bug"
+ },
+ "3673": {
+  "text": "Website: a slow home seat takes the entry while the page shows not joined, and the lock stays held",
+  "kind": "bug"
+ },
+ "3674": {
+  "text": "BTC Up/Down game: the next round never counts down because its table is not on chain yet",
+  "kind": "bug"
+ },
+ "3675": {
+  "text": "Lightning payouts: a silent address server hangs a zap and the dialog cannot close",
+  "kind": "bug"
+ },
+ "3676": {
+  "text": "Committees and bonds: a bonded proposer can skip the proposal census budget",
+  "kind": "bug"
+ },
+ "3677": {
+  "text": "Node software: the first agreeing seat can set the season board totals for everyone",
+  "kind": "bug"
+ },
+ "3678": {
+  "text": "Other: a peer can backdate late marks with an unsigned sighting time",
+  "kind": "bug"
+ },
+ "3679": {
+  "text": "Node software: starting a seat retries every auto-updated version and can restart without bound",
+  "kind": "bug"
+ },
+ "3680": {
+  "text": "Other: a late stake lock starts the round clock late, so the opening tick plays behind",
+  "kind": "bug"
+ },
+ "3689": {
+  "text": "Node software: a series pull can be slowed by an oversized template answer",
+  "kind": "bug"
+ },
+ "3690": {
+  "text": "Node software: a round peer can slow a seat with oversized play messages",
+  "kind": "bug"
+ },
+ "3691": {
+  "text": "Other: the relay can be slowed by many unfinished messages",
+  "kind": "bug"
+ },
+ "3692": {
+  "text": "Lightning payouts: a paid donation share can be recorded as unpaid",
+  "kind": "bug"
+ },
+ "3693": {
+  "text": "Lightning payouts: a payment proof can be accepted without matching the invoice",
+  "kind": "bug"
+ },
+ "3694": {
+  "text": "Website: a table can fill after funding, so the entry is refused and the lock stays",
+  "kind": "bug"
+ },
+ "3695": {
+  "text": "Next Block game: honest larger-truck rooms can be refused at the play door",
+  "kind": "bug"
+ },
+ "3696": {
+  "text": "Other: an abandoned signed play can be replayed and block the real one",
+  "kind": "bug"
+ },
+ "3697": {
+  "text": "Node software: a retried stake wait can be replayed and then refuse the new batch",
+  "kind": "bug"
+ },
+ "3698": {
+  "text": "Other: the settings name field allows a longer name than the rule, then reverts it",
+  "kind": "bug"
+ },
+ "3699": {
+  "text": "Next Block game: shop buy stays active when no paid round is listed, so the purchase fails",
+  "kind": "bug"
+ },
+ "3700": {
+  "text": "Other: a reach check can treat a private address spelling as public",
+  "kind": "bug"
+ },
+ "3701": {
+  "text": "Other: Orange Pill Run stays unprepared when its poster wallet is not loaded after a restart",
+  "kind": "bug"
+ },
+ "3702": {
+  "text": "Next Block game: leaderboard ranges contradict across nodes, and some ranges never answer",
+  "kind": "bug"
+ },
+ "3703": {
+  "text": "Other: a load-stall message shows no progress while the boot bar is already partway",
+  "kind": "bug"
  }
 }
