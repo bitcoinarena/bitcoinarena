@@ -1690,8 +1690,12 @@ export class Client {
     this.pumpPeers();
     await this.awaitPeers();
     const took = this.peers.filter((base) => this.peerFeed(base).next > at).length;
-    const need = Math.min(this.peers.length, receiptsForLive({ gameVerifySlots: this.gameVerifySlots, nodes: this.nodes }));
-    if (took >= need) return true;
+    // ONE SEAT THAT TOOK IT IS ENOUGH TO KEEP IT (kanban #3711, spec ruling 2026-11-25 on the rest of #3696): once any seat
+    // holds a batch on a head the client never signs a second one there - two signed batches on one previousHash are a §13B
+    // fork. It stays on the chain, is resent as it is to the home seat (#homeCatchUp) and every seat (their feeds), and the
+    // run goes on on top of it; a home seat that refuses its content keeps that view, and §13C settles the split at the close.
+    // Measured before: one peer of two took it, it was spliced out, and the run ended as a node fault at the resume.
+    if (took >= 1) return true;
     this.published.splice(at, 1);
     for (const base of this.peers) { const f = this.peerFeed(base); if (f.next > at) f.next = at; }
     return false;
