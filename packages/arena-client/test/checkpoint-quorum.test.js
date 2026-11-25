@@ -199,8 +199,10 @@ test('a client that reaches one daemon of two cannot grow its chain past its fir
     const proof = await equivocation(client.base, rid, eid);
     console.log(`  one daemon: checkpoints A ${at[0]} B ${at[1]}, inputs A ${held[0]} B ${held[1]}; `
       + `A /equivocation ${proof}; ${client.status(120)}`);
-    assert.deepEqual(at, [1, 0]);
-    assert.deepEqual(held, [120, 0]);
+    // THE FIRST MARK REACHES B THROUGH A'S RELAY, WITH THE INPUTS IT NAMES (kanban #3758): the mark names the batch reaching
+    // tick 60 now, not GENESIS, so A hands it on with that batch (forwardFirstMark) and B stores both - never the second link
+    assert.deepEqual(at, [1, 1]);
+    assert.deepEqual(held, [120, 60]);
     assert.equal(proof, 204, 'the honest client handed A a fork proof against itself');
 
     // AND THE PAGE'S LINE SAYS WHY THE CHAIN STOPPED.

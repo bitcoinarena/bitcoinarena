@@ -18,7 +18,8 @@ import { buildObjectionBundle } from '../tools/objection-bundle.mjs';
 import { checkObjectionAt } from '../tools/check-objection.mjs';
 import { splitSignedResult, decodePlayerResult } from '../../arena-protocol/src/result.js';
 import { decodeTranscript } from '../../arena-protocol/src/transcript.js';
-import { signedBatchOf } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
+// kanban #3758: the marks name the input head the client names now (the batch reaching the mark's tick), not GENESIS - a GENESIS mark commits to no batch, and since #3567 a close over it holds for ever
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
@@ -51,7 +52,7 @@ test('wf1489 v1-refute-66-s3-2: an objection on a live run cannot carry a load t
     for (let t = 0; t < WINNER.ticks; t++) step(st, ...ticks[t]);
     const mark = { roundId: w.rid, entryId: p.eid, tick: WINNER.ticks,
       stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
-      inputChainHash: GENESIS_HASH, previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(p.session) };
+      inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(p.session) };
     const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), p.session));
     const answers = [];
     for (const d of [w.a, w.b]) {
