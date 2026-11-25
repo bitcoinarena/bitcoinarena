@@ -30,6 +30,7 @@
 // carries no crypto, and `page-curve.js` is what the page loads beside it.
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
+import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 
 // `webcrypto` AND NOT `subtle`, which `seal.js` already declares at its own top
 // level. The bundle is a concatenation - `tools/bundle.js` refuses two private
@@ -556,12 +557,23 @@ export async function makeInvoice(where, amountMsat, options = {}) {
 export async function payInvoice(where, invoice, options = {}) {
   if (typeof invoice !== 'string' || !invoice.trim())
     return { ok: false, why: 'there is no invoice to pay' };
+  // THE PREIMAGE IS THE RECEIPT ONLY IF IT HASHES TO THE INVOICE'S PAYMENT HASH (kanban #3693, bypass audit 3): 64 hex
+  // characters were taken as proof of payment, so a wallet answering any preimage had a donation share recorded paid -
+  // zap.js sendZap already checked the hash. The hash is read here, before the wallet is asked: an invoice with none is
+  // not sent, because nothing could show it was paid.
+  let paymentHash;
+  try { paymentHash = decodeBolt11(invoice).paymentHash; } catch (e) { return { ok: false, why: `that is not an invoice this page can read: ${e.message}` }; }
+  if (!(paymentHash instanceof Uint8Array) || paymentHash.length !== 32) return { ok: false, why: 'that invoice names no payment hash, so no preimage could show it was paid' };
   const said = await nwcCall(where, {
     method: 'pay_invoice', params: { invoice: invoice.trim() },
   }, options);
   if (!said.ok) return said;
   const preimage = said.result && said.result.preimage;
   if (typeof preimage !== 'string' || !/^[0-9a-f]{64}$/i.test(preimage))
-    return { ok: false, why: 'the wallet said it paid and produced no preimage' };
-  return { ok: true, preimage, feesPaidMsat: said.result.fees_paid };
+    return { ok: false, unknown: true, why: 'the wallet said it paid and produced no preimage' };
+  // A WALLET THAT SAYS IT PAID WITH A PREIMAGE THAT IS NOT THE INVOICE'S IS NOT A RECEIPT, and not a refusal either:
+  // `unknown` - it may have paid, so a caller notes the payment as asked and never asks again (kanban #3693).
+  if (toHex(sha256(fromHex(preimage.toLowerCase()))) !== toHex(paymentHash))
+    return { ok: false, unknown: true, why: 'the wallet said it paid, and its preimage is not the invoice\'s' };
+  return { ok: true, preimage: preimage.toLowerCase(), feesPaidMsat: said.result.fees_paid };
 }
