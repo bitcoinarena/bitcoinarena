@@ -1560,7 +1560,13 @@ export class Client {
    * `ticks` is five Q16.16 words each, exactly what the core's `step` takes.
    * Nothing is computed from them here; they are carried.
    */
-  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [], tapes = [], attests = [] }) {
+  async batch(ticks, { roundId, entryId, liquidations = [], loads = [], samples = [], tapes = [], attests = [], again = null }) {
+    // THE SAME SIGNED FRAME AGAIN, NEVER A SECOND ONE ON THE SAME HEAD (kanban #3696/#3697, bypass audit 3): `again` is a
+    // frame this client signed and sent on this head whose answer was lost or was a stake wait. Measured before: the
+    // client signed a second, longer batch on the same previousHash (474 B, then 2574 B, both at firstTick 0); a home seat
+    // that kept the first handed it to the honest peer, which took it (first one wins) and refused the player's real
+    // chain - home 120 ticks, peer 15 for good. Whoever holds the first frame now holds the start of the real chain.
+    if (again) return this.#batchFrame(again.b, again.bytes);
     const b = {
       roundId, entryId,
       previousHash: this.batchHead,
@@ -1576,6 +1582,11 @@ export class Client {
     // nobody who only knows this entry's public id can write ticks or a load into it. The same signed frame goes to
     // every peer below.
     const bytes = await signBatch(b, this.sign);
+    return this.#batchFrame(b, bytes);
+  }
+
+  async #batchFrame(b, bytes) {
+    const { roundId, entryId, ticks } = b;
     // KEPT BEFORE IT GOES OUT (kanban #1567): a batch the node took whose answer was lost is still this client's own
     this.signedFrames.set(toHex(batchId(b)), bytes);
     // THE HOME SEAT IS FED WHAT THE PEERS CARRIED WITHOUT IT FIRST (kanban #3215, wf1489 r1120b refute 12-s2-2): an honest home seat
@@ -1614,9 +1625,9 @@ export class Client {
         const why = typeof answer === 'string' ? answer : 'the node answered the batch with a binary frame, not a tick count';
         this.homeRefusedWhy = why;
         this.#wakeMarks();
-        return { batch: b, answer: why, accepted: ticks.length, homeRefused: why };
+        return { batch: b, bytes, answer: why, accepted: ticks.length, homeRefused: why };
       }
-      return { batch: b, answer };
+      return { batch: b, bytes, answer };
     }
     this.batchHead = batchId(b);
     this.nextTick = b.firstTick + ticks.length;
@@ -1630,7 +1641,7 @@ export class Client {
     this.homeHolds = this.published.length;
     if (this.peers.length) this.pumpPeers();
     this.#wakeMarks();
-    return { batch: b, answer, accepted: Number(answer) };
+    return { batch: b, bytes, answer, accepted: Number(answer) };
   }
 
   /**
@@ -2692,27 +2703,44 @@ export class Client {
     }
     if (this.sock && this.sock.bufferedAmount > 262144) return null;
 
-    const words = this.hold.slice(0, this.chunk);
+    // A FRAME ALREADY SIGNED ON THIS HEAD GOES OUT AGAIN AS IT WAS (kanban #3696/#3697): its words, loads, samples, tapes and
+    // attests were put back at the front of what is held, so exactly as many of each are taken out again, and the same bytes
+    // are sent - the words held since wait for the next batch. A head that moved (resume found the seat took it) drops it.
+    const pending = this.unanswered;
+    const again = pending && toHex(pending.b.previousHash) === toHex(this.batchHead) && pending.b.firstTick === this.nextTick
+      && this.hold.length >= pending.b.ticks.length ? pending : null;
+    if (!again) this.unanswered = null;
+    const take = (list, n) => [list.slice(0, n), list.slice(n)];
+    const words = again ? this.hold.slice(0, again.b.ticks.length) : this.hold.slice(0, this.chunk);
     this.hold = this.hold.slice(words.length);
     this.held = this.hold.length;
+    let loads, samples, tapes, attests;
+    if (again) {
+      [loads, this.loads] = take(this.loads, (again.b.loads || []).length);
+      [samples, this.samples] = take(this.samples, (again.b.samples || []).length);
+      [tapes, this.tapes] = take(this.tapes, (again.b.tapes || []).length);
+      [attests, this.attests] = take(this.attests, (again.b.attests || []).length);
+    } else {
 
     // THE LOADS THIS BATCH COVERS, and no others. A load names an absolute
     // tick and the node checks it against the ticks the batch carries, so one
     // declared while these words were still held goes out with them and one
     // declared after waits for the batch that reaches it.
     const through = this.nextTick + words.length;
-    const loads = this.loads.filter(([at]) => at < through);
+    loads = this.loads.filter(([at]) => at < through);
     const later = this.loads.filter(([at]) => at >= through);
     this.loads = later;
-    const samples = this.samples.filter(([at]) => at < through);
+    samples = this.samples.filter(([at]) => at < through);
     this.samples = this.samples.filter(([at]) => at >= through);
-    const tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
+    tapes = this.tapes.filter(([at]) => at < through).slice(0, 1);
     this.tapes = this.tapes.filter((t) => !tapes.includes(t));
     // the committee's word on the samples and the tape this batch carries, and on nothing else (§11)
-    const attests = this.attests.filter(([at, kind]) => (kind === 0 || kind === 2 ? samples : tapes).some((x) => x[0] === at));
+    attests = this.attests.filter(([at, kind]) => (kind === 0 || kind === 2 ? samples : tapes).some((x) => x[0] === at));
     this.attests = this.attests.filter((a) => !attests.includes(a));
+    }
 
-    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests }).then((r) => {
+    this.publishing = this.batch(words, { ...this.where, loads, samples, tapes, attests, again }).then((r) => {
+      this.unanswered = null;
       if (r.accepted) {
         this.batchesSent++;
         // PUBLISHING AGAIN IS NEWS TOO. A run that recovered must stop
@@ -2740,6 +2768,7 @@ export class Client {
           // is (`resume`, which drops any the node did take) and the next
           // drain sends the rest.
           this.batchesInterrupted++;
+          this.unanswered = { b: r.batch, bytes: r.bytes };   // kanban #3696: sent again as it is, not signed again
         } else if (typeof r.answer === 'string' && r.answer.startsWith(`error ${STAKE_NOT_SEEN}`)) {
           // THE STAKE IS STILL ON ITS WAY (23.1 step 5). Measured before this:
           // a player paying at wallet speed had the first batch answered "not
@@ -2748,6 +2777,7 @@ export class Client {
           // ends the run when the hold is full, which is that rule's job.
           this.stakeWaits++;
           this.stakeWhy = r.answer;
+          this.unanswered = { b: r.batch, bytes: r.bytes };   // kanban #3697: the stake wait asks with the same frame again
         } else {
           this.refusals++;
           this.refusedWhy = typeof r.answer === 'string' ? r.answer : 'the node did not say';
