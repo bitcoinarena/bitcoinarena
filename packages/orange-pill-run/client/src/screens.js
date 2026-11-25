@@ -164,7 +164,7 @@ export function prizeLine(round, nowMs = Date.now()) {
   if (!round) return null;
   const sats = fmtSats(round.bountySats > 0 ? round.bountySats : PRIZE_SATS);
   // short (owner 2026-11-22, iPhone): two lines at most on a 375 px phone
-  const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "needs X (follow @" + X_HOUSE + ") + Lightning address";   // #3534
+  const text = "🏆 " + (isFree(round) ? "Free to play · daily" : "Daily") + " best score wins " + sats + " real sats", small = "optional: X (follow @" + X_HOUSE + ") + Lightning address, after a run";   // #3534; #3720 (owner 2026-11-25): asked after a run, only for the bounty
   const promo = promoLine(round, nowMs);
   if (!round.test || nowMs >= FIRST_DAILY_MS) return promo ? { text, small, promo } : { text, small };
   return promo ? { text: "From " + FIRST_DAILY_WORDS + ": " + text, small, promo } : { text: "From " + FIRST_DAILY_WORDS + ": " + text, small };
