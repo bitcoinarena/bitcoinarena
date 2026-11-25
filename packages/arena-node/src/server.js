@@ -9377,7 +9377,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             type: gameTypeOf(g.manifest), info: g.info || null,
             // its developers' split, and whether it is the newest version - only that one takes a new split, signed by its developer (kanban #582)
             split: (g.donationSet || []).map((r) => ({ key: toHex(r.recipientPk), label: r.label || '', shareBps: Number(r.shareBps) })),
-            newest: !superseded.has(toHex(g.gameId)) && !newerHosted(g) })),
+            newest: !superseded.has(toHex(g.gameId)) && !newerHosted(g),
+            // kanban #3679, #3706: a superseded version left unloaded at start is said so ("kept, unloaded"), not unknown; it loads when first needed
+            loaded: !(g.kept && g.kept.unloaded), ...(g.kept ? { kept: g.kept.unloaded ? 'kept, unloaded' : 'kept, loaded when needed' } : {}) })),
             installed, settings: owner.storeSettings() });
         }
         // THE NETWORK STORE'S VIEW OF THIS SEAT: the chain it reads, its own network's four settings, and the
