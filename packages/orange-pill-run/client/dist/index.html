@@ -289,8 +289,11 @@ const VERSIONS = {
   // kanban #3547, owner 2026-11-23 ~21:30Z: "Mach die nächste Runde 20 % schwerer" - opr-4 with 20 % more enemies and 20 % more
   // gaps (level.js, R.more); the same speeds, score and safe checkpoints
   "opr-5": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20, safeCp: true, runOut: 2, more: 0.2 },
+  // kanban #3718 (feedback #473, owner 2026-11-25 "klingt wie ein echtes Problem"): desktop clicks of 60-120 ms never cleared the first
+  // candle (a 3-tile step); minJ = every jump rises at least this many steps (world.js) before a let-go cuts it; the rest as opr-5
+  "opr-6": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20, safeCp: true, runOut: 2, more: 0.2, minJ: 9 },
 };
-const GAME_VERSION = "opr-5";
+const GAME_VERSION = "opr-6";
 // the columns from the end of the chart to the flag: 18 up to opr-3 (with the 3-step wall at 10..12), opr-4 2
 const RUN_OUT = 18;
 // the rules of a version; throws a TypeError for one this code does not know
@@ -420,9 +423,11 @@ function stepWorld(W, inp) {
   if (jump && !p.prevJump) p.buffer = 9; else if (p.buffer > 0) p.buffer--;
   p.coyote = p.ground ? 8 : Math.max(0, p.coyote - 1);
   if (p.ground) p.dj = false;
-  if (p.buffer > 0 && p.coyote > 0) { p.vy = JUMP_V * (p.pw.moon > 0 ? 1.18 : 1); p.buffer = 0; p.coyote = 0; p.ground = false; W.fx.push({ kind: "dust", x: p.x + 8, y: p.y + PH, t: 14 }); }
-  else if (p.buffer > 0 && p.pw.moon > 0 && !p.dj && !p.ground) { p.vy = JUMP_V * 1.05; p.buffer = 0; p.dj = true; W.fx.push({ kind: "ring", x: p.x + 8, y: p.y + PH, t: 18, color: "#ffe9a8" }); }
-  if (!jump && p.vy < CUT_V) p.vy = CUT_V;
+  if (p.buffer > 0 && p.coyote > 0) { p.vy = JUMP_V * (p.pw.moon > 0 ? 1.18 : 1); p.buffer = 0; p.coyote = 0; p.ground = false; if (R.minJ) p.jt = R.minJ; W.fx.push({ kind: "dust", x: p.x + 8, y: p.y + PH, t: 14 }); }
+  else if (p.buffer > 0 && p.pw.moon > 0 && !p.dj && !p.ground) { p.vy = JUMP_V * 1.05; p.buffer = 0; p.dj = true; if (R.minJ) p.jt = R.minJ; W.fx.push({ kind: "ring", x: p.x + 8, y: p.y + PH, t: 18, color: "#ffe9a8" }); }
+  // opr-6 (kanban #3718): a jump rises at least R.minJ steps before a let-go cuts it, so a short click (60-120 ms) clears the
+  // first candle as a finger's tap does; a longer hold jumps higher as before
+  if (p.jt > 0) p.jt--; else if (!jump && p.vy < CUT_V) p.vy = CUT_V;
   p.prevJump = jump; p.vy = Math.min(MAXFALL, p.vy + GRAV);
   p.x += p.vx; if (p.x < 0) { p.x = 0; p.vx = 0; }
   for (let ty = Math.floor(p.y / T); ty <= Math.floor((p.y + PH - 1) / T); ty++) {

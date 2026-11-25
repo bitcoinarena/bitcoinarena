@@ -24,7 +24,7 @@ function runOut(L) {
 }
 
 test("#3387 opr-4 is the game version: the flag 2 columns after the chart, no wall; opr-3 keeps its 18 columns and the wall", () => {
-  assert.ok(["opr-4", "opr-5"].includes(GAME_VERSION));   // #3547: opr-5 keeps opr-4's run-out
+  assert.ok(["opr-4", "opr-5", "opr-6"].includes(GAME_VERSION));   // #3547: opr-5 keeps opr-4's run-out; #3718 opr-6 too
   const c = candlesOf(dayList[0]);
   const L3 = buildLevel(c, 7, "opr-3"), L4 = buildLevel(c, 7, "opr-4");
   assert.equal(L3.goal, L3.chartEnd + 18); assert.equal(L4.goal, L4.chartEnd + 2);
