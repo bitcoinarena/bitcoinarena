@@ -357,9 +357,15 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
   return new Promise((resolve) => {
     let sock;
     let done = false;
+    // ONCE THE REQUEST HAS GONE OUT, NO ANSWER BUT THE WALLET'S OWN SAYS IT WAS NOT DONE (kanban #3692, bypass audit 3): a
+    // relay can forward the request, the wallet act on it, and the relay then say OK false or close. Every ending that is
+    // not the wallet's signed answer carries `sent: true` from that point, so a caller can tell "refused" from "unknown".
+    let sent = false;
     const finish = (answer) => {
       if (done) return;
       done = true;
+      if (answer.fromWallet) { const { fromWallet, ...rest } = answer; answer = rest; }
+      else if (sent && !answer.ok) answer = { ...answer, sent: true };
       clearTimeout(timer);
       try { if (sock) sock.close(); } catch { /* going away anyway */ }
       resolve(answer);
@@ -394,6 +400,7 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
       sock.send(JSON.stringify(['REQ', sub, {
         kinds: [NWC_RESPONSE], authors: [toHex(where.walletPubkey)], '#e': [event.id],
       }]));
+      sent = true;
       sock.send(JSON.stringify(['EVENT', event]));
       return undefined;
     });
@@ -406,7 +413,8 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
 
       // A RELAY THAT REFUSED THE EVENT IS AN ANSWER TOO. Without this the
       // wallet is blamed for a timeout that the relay caused.
-      if (frame[0] === 'OK' && frame[2] === false)
+      // ONLY AN OK THAT NAMES THIS REQUEST (kanban #3692): one naming another event is not about it and is passed over.
+      if (frame[0] === 'OK' && frame[2] === false && event && frame[1] === event.id)
         return finish({ ok: false, why: `the relay refused the request: ${frame[3] || 'no reason given'}` });
       if (frame[0] !== 'EVENT' || !frame[2]) return;
       // ONLY THE WALLET'S OWN ANSWER TO THIS REQUEST (kanban #1471, feedback #004 by Hexbox Tools 2026-11-11: any EVENT the relay sent was decrypted and
@@ -429,7 +437,7 @@ export function nwcCall(where, request, { curve, random, now, timeoutMs = 30000,
       // sentence that says what to do.
       if (said.error)
         return finish({
-          ok: false, code: said.error.code,
+          ok: false, fromWallet: true, code: said.error.code,
           why: `the wallet refused: ${said.error.code || 'no code'} ${said.error.message || ''}`.trim(),
         });
       return finish({ ok: true, result: said.result, resultType: said.result_type });
@@ -567,6 +575,8 @@ export async function payInvoice(where, invoice, options = {}) {
   const said = await nwcCall(where, {
     method: 'pay_invoice', params: { invoice: invoice.trim() },
   }, options);
+  // A RELAY'S FAILURE AFTER THE REQUEST WENT OUT IS NOT A REFUSAL (kanban #3692): the wallet may have paid, so it is unknown.
+  if (!said.ok && said.sent) return { ...said, unknown: true, why: `the wallet may have paid it: ${said.why}` };
   if (!said.ok) return said;
   const preimage = said.result && said.result.preimage;
   if (typeof preimage !== 'string' || !/^[0-9a-f]{64}$/i.test(preimage))
