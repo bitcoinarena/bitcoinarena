@@ -2618,9 +2618,11 @@ function paintBounty(on, st) {
   const f = $("rBFollow"); f.textContent = ""; f.append(followLink("@" + X_HOUSE));
   // the service's rule (#3281): an X account counts in a round only when it was saved before the player's first run there
   $("rBExtra").textContent = !me.x ? " An X handle saved now counts from your next round." : BB.open ? " A new X account counts from your next round." : "";
-  const stOn = !!(st && st.parts.length); $("rNot").hidden = !stOn; paintStatus($("rNotText"), stOn ? st : null);
   const hasX = !!me.x, hasLn = !!me.lnAddress;
   const xOn = !hasX || !!(st && st.link) || BB.open || XF.r.dirty || !!XF.r.msg || document.activeElement === $("rXfIn");
+  // an X account with an open X field says its reason under the field (follow / Check again): the status line does not say it twice (phone)
+  if (st && st.link && xOn) st = { ...st, parts: st.parts.filter((x) => x.ok || !/^X /.test(x.text)) };
+  const stOn = !!(st && st.parts.length); $("rNot").hidden = !stOn; paintStatus($("rNotText"), stOn ? st : null);
   const lnOn = !hasLn || BB.open || LN.r.dirty || !!LN.r.msg || document.activeElement === $("rLnIn");
   const ch = $("rBChange"); ch.hidden = !((hasX && !xOn) || (hasLn && !lnOn) || BB.open); ch.textContent = BB.open ? "Done" : "Change";
   paintXf("r", xOn); paintLn("r", lnOn);
