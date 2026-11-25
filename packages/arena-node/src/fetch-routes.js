@@ -13,7 +13,7 @@
 //                                did not resolve (ENOTFOUND) is not dialed again for as long
 //   ARENA_FETCH_KEEPALIVE_MS     how long an idle connection to a peer is kept for its next request (default 30 000; 0 = Node's own 4 s)
 // kanban #3133: every connection this process opens checks where a name resolves
-import { dialConnect } from './dial-guard.js';
+import { dialConnect, nativeGlobalAgent } from './dial-guard.js';
 
 export function parseRoutes(text) {
   return String(text || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => {
@@ -114,9 +114,9 @@ export function keepAliveDispatcher(native, keepAliveMs) {
   if (!(keepAliveMs > 0)) return null;
   let made = null;
   return () => made || (made = (async () => {
-    const sym = Symbol.for('undici.globalDispatcher.1');
-    if (!globalThis[sym]) { try { await native('data:,'); } catch { /* no dispatcher: Node's own then */ } }
-    const g = globalThis[sym];
+    // kanban #3539: the Agent itself, wherever this Node's undici keeps it (Node 26 keeps only a wrapper under '.1')
+    if (!nativeGlobalAgent()) { try { await native('data:,'); } catch { /* no dispatcher: Node's own then */ } }
+    const g = nativeGlobalAgent();
     try { return g && typeof g.constructor === 'function' ? new g.constructor({ keepAliveTimeout: keepAliveMs, keepAliveMaxTimeout: Math.max(keepAliveMs, 600000), connect: dialConnect() /* kanban #3133 */ }) : null; }
     catch { return null; }
   })());
