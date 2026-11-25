@@ -21,11 +21,11 @@ import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { tableAnchorOf } from '../../arena-protocol/src/known-game.js';
 import { seriesRoundIdOf } from '../../arena-protocol/src/contracts.js';
 import { agreedChain, httpProvider, headerSources } from './headers.js';
-import { fetchRound } from './join.js';
+import { fetchRound, sourceKey } from './join.js';
 import { explorerAgrees } from './explorer-check.js';
 import { chainAnchorFor } from './directory.js';
 import { readWithOneRetry } from './reread.js';
-import { noteAdverts } from './seat-identity.js';
+import { noteAdverts, seatsOf, hostOf } from './seat-identity.js';
 // A SEAT'S ANSWER IS READ UP TO A BOUND (kanban #2740, #1489 r6-census-1): GET /census, /committee and /seating were read whole (json, arrayBuffer,
 // text), bounded only by READ_MS - one seat streaming 64 MiB of whitespace made the tab hold all of it before the honest providers were asked
 // (a phone's tab froze; the join never finished). Each is read chunk by chunk up to its cap, the stream cancelled past it (that seat refused).
@@ -201,7 +201,7 @@ export const CENSUS_PROVIDERS_TO_LOCK = 2;
  * One provider alone answers { ok: false, lookOnly: true }. Not yet here: §25.1's completeness from BIP158 filters since a census checkpoint
  * (no filter source in the browser yet).
  */
-export async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set(), providers = CENSUS_PROVIDERS_TO_LOCK }) {
+export async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip = new Set(), providers = CENSUS_PROVIDERS_TO_LOCK, keys, verify } = {}) {
   const key = toHex(contract.censusRoot);
   if (keptCensus.has(key) && !skip.size) return { ok: true, entries: keptCensus.get(key), from: 'kept' };
   // ONE READ OF A CENSUS AT A TIME (kanban #3289, measured on the live page: 56 GET /census in one load, every seat asked by each of four
@@ -210,23 +210,30 @@ export async function evidenceFor(roundIdHex, contract, nodes, { fetcher, skip =
   if (!skip.size && providers === CENSUS_PROVIDERS_TO_LOCK) {
     const going = censusReads.get(key);
     if (going) { const got = await going.catch(() => null); if (got && got.ok) return got; }
-    const read = readEvidence(roundIdHex, contract, nodes, { fetcher, skip, providers, key });
+    const read = readEvidence(roundIdHex, contract, nodes, { fetcher, skip, providers, key, keys, verify });
     censusReads.set(key, read);
     try { return await read; } finally { if (censusReads.get(key) === read) censusReads.delete(key); }
   }
-  return readEvidence(roundIdHex, contract, nodes, { fetcher, skip, providers, key });
+  return readEvidence(roundIdHex, contract, nodes, { fetcher, skip, providers, key, keys, verify });
 }
 const censusReads = new Map();    // census root -> the read under way
-async function readEvidence(roundIdHex, contract, nodes, { fetcher, skip, providers, key }) {
+// ONE PROVIDER PER SEAT, NOT PER URL (kanban #3751, audit census-a8-3-1; the #3574 rule at this door): each URL path of one box was its own
+// "independent provider" (its whole URL the provider's identity), so one box named in the link under two paths (https://liar/a, /b) met the
+// two-provider rule alone - its omitting list joined with itself was taken as lock-grade and the honest seat's list was never read. Now the
+// URLs are grouped into seats as every other door groups them (seat-identity.js seatsOf: the URLs of one host are one seat unless each proves
+// a distinct node key of the round - `keys`, the contract's nodes; `verify`, the page's BIP-340 check), and `providers` distinct SEATS must
+// hand a usable list. The seven live seats behind one host stay seven; two paths of one box are one. The identity asks run beside the census
+// reads, not before them (kanban #3010: nobody waits for a slow tail once enough seats have answered).
+const censusVerify = () => { const c = globalThis.ARENA_CURVE; return c && typeof c.verify === 'function' ? (sg, m, k) => { try { return !!c.verify(sg, m, k); } catch { return false; } } : null; };
+async function readEvidence(roundIdHex, contract, nodes, { fetcher, skip, providers, key, keys, verify }) {
   // EVERY SEAT ASKED AT ONCE, THE FIRST `providers` DISTINCT ONES THAT HAND A USABLE CENSUS TAKEN (kanban #3010, feedback #348: an RPS tap with 7-9 s on the
   // timer was "too late"; measured live 2026-11-19 05:42Z, one tap's seat wait was 5.7 s while guardian-2/-3/-4 and fed2-7 answered "signal timed
   // out" over tn4): the seats were asked one after another, each read allowed READ_MS, so a slow seat early in the list held the tap until it answered.
   // The set required is unchanged - `providers` distinct seats, each list checked as before; only the order of asking is: all at once, the slow tail
   // not waited for once enough have answered.
-  const refused = [], got = [], roots = new Set();
+  const refused = [], usable = [];
   const asked = [];
   const ask = async (u) => {
-    const root = String(baseOf(u)).toLowerCase();
     try {
       const r = await readWithOneRetry(fetcher, `${baseOf(u)}/census?round=${roundIdHex}`);
       if (!r.ok) { refused.push(`${u}: ${r.status}`); return; }
@@ -236,26 +243,63 @@ async function readEvidence(roundIdHex, contract, nodes, { fetcher, skip, provid
       // made the census uncommittable and its honest co-provider was skipped with it - on three seats the join was refused
       const twice = repeatedBondIn(j.entries);
       if (twice) { refused.push(`${u}: lists one bond twice`); return; }
-      if (got.length >= providers || roots.has(root)) return;
-      // the nodes this seat left out for their protocol version: shown, never counted
-      if (Array.isArray(j.tooOld)) keptTooOld.set(key, j.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
-      roots.add(root); got.push({ from: u, entries: j.entries });
+      usable.push({ from: u, entries: j.entries, tooOld: j.tooOld });
     } catch (e) { refused.push(`${u}: ${e.message}`); }
   };
-  const seen = new Set();
+  const seen = new Set(), urls = [];
   for (const u of nodes) {
     const root = String(baseOf(u)).toLowerCase();
     if (skip.has(u) || seen.has(root)) continue;
-    seen.add(root); asked.push(ask(u));
+    seen.add(root); urls.push(u); asked.push(ask(u));
   }
+  // (kanban #3751) the seat of each URL asked, found while the census is read
+  const roundKeys = keys !== undefined ? keys : (Array.isArray(contract && contract.nodes) ? contract.nodes : []);
+  const seatOf = new Map();
+  const grouped = seatsOf(urls, { keys: roundKeys, verify: verify !== undefined ? verify : censusVerify(), fetcher })
+    .catch(() => urls.map((u) => ({ id: `host:${hostOf(u)}`, urls: [u] })))
+    .then((groups) => {
+      for (const g of groups) for (const u of g.urls) seatOf.set(u, g.id);
+      // a URL seatsOf folded into another of its source (join.js sourceKey: origin and first path segment) is that source's seat
+      const bySource = new Map();
+      for (const u of urls) if (seatOf.has(u)) bySource.set(sourceKey(String(u)) || baseOf(u), seatOf.get(u));
+      for (const u of urls) if (!seatOf.has(u)) { const id = bySource.get(sourceKey(String(u)) || baseOf(u)); if (id) seatOf.set(u, id); }
+    });
+  // A SEAT PROVEN AT SEVERAL URLS SPEAKS WITH ALL OF THEM (kanban #3751, #3730): a box path relaying a seat's identity proof is that seat's
+  // URL too, so the seat's list is the union of what every one of its URLs handed (an omission is undone by the seat's own list), taken once
+  // they have all answered or failed; a host's seat (URLs that proved nothing: one box, or one seat) is its first answer, as before.
+  // The answers keep their URLs (fromNodes / lists, one per URL) so a union that misses the root skips exactly the URLs that made it.
+  const settledUrls = new Set();
+  const idOf = (u) => seatOf.get(u) || `host:${hostOf(u)}`;
+  const pick = () => {
+    const bySeat = new Map(), ready = [];
+    for (const g of usable) { const id = idOf(g.from); if (!bySeat.has(id)) { bySeat.set(id, []); ready.push(id); } bySeat.get(id).push(g); }
+    const out = [];
+    for (const id of ready) {
+      if (out.length >= providers) break;
+      const answers = bySeat.get(id);
+      if (!id.startsWith('key:')) { out.push([answers[0]]); continue; }
+      const mine = urls.filter((u) => idOf(u) === id);
+      if (mine.every((u) => settledUrls.has(u))) out.push(answers);
+    }
+    return out;
+  };
+  let groupedYet = false;
+  grouped.then(() => { groupedYet = true; });
   await new Promise((resolve) => {
     let left = asked.length;
-    if (!left) return resolve();
-    for (const a of asked) a.then(() => { left--; if (got.length >= providers || left === 0) resolve(); });
+    const enough = () => groupedYet && pick().length >= providers;
+    grouped.then(() => { if (enough() || left === 0) resolve(); });
+    if (!left) { grouped.then(resolve); return; }
+    asked.forEach((a, i) => a.then(() => { settledUrls.add(urls[i]); left--; if (enough() || (left === 0 && groupedYet)) resolve(); }));
   });
+  const seatsGot = pick();
+  const got = seatsGot.flat();
+  // the nodes the first provider taken left out for their protocol version: shown, never counted
+  const shown = got.find((g) => Array.isArray(g.tooOld));
+  if (shown) keptTooOld.set(key, shown.tooOld.filter((x) => x && /^[0-9a-f]{64}$/.test(String(x.node))));
   if (!got.length) return { ok: false, why: `no node handed over the census: ${refused.join('; ')}` };
-  if (got.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: got[0].entries, refused,
-    why: `only ${got.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
+  if (seatsGot.length < providers) return { ok: false, lookOnly: true, from: got[0].from, entries: unionOfEntries(seatsGot[0].map((g) => g.entries)), refused,
+    why: `only ${seatsGot.length} provider handed over the census - a bond list one provider serves alone is enough to look, not to lock (${refused.join('; ') || 'no other answered'})` };
   return { ok: true, entries: unionOfEntries(got.map((g) => g.entries)), from: got.map((g) => g.from).join(' + '), fromNodes: got.map((g) => g.from), lists: got.map((g) => g.entries), refused };
 }
 /**
