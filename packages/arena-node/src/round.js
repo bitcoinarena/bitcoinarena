@@ -21,7 +21,7 @@ import { LATE_JOIN_LAST_ENTRY_MS, entryItemDigest } from '../../arena-protocol/s
 /** How long after a round's entry close an entry new to a seat is still taken (kanban #1216). */
 export const ENTRY_CLOSE_GRACE_MS = 15000n;
 import { LATE_JOIN_MS } from '../../arena-protocol/src/series.js';
-import { ticksForMs } from '../../arena-protocol/src/tick.js';
+import { ticksForMs, msForTicks } from '../../arena-protocol/src/tick.js';
 // kanban #2826: how far (2 price sample periods of 5 s) a live mark may lag this seat's clock for its run and still be receipted
 export const MARK_LAG_TICKS = 600;
 import { KNOWN_GOOD_GAMES } from '../../arena-protocol/src/known-games.js';
@@ -37,7 +37,7 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
-import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
+import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits, STAKE_NOT_SEEN, timesByRoundClock } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS, entryGiftsInFee, giftsEntryExpected, giftsFeeBps, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
@@ -1637,7 +1637,21 @@ export class Round {
     // origin, §15: max(joinTick, the tick the player had reached)). The stricter of the two clocks decides. An honest client's ticks
     // run with the round's time from its join (the start window counts on that), so a slow first mark is a later tick, not a lag; an
     // entry with no stake seen here (a free round) keeps the first-mark clock alone.
-    if (round.state === OPEN && head.tick !== null) {
+    // FROM 2026.0.34 (RULED 2026-11-25, kanban #3704, audit #3680): ONE CLOCK, THE ROUND'S. Tick t is due at start_time + t x tick_ms; a mark
+    // more than MARK_LAG_TICKS plus the start deadline behind it is not receipted - staked or free - and an entry whose stake this seat saw
+    // only after its start deadline is ENTRY_VOID here and receipts nothing. Rounds below 34 keep the two clocks below.
+    let rcNow = null; try { rcNow = decodeRoundContract(new Uint8Array(round.contract)); } catch { rcNow = null; }
+    if (rcNow && timesByRoundClock(rcNow.protocolVersion)) {
+      if (this.#lateStakeVoid(c.entryId))
+        throw new Error('this signer node holds the entry ENTRY_VOID: its stake was seen held only after its start deadline on the round clock (2026.0.34)');
+      if (round.state === OPEN) {
+        const since = BigInt(this.now()) - rcNow.startTimeMs;
+        const behind = since > 0n ? Number(ticksForMs(since).ticks) - c.tick : 0;
+        const bound = MARK_LAG_TICKS + startDeadlineOf(rcNow);
+        if (behind > bound)
+          throw new Error(`the mark at tick ${c.tick} is ${behind} ticks behind the round's clock (more than ${MARK_LAG_TICKS} + the start deadline, ${bound}): not receipted here`);
+      }
+    } else if (round.state === OPEN && head.tick !== null) {
       const now = BigInt(this.now());
       const behindSince = (fromMs, fromTick) => {
         const since = now - BigInt(fromMs);
@@ -2500,6 +2514,8 @@ export class Round {
    * join tick IS when it can drive: those keep the old origin exactly.
    */
   startWindowOrigin(entryIdBytes, joined, contract) {
+    // FROM 2026.0.34 THE ROUND CLOCK AT THE JOIN TICK, never the stake-seen tick (RULED 2026-11-25, kanban #3704, #3680)
+    if (contract && timesByRoundClock(contract.protocolVersion)) return { originTick: joined.joinTick, originName: 'join' };
     const reached = this.stakeSeenTick(entryIdBytes);
     if (reached === null) return { originTick: joined.joinTick, originName: 'join' };
     // never before the join: a stake cannot be held before the entry that names it
@@ -2528,6 +2544,34 @@ export class Round {
     } catch { reached = 0; }
     this.db.prepare('INSERT OR IGNORE INTO stake_seen_tick (entry_id, tick, seen_ms) VALUES (?, ?, ?)')
       .run(Buffer.from(entryId), reached, this.now());
+    this.#lateStakeVoid(entryId);
+  }
+
+  /**
+   * A STAKE SEEN HELD ONLY AFTER THE ENTRY'S START DEADLINE ON THE ROUND CLOCK IS ENTRY_VOID HERE (2026.0.34, RULED 2026-11-25, kanban #3704,
+   * audit #3680): the deadline is start_time + (join_tick + start_deadline) x tick_ms; the seat's stake-seen time is the one stake_seen holds.
+   * The run does not play behind everybody; the stake goes back by forfeit or expiry (§23.2). Only a staked round whose entries play marks
+   * (a head-to-head or attested round has no start deadline), only from version 34. Answers whether it is that Void.
+   */
+  #lateStakeVoid(entryIdBytes) {
+    try {
+      const e = this.db.prepare('SELECT round_id, contract FROM entries WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+      const seen = this.stakeSeen(entryIdBytes);
+      if (!e || !seen) return false;
+      const roundId = new Uint8Array(e.round_id);
+      const row = this.get(roundId);
+      if (!row) return false;
+      const rc = decodeRoundContract(new Uint8Array(row.contract));
+      if (!timesByRoundClock(rc.protocolVersion) || !(rc.stakeMsat > 0n) || this.#neverReceipted(roundId)) return false;
+      const joinTick = decodeEntryContract(new Uint8Array(e.contract)).joinTick;
+      const deadlineMs = rc.startTimeMs + msForTicks(Number(joinTick) + startDeadlineOf(rc)).ms;
+      if (BigInt(seen.seenMs) <= deadlineMs) return false;
+      if (!this.entryVoid(entryIdBytes)) {
+        this.putEntryVoid({ entryId: Buffer.from(entryIdBytes), roundId: Buffer.from(roundId), firstMark: new Uint8Array(0), evidenceKind: 'late-stake',
+          why: `the stake was seen held here at ${seen.seenMs}, after the entry's start deadline ${deadlineMs} on the round clock (2026.0.34)` });
+      }
+      return true;
+    } catch { return false; }
   }
 
   /** The tick the player had reached when this node saw the stake held, or null if it never did. */

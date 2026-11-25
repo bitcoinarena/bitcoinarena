@@ -170,7 +170,7 @@ import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/sr
 import { walletFetch, hostOf, payoutAddressRefusal } from './public-fetch.js';
 import { WinningsSend, sendPlanToJson } from './winnings-send.js';
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
-import { objectionWindowAllowed, mediansAllBonds } from '../../arena-protocol/src/constants.js';   // kanban #1398
+import { objectionWindowAllowed, mediansAllBonds, timesByRoundClock } from '../../arena-protocol/src/constants.js';   // kanban #1398
 import { settledListDigest } from '../../arena-protocol/src/settled-list.js';   // kanban #2108, #2123
 import { TYPE_CHECKPOINT, TYPE_INPUT_BATCH, TYPE_SIGNED_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId, encodeCheckpoint, joinSigned } from '../../arena-protocol/src/checkpoint.js';
@@ -5613,7 +5613,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (round.hasResult(held.roundId, entryId, round.pubkey) || round.firstMarkHeld(held.roundId, entryId)) continue;
           const seen = round.stakeSeen(entryId);
           if (!seen) continue;
-          const door = Math.max(Number(c.startTimeMs), seen.seenMs) + deadlineMs + DOOR_GRACE_MS;
+          // FROM 2026.0.34 THE DOOR OPENS ON THE ROUND CLOCK AT THE JOIN TICK, never at the stake-seen moment; an entry this seat holds
+          // ENTRY_VOID (its stake seen after that deadline) is no walk-away (RULED 2026-11-25, kanban #3704, #3680)
+          let door;
+          if (timesByRoundClock(c.protocolVersion)) {
+            if (round.entryVoid(entryId)) continue;
+            let joinTick; try { joinTick = decodeEntryContract(round.entry(entryId)).joinTick; } catch { continue; }
+            door = Number(c.startTimeMs) + Number(msForTicks(Number(joinTick)).ms) + deadlineMs + DOOR_GRACE_MS;
+          } else door = Math.max(Number(c.startTimeMs), seen.seenMs) + deadlineMs + DOOR_GRACE_MS;
           if (nowMs < door) continue;
           const key = `${toHex(held.roundId)}:${toHex(entryId)}`;
           if (nowMs - (doorTried.get(key) || 0) < 15000) continue;

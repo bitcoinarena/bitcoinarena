@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33, 34]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 export const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -101,6 +101,18 @@ export const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
 export const DISJOINT_RULES_VERSION = 33;
 /** Whether a round of protocol version `v` runs the 2026.0.33 rules (kanban #3257, #3260, #2983). */
 export const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERSION;
+/**
+ * 2026.0.34 - A RUN IS TIMED BY THE ROUND CLOCK FROM ITS JOIN TICK (RULED 2026-11-25, kanban #3704 (b), audit #3680). Tick t of an entry is due
+ * at start_time + t x tick_ms (t >= join_tick); the start window's origin and the door's walk-away are start_time + join_tick x tick_ms, never
+ * the moment a seat saw the stake held (#2826 / #3568 timed it from there: a late-join entry locking 44 s after the start played ~49 s behind
+ * the round and was receipted). A mark more than MARK_LAG_TICKS plus the start deadline behind that clock is not receipted, in free rounds
+ * too; a stake a seat sees held only after join_tick + start_deadline on the round clock makes the entry ENTRY_VOID there. It changes which
+ * marks seats receipt, so rounds below 34 keep today's rules byte for byte; the round creators write 34 only once every seat (and the page)
+ * runs a build that lists it.
+ */
+export const ROUND_CLOCK_VERSION = 34;
+/** Whether a round of protocol version `v` times its runs by the round clock from the join tick (kanban #3704). */
+export const timesByRoundClock = (v) => Number.isInteger(v) && v >= ROUND_CLOCK_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
