@@ -155,8 +155,15 @@ const pluginsDir = process.env.ARENA_PLUGINS_DIR || `${path}.plugins`;
 {
   const { loadInstalled } = await import('./plugin-package.js');
   const { verifyEd25519 } = await import('./ed25519.js');
-  const got = await loadInstalled(pluginsDir, { verify: verifyEd25519 });
+  // kanban #3679, ruled in #3706: a superseded version with no open round, no series naming it, every round final and settled and 24 h
+  // past is left unloaded (still hosted; its cores load when a round, replay, re-run, objection or re-verify first reaches it)
+  const { idleVersions } = await import('./version-idle.js');
+  const seriesGameIds = () => { try { return new Set(process.env.ARENA_SERIES_FILE ? readSeriesFile(process.env.ARENA_SERIES_FILE).map((t) => toHexId(t.gameId)) : []); } catch { return null; } };
+  const keepUnloaded = (ids) => { const named = seriesGameIds(); if (!named) return []; const r = idleVersions(db, ids, { seriesGameIds: named });
+    for (const [id, why] of r.why) console.log(`[games] ${id.slice(0, 16)} stays loaded: ${why}`); return r.idle; };
+  const got = await loadInstalled(pluginsDir, { verify: verifyEd25519, keepUnloaded });
   for (const r of got.refused) console.error(`[games] installed game refused: ${r.dir}: ${r.why}`);
+  if (got.unloaded.length) console.log(`[games] ${got.unloaded.length} superseded version(s) kept, unloaded until needed: ${got.unloaded.map((x) => x.slice(0, 16)).join(', ')}`);
   for (const g of got.registrations) if (!apps.some((x) => Buffer.from(x.gameId).equals(Buffer.from(g.gameId)))) apps.push(g);
 }
 console.log(`[games] hosting ${apps.length ? apps.map((g) => g.name).join(', ') : 'none (ARENA_APPS names no game)'}`);
@@ -213,7 +220,8 @@ if (net === 'regtest' && process.env.ARENA_REGTEST_EXTRA_DONATION_SET) {
 }
 }
 // ONE SERIES A LINE (series-line.js): its template, hex; then count=N, cut=N, and for a grid series grid and period=N.
-const readSeriesFile = (path) => readSeriesLines(readFileSync(path, 'utf8'));
+function readSeriesFile(path) { return readSeriesLines(readFileSync(path, 'utf8')); }   // a declaration: the start reads it before this line (kanban #3679)
+function toHexId(b) { return Buffer.from(b).toString('hex'); }
 // THE OPERATOR'S REFUSE-ROUNDS FILE: round ids this node refuses at every door, read again when it changes
 if (process.env.ARENA_REFUSE_ROUNDS_FILE) options.refuseRoundsFile = process.env.ARENA_REFUSE_ROUNDS_FILE;
 if (process.env.ARENA_SERIES_FILE) {
