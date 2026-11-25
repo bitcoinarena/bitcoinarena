@@ -705,13 +705,15 @@ export function createOpr(o = {}) {
    * bot list. ONLY THE GAME'S OWN LINK (kanban #3381, owner playtest 2026-11-23: the phone's game screen said "✓ X @fexx_off" - a typed link in the
    * bug bounty's Season 2 book on that key - although the owner never linked an X account in the game; owner: "Bounty und Spiel müssen unabhängig
    * sein"): the bounty book is neither shown nor counted; a player who linked X only there links it again in the game.
-   * BY THE HOUR AFTER THE ROUND (kanban #3278, #3286; #3250: "verify until 1 hour after the round ends"): with round r given, a link made after
-   * r.end_ms + verifyGraceMs does not place the player in r - a later list rebuild (any POST /lnaddress) cannot bring a late link in.
-   * LINKED BEFORE THE FIRST RUN (kanban #3281, #3288): the 5 attempts are counted per key, the bounty is paid per X account, and keys are free -
-   * one person played 5 runs on each of N fresh keys and linked the one X account after the round to the best of them. A key is placed in r
-   * only when its X link was made before its first attempt of r: every run that can win was made by the key while it held the account,
-   * and one X account is on one key at a time (saveX refuses an account another game key holds), so one X account stands behind at most
-   * one key's attempts in a round. A key that links later is placed from its next round on.
+   * BY THE ROUND'S END (kanban #3720; was the hour after it, #3278, #3286, #3250): with round r given, a link made at or after r.end_ms does not
+   * place the player in r - a later list rebuild (any POST /lnaddress) cannot bring a late link in.
+   * LINKED BY THE ROUND'S END (kanban #3720, owner 2026-11-25 "Ja": the X box shows only after a run, so a new player links after its first
+   * run - it counts in that round). Was (#3281, #3288): placed only with a link made before the key's first attempt of r - the 5 attempts are
+   * counted per key, the bounty is paid per X account, keys are free, so one person could play 5 runs on each of N fresh keys and link the one
+   * X account to the best of them. That attack is now HELD, not refused: xOf answers late: true for a link newer than the key's first run of r,
+   * flagsOf flags such a key ('late-x') and the lists hold its row - and stop below it - until the owner clears its run (POST /admin/review)
+   * or disqualifies it. One X account is still on one key at a time, and a move away from a key with an attempt in a running round stays
+   * refused (#3382), so the account still stands behind one key's attempts per round.
    */
   const firstRunOf = (round, pk) => q("SELECT MIN(created_ms) AS m FROM attempts WHERE round = ? AND player = ? AND state != 'expired'").get(round, pk).m;
   const isBotX = (name) => { const b = botXHandles(); return !!name && b.has(String(name).replace(/^@/, '').toLowerCase()); };
@@ -727,7 +729,9 @@ export function createOpr(o = {}) {
     const first = firstRunOf(r.id, pk);
     if (first == null) return null;
     const last = lastRunOf(r.id, pk);
-    const m = q('SELECT * FROM x_link_moves WHERE from_pubkey = ? AND from_linked_ms <= ? AND at_ms > ? ORDER BY at_ms DESC LIMIT 1').get(String(pk), first, last);
+    // kanban #3720: a link the key made after its first run (before the end) is kept too - xOf marks it late; while the key had an attempt in a
+    // running round the account could not move away (#3382), so the move came after its last run
+    const m = q('SELECT * FROM x_link_moves WHERE from_pubkey = ? AND from_linked_ms < ? AND at_ms > ? ORDER BY at_ms DESC LIMIT 1').get(String(pk), r.end_ms, last);
     if (!m) return null;
     // kanban #3579 (audit opr a7-1-1): the held link's follows answer is the one it had when it moved - read from the account's current row, a
     // stranger who moved the winner's account to a throwaway key and linked that key to another account emptied it, and the winner fell off the
@@ -752,10 +756,12 @@ export function createOpr(o = {}) {
     if (houseX().has(String(l.username || '').toLowerCase())) return { placed: false, x, why: 'the Bitcoin Arena account is not a player account' };   // kanban #3392
     // kanban #3534: a round ending after followSince (and /me with no round) places only an X account that follows @bitcoinarena_io
     if ((!r || followRuleOn(r)) && f.follows !== true) return { placed: false, x, why: f.follows === false ? `@${l.username} does not follow @${X_HOUSE} yet - follow, then press Check again` : `not checked yet whether @${l.username} follows @${X_HOUSE} - press Check` };
-    if (r && !(Number(l.linkedMs) <= r.end_ms + cfg.verifyGraceMs)) return { placed: false, x, why: 'the X account was linked more than 1 hour after the round ended' };
-    if (r) {
+    // kanban #3720 (owner 2026-11-25: saved by the END of the round; was end + verifyGraceMs, #3278): after the end an account may move off a key
+    // with runs (#3382), so a link made then would put a second key behind it in r
+    if (r && !(Number(l.linkedMs) < r.end_ms)) return { placed: false, x, why: 'the X account was saved after the round ended - it counts from the next round' };
+    if (r) {   // kanban #3720: a link made after the key's first run of r places it - held for the owner's decision (flagsOf 'late-x')
       const first = firstRunOf(r.id, pk);
-      if (first != null && !(Number(l.linkedMs) <= first)) return { placed: false, x, why: 'the X account was linked after your first run of this round - it counts from the next round' };
+      if (first != null && !(Number(l.linkedMs) <= first)) return { placed: true, x, why: null, late: { linkedMs: Number(l.linkedMs), firstRunMs: Number(first) } };
     }
     return { placed: true, x, why: null };
   }
@@ -875,10 +881,14 @@ export function createOpr(o = {}) {
     const out = new Map();
     for (const b of board) {
       const s = strong.get(b.player), bt = bots.players.get(b.player);
-      if (!s && !precise(b.player)) continue;
+      // X SAVED AFTER THE FIRST RUN (kanban #3720, keeps #3281 covered): placed, but its row waits for the owner - one person may have played
+      // several fresh keys and saved the one X account on the best
+      const lx = !s && !precise(b.player) && rr ? xOf(b.player, rr) : null, late = lx && lx.placed && lx.late;
+      if (!s && !precise(b.player) && !late) continue;
       out.set(b.player, { player: b.player, name: b.name || nameOf(b.player), attempt: b.attempt, score: b.total, timeS: b.timeS, rank: b.rank,
-        kind: s ? 'strong' : 'precise', why: s ? s.why : `bot likelihood ${bt.score} - held for review`, ref: s ? s.ref : null,
-        bot: bt ? { score: bt.score, reasons: bt.top } : null, decision: isCleared(b.player) ? 'approved' : 'pending' });
+        kind: s ? 'strong' : late ? 'late-x' : 'precise',
+        why: s ? s.why : late ? `X @${lx.x.username} saved ${Math.max(1, Math.round((late.linkedMs - late.firstRunMs) / MIN_MS))} min after this key's first run of the round - several keys may stand behind one X account; held for the owner's decision` : `bot likelihood ${bt.score} - held for review`,
+        ref: s ? s.ref : null, bot: bt ? { score: bt.score, reasons: bt.top } : null, decision: isCleared(b.player) ? 'approved' : 'pending' });
     }
     return out;
   }

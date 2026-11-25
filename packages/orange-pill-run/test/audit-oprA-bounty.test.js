@@ -149,5 +149,5 @@ test('F4 one X account gets no more than the round\'s 5 attempts toward the boun
   // the attack wins when the best key, linked after all 15 runs, takes the bounty row (#3288 fix: a key is placed only with a link made before its first run)
   const triesBehindX = keys.reduce((n, k) => n + w.opr.db.prepare('SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND player = ?').get(r.id, k.pk).n, 0);
   assert.ok(!(b.rows[0] && b.rows[0].player === top[0]), `the bounty winner's X account had ${triesBehindX} attempts (on ${keys.length} keys) - the round allows 5`);
-  assert.match(w.opr.xOf(top[0], r).why || '', /after your first run/);
+  assert.match(w.opr.xOf(top[0], r).why || '', /after the round ended/);   // #3720: a link counts only before the end
 });

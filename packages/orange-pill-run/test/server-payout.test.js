@@ -119,12 +119,13 @@ test('#3250 the lists are written 1 hour after the round; only keys with the gam
   assert.equal(w.opr.xOf(ps[2].pk, r).why, 'no X account linked');
 });
 
-test('#3281 #3288 an X account linked after the key\'s first run of the round does not place it in that round', async () => {
+test('#3281 #3288 #3720 an X account linked after the key\'s first run of the round places it there, held for the owner (late-x)', async () => {
   const { w, r, ps } = await played([10, 9], [false, true]);
   w.link(ps[0].pk);   // proven and verified now, after its run
   await endRound(w, r);
-  assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), [ps[1].pk]);
-  assert.match(w.opr.xOf(ps[0].pk, r).why, /after your first run of this round/);
+  assert.deepEqual(rowsOf(w, r, 'pot').map((x) => x.player), []);   // the held late row above stops the list (#3332)
+  assert.equal(w.opr.listsOf(r.id).find((l) => l.kind === 'pot').held[0].flag, 'late-x');
+  assert.ok(w.opr.xOf(ps[0].pk, r).placed && w.opr.xOf(ps[0].pk, r).late);
   assert.equal(w.opr.xOf(ps[0].pk).placed, true);   // from the next round on
 });
 

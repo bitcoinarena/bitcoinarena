@@ -58,7 +58,7 @@ test('#3382 after the round ends the account moves; the finished round keeps the
   w.clock.set(r.end_ms); await w.opr.tick();
   assert.equal((await save(w, b, 'alice')).ok, true, 'moves once the round has ended');
   assert.equal(w.opr.xOf(a.pk, r).placed, true, 'a made every run of r while holding it');
-  assert.match(w.opr.xOf(b.pk, r).why, /after your first run/);
+  assert.match(w.opr.xOf(b.pk, r).why, /after the round ended/);   // #3720: a link counts until the end
   w.clock.add(60 * MIN); await w.opr.tick();
   const list = () => w.opr.listsOf(r.id).find((x) => x.kind === 'bounty');
   assert.deepEqual(list().rows.map((x) => x.player), [a.pk]);

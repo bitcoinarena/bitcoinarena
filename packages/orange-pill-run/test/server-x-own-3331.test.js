@@ -64,7 +64,7 @@ test('#3331 one check every 15 s per key; X not reachable -> not saved, said pla
   assert.equal((await w.opr.saveX(a.pk, 'alice')).ok, true);
 });
 
-test('#3331 placement: linked before the first run of the round places; linked after it counts from the next round; a bot handle never; no follow asked', async () => {
+test('#3331 placement: linked before the first run of the round places; linked after it is held for the owner (#3720); a bot handle never; no follow asked', async () => {
   const w = xWorld(); const r = await openRound(w);
   const early = keypair(), late = keypair(), bot = keypair();
   assert.equal((await w.opr.saveX(early.pk, 'alice')).ok, true);
@@ -73,11 +73,11 @@ test('#3331 placement: linked before the first run of the round places; linked a
   await play(w, early, r, 10); await play(w, late, r, 30); await play(w, bot, r, 40);
   assert.equal((await w.opr.saveX(late.pk, 'georgeprime')).ok, true);
   assert.equal(w.opr.xOf(early.pk, r).placed, true);
-  assert.match(w.opr.xOf(late.pk, r).why, /after your first run/);
+  assert.ok(w.opr.xOf(late.pk, r).placed && w.opr.xOf(late.pk, r).late, '#3720: placed, marked late');
   assert.equal(w.opr.xOf(bot.pk, r).why, 'a known bot account');
   w.clock.set(r.end_ms); await w.opr.tick(); w.clock.add(60 * MIN); await w.opr.tick();
   const l = w.opr.listsOf(r.id).find((x) => x.kind === 'bounty');
-  assert.equal(l.rows[0].player, early.pk); assert.equal(l.rows[0].xProof, 'game');
+  assert.equal(l.rows.length, 0); assert.ok(l.held.some((h) => h.player === late.pk && h.flag));   // #3720: the late row above waits for the owner
 });
 
 test('#3331 #3381 a key with a game link is placed (no Season 2 fallback since #3381); the same key re-saving its own handle keeps linked_ms', async () => {

@@ -422,8 +422,8 @@ function paintBounty(on, st) {
   const me = S.me, sats = S.round && S.round.bountySats > 0 ? S.round.bountySats : PRIZE_SATS;
   $("rBHead").textContent = "Want the daily " + fmtSats(sats) + " sat bounty?";
   const f = $("rBFollow"); f.textContent = ""; f.append(followLink("@" + X_HOUSE));
-  // the service's rule (#3281): an X account counts in a round only when it was saved before the player's first run there
-  $("rBExtra").textContent = !me.x ? " An X handle saved now counts from your next round." : BB.open ? " A new X account counts from your next round." : "";
+  // the service's rule (#3720, owner 2026-11-25; was #3281: only before the first run): an X account saved before the round ends counts in it
+  $("rBExtra").textContent = !me.x ? " An X handle saved before the round ends counts for today's round." : "";
   const hasX = !!me.x, hasLn = !!me.lnAddress;
   const xOn = !hasX || !!(st && st.link) || BB.open || XF.r.dirty || !!XF.r.msg || document.activeElement === $("rXfIn");
   // an X account with an open X field says its reason under the field (follow / Check again): the status line does not say it twice (phone)
