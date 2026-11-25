@@ -65,10 +65,39 @@ export { scanSource, SCAN_RULES } from './plugin-check.js';
 // cores[0].name = {"toString":1} made loadCore throw, the trial answered a plain refusal, and the seat kept the GENUINE version as refused
 // by its trial for 24 h (autoUpdateSweep) - every honest source after it skipped. Only a short string is a core's name; else its hash's start.
 export const coreNameOf = (c) => (typeof c.name === 'string' && c.name ? c.name.slice(0, 80) : String(c.hash).slice(0, 16));
-export function verifyPackage(pkg, { verify, want = null, parentOf } = {}) {
+// THE TRIAL'S VERDICT IS KEPT, PER VERSION (kanban #3679, #1489 r1-hosting-1, gap in #2688/#2824): every start ran the whole plugin trial
+// for every installed version, and autoUpdateSweep takes a developer's next signed version each sweep with none ever dropped - so a game's
+// developer grew every start of every seat hosting it, for good (measured 16 versions 2091 ms against 108 ms for one). A version whose
+// trial passed at a start keeps TRIAL_MARK_FILE, written by this seat only, naming exactly what the trial ran: the trial's own code
+// (TRIAL_CODE: a new build with another trial tries every version again), the signed manifest, and each core's hash, name, entry and
+// configs. A later start still checks everything else (signatures, every file's hash, the scan) and loads each core within REGISTER_MS;
+// only the trial of the same bytes under the same trial is not run again.
+export const TRIAL_MARK_FILE = 'trial-passed.json';
+const TRIAL_CODE = (() => {
+  try { return sha(Buffer.concat(['./plugin-trial.js', './core-sandbox.js', './plugin-check.js'].map((f) => readFileSync(fileURLToPath(new URL(f, import.meta.url)))))); }
+  catch { return null; }   // never a mark when the trial's code cannot be read
+})();
+const trialKeyOf = (pkg) => (TRIAL_CODE === null ? null : sha(JSON.stringify([TRIAL_CODE, String(pkg.manifest),
+  pkg.cores.map((c) => [String(c.hash), coreNameOf(c), Array.isArray(c.files) ? String(c.entry) : null, Array.isArray(c.configs) ? c.configs.map(String) : []])])));
+const trialMarked = (at, pkg) => {
+  if (!at) return false;
+  try { const key = trialKeyOf(pkg); return key !== null && JSON.parse(readFileSync(join(at, TRIAL_MARK_FILE), 'utf8')).key === key; } catch { return false; }
+};
+/** Kept beside an installed version whose trial just passed (loadInstalled); a write that fails only means the next start trials it again. */
+export function markTrialPassed(at, pkg) {
+  const key = trialKeyOf(pkg);
+  if (key === null) return false;
+  try { writeFileSync(join(at, TRIAL_MARK_FILE), JSON.stringify({ key })); return true; } catch { return false; }
+}
+// `trialedAt` (kanban #3679): the installed directory whose kept mark may stand for the trial; any other caller always runs it
+export function verifyPackage(pkg, { verify, want = null, parentOf, trialedAt = null } = {}) {
   const r = checkPackage(pkg, { verify, want, parentOf });
   if (!r.ok) return r;
   const manifest = decodeManifest(fromHex(String(pkg.manifest)));
+  if (trialMarked(trialedAt, pkg)) {
+    for (const c of pkg.cores) r.checks.push({ check: `core ${c.hash.slice(0, 12)}… runs in the sandbox`, ok: true, detail: 'its trial passed at an earlier start of this seat, under the same trial' });
+    return { ...r, trialKept: true };
+  }
   for (const c of pkg.cores) {
     // kanban #3085: a tree core runs from its entry with all its files
     const core = Array.isArray(c.files) ? { files: new Map(c.files.map((f) => [f.path, Buffer.from(f.body, 'base64').toString('utf8')])), entry: c.entry }
@@ -119,7 +148,9 @@ export function installPackage(dir, pkg, gameId, { title = null } = {}) {
 // LOAD_MS 10 s, then the ask, then EXIT_WAIT - on the seat's thread: a core that passed the trial held it 10 s here. Each core's
 // first load (its meta ask and, refused, its thread's end included) now has the trial's deadline, REGISTER_MS (`within`); one
 // not loaded by then is refused. The trial now shows the core the same module name, so a core honest in the trial loads the same way here.
-export async function registrationFromPackage(at, pkg, { title = null, within = REGISTER_MS } = {}) {
+// `load: false` (kanban #3679, #3706): a superseded version a start leaves unloaded - every file still checked against its hash, its cores
+// not loaded here (plugins.js loadKept loads them when a round, replay, re-run or re-verify first reaches it)
+export async function registrationFromPackage(at, pkg, { title = null, within = REGISTER_MS, load = true } = {}) {
   const manifest = decodeManifest(fromHex(pkg.manifest));
   const cores = new Map();
   for (const c of pkg.cores) {
@@ -138,8 +169,10 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
     // THE INSTALL LOAD IS HELD TO THE TRIAL'S BOUND (kanban #1694): a core that passed the trial loaded within TRIAL_MS, so the
     // seat waits no longer for it here (was LOAD_MS, 10 s of the node's thread per version, on install and every restart)
     // a decide adapter (DECIDE) or a game core (CORE, a tick game such as Next Block - kanban #3085); neither is refused
-    const meta = sandboxChecked(core, { loadMs: TRIAL_MS }).meta;
-    if (!meta.decide && !meta.core) throw new Error(`core ${c.hash.slice(0, 16)} exports neither DECIDE nor CORE`);
+    if (load) {
+      const meta = sandboxChecked(core, { loadMs: TRIAL_MS }).meta;
+      if (!meta.decide && !meta.core) throw new Error(`core ${c.hash.slice(0, 16)} exports neither DECIDE nor CORE`);
+    }
     cores.set(c.hash, core);
   }
   // ONLY THE EARLIER VERSIONS THE CHECK READ (kanban #2332, #2346): the newest MAX_PACKAGE_ANCESTORS, which checkPackage decoded
@@ -150,7 +183,7 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
   return { name: manifest.gameName, title: typeof title === 'string' && title ? title.slice(0, 80) : manifest.gameName, manifest, gameId: gameIdOf(manifest), cores, info: pkg.info || null,
     ancestors: w.window.map((h) => decodeManifest(fromHex(h))), ancestorCut: typeof w.cut === 'string' ? w.cut : null,
     donationSet: pkg.donationSet.map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: r.shareBps, label: String(r.label || '') })),
-    clientUrls: (pkg.clients || []).map((k) => pathToFileURL(join(at, `client-${k.hash}.html`)).href) };
+    clientUrls: (pkg.clients || []).map((k) => pathToFileURL(join(at, `client-${k.hash}.html`)).href), ...(load ? {} : { unloaded: true }) };
 }
 
 /**
@@ -158,15 +191,31 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
  * (its directory renamed .removed-…) is not. Answers { registrations, refused: [{ dir, why }] }.
  */
 const INSTALLED_RETRIES = 3, LINGER_WAIT_MS = 15000, TRIAL_THREAD = 'plugin trial';   // kanban #2711: plugin-trial.js TRIAL_NAME
-export async function loadInstalled(dir, { verify }) {
-  const registrations = [], refused = [];
-  if (!dir || !existsSync(dir)) return { registrations, refused };
+// SUPERSEDED VERSIONS LEFT UNLOADED (kanban #3679, ruled in #3706): `keepUnloaded(ids)` answers which of `ids` - installed versions another
+// installed version of the same game (name and developer key) supersedes, whose trial passed at an earlier start - may stay unloaded
+// (version-idle.js idleVersions: no open round, no series, everything final and settled, 24 h). Those are checked as every version is
+// (signatures, chain, every file's hash) and hosted, but their cores are not loaded at start. Nothing on disk is moved or removed.
+export async function loadInstalled(dir, { verify, keepUnloaded = null } = {}) {
+  const registrations = [], refused = [], unloaded = [];
+  if (!dir || !existsSync(dir)) return { registrations, refused, unloaded };
+  const found = [];
   for (const id of readdirSync(dir)) {
     if (!/^[0-9a-f]{64}$/.test(id)) continue;
     const at = join(dir, id);
-    let pkg;
-    try { pkg = JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')); } catch (e) { refused.push({ dir: at, why: e.message }); continue; }
-    let v = verifyPackage(pkg, { verify, want: id });
+    try { found.push({ id, at, pkg: JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')) }); } catch (e) { refused.push({ dir: at, why: e.message }); }
+  }
+  let idle = new Set();
+  if (typeof keepUnloaded === 'function') {
+    const newest = new Map(), seen = [];
+    for (const f of found) {
+      try { const m = decodeManifest(fromHex(String(f.pkg.manifest))); const k = `${m.gameName}|${toHex(m.gameDevPubkey)}`; seen.push({ f, k, v: m.version }); newest.set(k, Math.max(newest.get(k) ?? -1, m.version)); }
+      catch { /* checked, and refused, below */ }
+    }
+    const candidates = seen.filter(({ f, k, v }) => v < newest.get(k) && trialMarked(f.at, f.pkg)).map(({ f }) => f.id);
+    if (candidates.length) { try { idle = new Set(keepUnloaded(candidates) || []); } catch { idle = new Set(); } }
+  }
+  for (const { id, at, pkg } of found) {
+    let v = verifyPackage(pkg, { verify, want: id, trialedAt: at });   // kanban #3679: a kept verdict on the same bytes, same trial
     // "NO VERDICT YET" IS NOT A REFUSAL (kanban #2711, #1489 r4-hosting-7): one package's trial that overran inside an uninterruptible
     // builtin leaves its thread lingering, and every package checked after it got { retry } - refused for the life of the process, so one
     // slow (or ground-to-sort-first) package dropped every installed game after it at each start. Now the start waits for the lingering
@@ -177,8 +226,10 @@ export async function loadInstalled(dir, { verify }) {
       v = verifyPackage(pkg, { verify, want: id });
     }
     if (!v.ok) { refused.push({ dir: at, why: v.why }); continue; }
+    if (!v.trialKept) markTrialPassed(at, pkg);   // kanban #3679: this version's trial passed here; the next start does not run it again
     // the title this seat wrote itself (kanban #1541, #1716, #1780): never package.json's, which an older build kept as a seat relayed it
-    try { registrations.push(await registrationFromPackage(at, pkg, { title: seatTitleAt(at) })); } catch (e) { refused.push({ dir: at, why: e.message }); }
+    const load = !(idle.has(id) && v.trialKept);   // kanban #3679: only a version whose trial result was kept is left unloaded
+    try { registrations.push(await registrationFromPackage(at, pkg, { title: seatTitleAt(at), load })); if (!load) unloaded.push(id); } catch (e) { refused.push({ dir: at, why: e.message }); }
   }
-  return { registrations, refused };
+  return { registrations, refused, unloaded };
 }

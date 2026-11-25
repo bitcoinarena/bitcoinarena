@@ -76,8 +76,11 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519, log 
           throw new Error(`game "${p.manifest.gameName}": config ${config.slice(0, 16)} is installed on core ${hash.slice(0, 16)}, and its manifest lists no such config for it`);
       // AND IT LOADS IN ITS SANDBOX (§0A.6): read and hashed by this node, linked to its own files only, run
       // with no network, file system or clock - the only way this node ever runs it. One that does not is not hosted.
-      try { sandboxChecked(core); }   // kanban #2688: the check keeps no thread
-      catch (e) { throw new Error(`game "${p.manifest.gameName}": core ${hash.slice(0, 16)} does not load in its sandbox: ${e.message}`); }
+      // kanban #3679: a version a start left unloaded is loaded when first needed (loadKept), not here
+      if (!p.unloaded) {
+        try { sandboxChecked(core); }   // kanban #2688: the check keeps no thread
+        catch (e) { throw new Error(`game "${p.manifest.gameName}": core ${hash.slice(0, 16)} does not load in its sandbox: ${e.message}`); }
+      }
     }
     // `replayPage`: the game's own replay page, when it has one - the engine serves it, never draws a game
     // `sharedWorld`: the configs the game says make one world per round (a config's `worldShared`), which the engine's
@@ -86,6 +89,8 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519, log 
     const sharedWorld = [...new Set([...[...p.cores.values()].flatMap((c) => [...c.configs].filter(([, cfg]) => cfg && cfg.worldShared).map(([h]) => h)),
       ...sharedWorldOf(stands.gameId).filter((h) => installed.has(h))])];   // kanban #3371
     out.set(id, Object.freeze({ name: p.name || p.manifest.gameName, gameId: stands.gameId, manifest: p.manifest, cores: p.cores,
+      // kanban #3679: `kept` - a superseded version left unloaded at start: { unloaded, loadedMs }, changed once by loadKept
+      kept: p.unloaded ? { unloaded: true, loadedMs: null } : null,
       replayPage: p.replayPage || null, sharedWorld: Object.freeze(sharedWorld),
       // the name a player knows the game by and its square icon (an SVG file), when it gives them
       title: typeof p.title === 'string' && p.title ? p.title : (p.name || p.manifest.gameName), icon: p.icon || null,
@@ -228,6 +233,23 @@ export function itemUnlocksOf(plugin) {
  * core's; and the round fits the game's manifest. Anything else is refused by name - 27A.7.5: not selectable for that
  * round, it serves nothing there, it is not ejected and not slashed.
  */
+/**
+ * A VERSION LEFT UNLOADED AT START, LOADED WHEN FIRST NEEDED (kanban #3679, ruled in #3706): each of its cores loaded in its sandbox as
+ * hostedPlugins would have at start (the trial passed on these bytes at an earlier start) and its export checked. Never refused for
+ * being unloaded: a round, replay, re-run, objection or re-verify that reaches it gets it loaded. { ok, loaded } or { ok: false, why }.
+ */
+export function loadKept(plugin) {
+  const k = plugin && plugin.kept;
+  if (!k || !k.unloaded) return { ok: true, loaded: false };
+  for (const [hash, core] of plugin.cores || []) {
+    let meta;
+    try { meta = sandboxChecked(core).meta; } catch (e) { return { ok: false, why: `game "${plugin.manifest.gameName}": core ${String(hash).slice(0, 16)} does not load in its sandbox: ${e.message}` }; }
+    if (meta && !meta.decide && !meta.core) return { ok: false, why: `game "${plugin.manifest.gameName}": core ${String(hash).slice(0, 16)} exports neither DECIDE nor CORE` };
+  }
+  k.unloaded = false; k.loadedMs = Date.now();
+  return { ok: true, loaded: true };
+}
+
 export function pluginForRound(contract, plugins) {
   if (!contract || !(contract.gameId instanceof Uint8Array) || contract.gameId.length !== 32)
     return { ok: false, why: 'that round names no 32-byte game (game_id, §0A.3)' };
@@ -235,6 +257,7 @@ export function pluginForRound(contract, plugins) {
   if (!plugin)
     return { ok: false, why: `this node does not host game ${toHex(contract.gameId).slice(0, 16)}: it plays only the games it hosts `
       + '(§0A.4) - not selectable for that round, it serves nothing there, and is not slashed' };
+  { const k = loadKept(plugin); if (!k.ok) return k; }   // kanban #3679: a version left unloaded at start is loaded now
   // AN ATTESTED GAME (§0A.7a): no core, no config, no run - the round's result is its attestors' signed
   // outcome. Answered with no core at all, so nothing downstream can replay it: a replay asked for such a round finds none.
   if (isAttested(plugin.manifest)) {
