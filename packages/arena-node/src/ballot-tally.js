@@ -6,7 +6,7 @@
 //
 //   THE VOTES     the blocks of each kept proposal's voting phase, read from this seat's chain (`votesAt(height)`, main.js:
 //                 getblock -> ballot-chain.js votesInBlock), each block ONCE however many proposals vote in it, and only its
-//                 vote outputs kept (a few bytes each, never the block)
+//                 votes each open count keeps (its prefix, signed by a bond of its census; kanban #3728), never the block
 //   THE CENSUS    the bonds active at the proposal's publication height, each with its bond amount (`censusAt(net, height)`,
 //                 main.js: the same derivation the roster's rounds use, roster.js censusOfView) - read once per proposal
 //   THE TALLY     ballot.js tally, re-run only when a block with new votes was read for that proposal
@@ -73,8 +73,8 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
   decideDepthFor = () => 6, minDecideDepthFor = () => MIN_DECIDE_DEPTH, maxBlocksPerPass = 64, log = () => {} }) {
   // THE PROPOSALS READ THIS CHAIN'S TIP TOO (kanban #1608): one posted once its voting has begun is refused at the door
   if (proposals && typeof proposals.useTip === 'function' && typeof tipHeight === 'function') proposals.useTip(tipHeight);
-  const votesByHeight = new Map();          // height -> the vote outputs of that block (shared by every proposal voting there)
-  const hashByHeight = new Map();           // height -> the hash of the block those votes were read from
+  const votesByHeight = new Map();          // height -> proposal id -> what its count keeps of that block, until it takes it (#3728)
+  const hashByHeight = new Map();           // height -> the hash of the block read there (the count is held to it)
   const open = new Map();                   // proposal id -> { readTo, readHash, census, votes: [], result } while undecided
   const reorgs = [];                        // what the reorg checks did, newest last (GET /proposals shows the last few)
   const bodies = new Map();                 // proposal id -> its decoded body (parent, configHash, config bytes)
@@ -184,7 +184,7 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
         open.delete(p.id);                                  // this chain is shorter than the count: read again when it is there (memory only)
         // AND THE CACHE ABOVE THE TIP GOES WITH IT (kanban #2019): a chain seen shorter may be a reorg seen part way - the
         // heights above it are read again from the chain that grows there, never from the branch it may have left
-        for (const h of [...votesByHeight.keys()]) if (h > tip) { votesByHeight.delete(h); hashByHeight.delete(h); }
+        for (const h of [...hashByHeight.keys()]) if (h > tip) { votesByHeight.delete(h); hashByHeight.delete(h); }
       } else if (c.got === 'other') {
         open.delete(p.id);
         const published = c.kind === 'published' ? 'other' : c.pub;
@@ -272,6 +272,50 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
     for (const [key, good] of results) o.checked.set(key, good);
     return 'kept';
   };
+  // THE VOTE CACHE HOLDS WHAT A COUNT KEEPS, NEVER A BLOCK'S OUTPUTS (kanban #3728, audit census a8-1-1): it held every vote-shaped
+  // output of every block read for an open phase until that phase ended - outputs under no proposal's prefix, outputs no bond
+  // signed - so a stranger filling a phase's blocks with 80-byte "ARNK" outputs (min-difficulty blocks on testnet4) grew every
+  // counting seat's heap by ~5 MB a filled block, for 1,440 blocks, and a restart read them all back. Now a block's outputs are
+  // sorted when it is read, for the count reading it and for every other open count that will ask for that height, and let go:
+  //   a count with its census   only the votes keepVote keeps (its prefix, signed by a bond of its census) and the junk count
+  //   a count not set up yet    (its turn comes later in this pass) only the outputs under its prefixes, at most
+  //                             UNSORTED_PER_BLOCK - more, and nothing is held for it: it reads that block again itself
+  // Each count takes its entry once, and only the count it was sorted for (the same object - a count read again after a reorg,
+  // a new twin or a new schedule reads afresh). keepVote over the kept subset answers what it answered over the whole block, in
+  // the same order, so the tally is the one counted before - every honest vote counts as it did.
+  const UNSORTED_PER_BLOCK = 128;
+  const namedBy = (p, twins, v) => {
+    const d = decodeVote(v.payload);
+    const keyed = keyedOf(p);
+    if (!d || d.bound !== (keyed || boundOf(p)) || !!d.keyed !== keyed) return false;
+    const pre = toHex(d.idPrefix);
+    return twins.some((x) => pre === x.slice(0, 2 * d.idPrefix.length));
+  };
+  const sortFor = (p, o, outputs) => {
+    const twins = o ? o.twins : twinIdsOf(p);
+    if (o && o.census) {
+      const votes = []; let junk = 0;
+      for (const v of outputs) { const k = keepVote(p, o, v); if (k === 'kept') votes.push(v); else if (k === 'junk') junk++; }
+      return { o, twins: twins.join(), votes, junk, sorted: true };
+    }
+    if (o) return null;                                     // its census is not readable yet: it reads its blocks itself
+    const named = [];
+    for (const v of outputs) if (namedBy(p, twins, v) && named.push(v) > UNSORTED_PER_BLOCK) return null;
+    return { o: null, twins: twins.join(), votes: named, junk: 0, sorted: false };
+  };
+  /** A block just read at `h`: its votes for `p` (counted now), and an entry for each other open count that will ask for `h`. */
+  const sortBlock = (h, outputs, p, o) => {
+    const m = votesByHeight.get(h) || new Map();
+    for (const q of proposals.list()) {
+      if (q.id === p.id || stateOf(q) !== S.COUNTING || !counted(q) || h < q.votingFrom || h > q.votingUntil - 1) continue;
+      const oq = open.get(q.id);
+      if (oq && oq.readTo >= h) continue;
+      const e = sortFor(q, oq, outputs);
+      if (e) m.set(q.id, e); else m.delete(q.id);
+    }
+    if (m.size) votesByHeight.set(h, m); else votesByHeight.delete(h);
+    return sortFor(p, o, outputs);
+  };
 
   /** One pass: the tip, the reorg check, then for each undecided proposal in its voting phase its census once and its new blocks. */
   async function pass() {
@@ -341,29 +385,31 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
           // A CACHED HEIGHT IS USED ONLY WHILE ITS BLOCK IS STILL THIS SEAT'S (kanban #2019): its hash is asked again, and a
           // block that changed is read afresh - so a count's votes always come from the chain its anchor (the last block read)
           // is on, whatever the reorg checks saw before
-          if (votesByHeight.has(h) && typeof blockHashAt === 'function') {
+          const cached = votesByHeight.get(h), e = cached && cached.get(p.id);
+          let mine = e && e.twins === o.twins.join() && (!e.o || e.o === o) ? e : null;
+          if (mine && typeof blockHashAt === 'function') {
             const now = await blockHashAt(h);
             if (!now) break;                                                 // above this seat's tip after all: the next pass
-            if (String(now).toLowerCase() !== hashByHeight.get(h)) { votesByHeight.delete(h); hashByHeight.delete(h); }
+            if (String(now).toLowerCase() !== hashByHeight.get(h)) { votesByHeight.delete(h); hashByHeight.delete(h); mine = null; }
           }
-          if (!votesByHeight.has(h)) {
+          if (!mine) {
             // the block's hash first, and its votes from THAT block: the hash the count is later held to is the block it read
             const hash = typeof blockHashAt === 'function' ? await blockHashAt(h) : null;
             if (typeof blockHashAt === 'function' && !hash) break;          // above this seat's tip after all: the next pass
-            votesByHeight.set(h, await votesAt(h, hash || undefined)); hashByHeight.set(h, hash ? String(hash).toLowerCase() : null); read++;
-          }
-          const got = votesByHeight.get(h);
+            const outputs = await votesAt(h, hash || undefined); read++;
+            const at = hash ? String(hash).toLowerCase() : null;
+            if (hashByHeight.has(h) && hashByHeight.get(h) !== at) votesByHeight.delete(h);   // sorted from another block: gone
+            hashByHeight.set(h, at);
+            mine = sortBlock(h, outputs, p, o);                              // kanban #3728: the block's outputs are let go here
+          } else if (!mine.sorted) mine = sortFor(p, o, mine.votes);       // held under its prefix before its census was read
+          if (votesByHeight.has(h)) { const m = votesByHeight.get(h); m.delete(p.id); if (!m.size) votesByHeight.delete(h); }
           // ONLY ITS OWN VALID VOTES ARE KEPT (kanban #1564): a stranger who knows a public proposal id could fill blocks of its
           // phase with vote outputs under its prefix and junk signatures, and every later block with a vote re-ran the tally over
-          // all of them against every bond. Now each vote is checked here once against the census - another proposal's vote
-          // is not kept, a vote no bond signed is dropped by count, and the (signature, bond) results of a kept vote are
-          // remembered so the tally below never verifies a pair again
-          let junk = 0;
-          for (const v of got) {
-            const k = keepVote(p, o, v);
-            if (k === 'kept') { o.votes.push(v); o.dirty = true; } else if (k === 'junk') junk++;
-          }
-          if (junk) log(`[ballot] ${p.id.slice(0, 16)}: ${junk} vote(s) at ${h} signed by no bond of its census: dropped`);
+          // all of them against every bond. Now each vote is checked once against the census (sortBlock, keepVote) - another
+          // proposal's vote is not kept, a vote no bond signed is dropped by count, and the (signature, bond) results of a kept
+          // vote are remembered so the tally below never verifies a pair again
+          for (const v of mine.votes) { o.votes.push(v); o.dirty = true; }
+          if (mine.junk) log(`[ballot] ${p.id.slice(0, 16)}: ${mine.junk} vote(s) at ${h} signed by no bond of its census: dropped`);
           o.readTo = h; o.readHash = hashByHeight.get(h) || null;
         }
         // THE BLOCKS OF ONE PASS ARE ONE CHAIN (kanban #1633): each block's hash was asked on its own, a few RPC awaits apart, so
@@ -430,7 +476,13 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       }
       // THE VOTE CACHE BELOW EVERY OPEN PHASE IS LET GO: no undecided proposal will ask for those heights again
       const floor = Math.min(...[...open.keys()].map((id) => { const p = proposals.list().find((x) => x.id === id); return p ? p.votingFrom : Infinity; }));
-      for (const h of votesByHeight.keys()) if (h < floor) { votesByHeight.delete(h); hashByHeight.delete(h); }
+      for (const h of [...hashByHeight.keys()]) if (h < floor) { votesByHeight.delete(h); hashByHeight.delete(h); }
+      // and what was sorted for a count that is gone (decided, read again, rescheduled) or for a proposal no longer counted (#3728)
+      const counting = new Set(proposals.list().filter((x) => stateOf(x) === S.COUNTING).map((x) => x.id));
+      for (const [h, m] of votesByHeight) {
+        for (const [id, e] of m) if (e.o ? open.get(id) !== e.o : !counting.has(id)) m.delete(id);
+        if (!m.size) votesByHeight.delete(h);
+      }
       refreshLive();
       return { tip, read, decided, reorged };
     } finally {
