@@ -27,24 +27,28 @@ export const RETRY_MS = 300000;
 export const PULL_LISTING_BYTES = 1 << 20;
 export const PULL_PASS_MS = 90000;
 export const PULL_PEER_STRIKES = 3;
+// A LINE HAS A CAP TOO (kanban #3689, #1489 bypass of #1469): the /series-template answer was read with a bare res.text(), so one seat
+// that listed an id and streamed 48 MiB as its line had all of it buffered and handed to parse(). An honest line is a few KB.
+export const PULL_LINE_BYTES = 256 * 1024;
 
 export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fetch, say = () => {}, now = Date.now,
   perPass = PULL_PER_PASS, askPeers = PULL_PEERS, retryMs = RETRY_MS, timeoutMs = 15000,
-  passMs = PULL_PASS_MS, listingBytes = PULL_LISTING_BYTES, peerStrikes = PULL_PEER_STRIKES }) {
+  passMs = PULL_PASS_MS, listingBytes = PULL_LISTING_BYTES, lineBytes = PULL_LINE_BYTES, peerStrikes = PULL_PEER_STRIKES }) {
   const refusedAt = new Map();         // series id hex -> { atMs, why }
   let busy = false, start = 0, last = null;
   // the listing read up to listingBytes (kanban #2424): a body without a stream reader (a test double) is read as it is
-  const capped = async (r) => {
-    if (!r.body || typeof r.body.getReader !== 'function') return r.json();
+  const capped = async (r, most = listingBytes, asText = false) => {
+    if (!r.body || typeof r.body.getReader !== 'function') return asText ? r.text() : r.json();
     const reader = r.body.getReader(); const chunks = []; let n = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       n += value.length;
-      if (n > listingBytes) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${listingBytes} bytes`); }
+      if (n > most) { reader.cancel().catch(() => {}); throw new Error(`its answer passed ${most} bytes`); }
       chunks.push(value);
     }
-    return JSON.parse(Buffer.concat(chunks.map((x) => Buffer.from(x.buffer, x.byteOffset, x.byteLength))).toString('utf8'));
+    const body = Buffer.concat(chunks.map((x) => Buffer.from(x.buffer, x.byteOffset, x.byteLength))).toString('utf8');
+    return asText ? body : JSON.parse(body);
   };
   const json = async (u) => { const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? capped(r) : null; };
 
@@ -106,7 +110,7 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
           const left = endAt - Date.now();
           if (left <= 0) break;
           let line = null;
-          try { const res = await fetchFn(`${u}/series-template?id=${id}`, { signal: AbortSignal.timeout(Math.min(timeoutMs, left)) }); line = res.ok ? await res.text() : null; } catch { line = null; }
+          try { const res = await fetchFn(`${u}/series-template?id=${id}`, { signal: AbortSignal.timeout(Math.min(timeoutMs, left)) }); line = res.ok ? await capped(res, lineBytes, true) : null; } catch { line = null; }
           if (!line) { strike(u); continue; }
           let t; try { t = parse(line.trim()); } catch (e) { strike(u); why = `its line did not read: ${e.message}`; continue; }
           // A LINE IS BELIEVED ONLY AS ITS OWN ID: whatever a peer sends, it must hash to the id asked for
