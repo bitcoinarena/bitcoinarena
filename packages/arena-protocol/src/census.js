@@ -1308,7 +1308,7 @@ export function resolveCensus(entries, { contract, resolve, verifyAdvert, bond, 
     // view was brought, else the entry's own height. One block short is a bond its node could take back before the
     // network's maturity, and it is excluded by name.
     const confirmed = chainSays ? chainSays.height : e.height;
-    const matures = maturityStands(read.advert, confirmed, network, { txid: e.txid, vout: e.vout });
+    const matures = maturityStands(read.advert, confirmed, network, { txid: e.txid, vout: e.vout }, contract.censusHeight);   // #3669
     if (!matures.ok) { excluded.push({ ...e, ...heldOut, why: matures.why }); continue; }
     // A TEMPLATE-3 BOND NAMES A KEY NEWEST WITHIN census_confirmations OF ITS CONFIRMATION (5A.3B, kanban #1031). `bond.standingKeys` is the reader's list.
     const named = bondNamesStandingKey(read.advert, confirmed, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));

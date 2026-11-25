@@ -137,7 +137,7 @@ function readEntryFromEvidence(item, { contract, headers, firstHeight, bond, ver
   const seen = recognizeBond(tx, vout, advert, { network, bond, ...(ancestor ? { ancestor: true } : {}) });
   if (!seen.ok) return { ok: false, why: seen.why };
   bondSats = seen.valueSats;
-  const matures = maturityStands(advert, height, network, { txid: tx.txid, vout });
+  const matures = maturityStands(advert, height, network, { txid: tx.txid, vout }, contract.censusHeight);   // #3669
   if (!matures.ok) return { ok: false, why: matures.why };
   const named = bondNamesStandingKey(advert, height, bond && bond.standingKeys, Number(contract.censusConfirmations ?? 0));
   if (!named.ok) return { ok: false, why: named.why };
