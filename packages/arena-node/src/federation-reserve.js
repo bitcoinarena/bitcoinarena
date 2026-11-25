@@ -8,6 +8,8 @@
 import { parseRoutes, routed } from './fetch-routes.js';
 // kanban #3134
 import { guardianEndpointRefusal } from './address-book.js';
+// kanban #3724
+import { GuardianSocket, cut } from './ws-dial.js';
 
 // A GUARDIAN'S AMOUNT IS WHOLE SATOSHI OR NOTHING (kanban #3594): a non-negative safe integer, or a string of digits; anything else
 // (a junk string, a fraction, a negative, an object) is no amount - BigInt('x') thrown inside the WebSocket 'message' listener was an
@@ -77,7 +79,8 @@ async function askOne(endpoint, { timeoutMs, moduleId, WS, localOk = false }) {
   if (!at) return { ok: false, why: `not opened: ${guardianEndpointRefusal(endpoint, { localOk })}` };
   endpoint = at;
   return new Promise((done) => {
-    let ws; const finish = (v) => { try { ws && ws.close(); } catch { /* closed */ } done(v); };
+    // kanban #3724: the socket is cut (terminate), not closed politely - on the timer, on an error and after the answer
+    let ws; const finish = (v) => { cut(ws); done(v); };
     const timer = setTimeout(() => finish({ ok: false, why: 'no answer in time' }), timeoutMs);
     try { ws = new WS(endpoint); } catch (e) { clearTimeout(timer); done({ ok: false, why: e.message }); return; }
     const ids = moduleId !== null && moduleId !== undefined ? [moduleId] : [0, 1, 2, 3, 4, 5, 6, 7];
@@ -105,7 +108,8 @@ async function askOne(endpoint, { timeoutMs, moduleId, WS, localOk = false }) {
         if (--left <= 0) refuse('no wallet module answered wallet_summary or federation_wallet');
       } catch (err) { refuse(`its answer could not be read: ${err && err.message}`); }
     });
-    ws.addEventListener('error', () => { clearTimeout(timer); finish({ ok: false, why: 'the connection failed' }); });
+    // a frame past the cap (ws 1009) is an error too: that guardian counts as no answer (kanban #3724)
+    ws.addEventListener('error', () => { clearTimeout(timer); finish({ ok: false, why: 'the connection failed or its answer passed the cap' }); });
   });
 }
 
@@ -118,7 +122,7 @@ async function askOne(endpoint, { timeoutMs, moduleId, WS, localOk = false }) {
 // gatherer in 8.07 s - past the gatherer's own 8 s - and the successor's record never got more than 1 of the 5 signatures it needs)
 // guardians agree on the sum and, for walletv2, on the output that holds it
 const keyOf = (s) => `${s.reserveSats}|${s.outpoint || ''}`;
-export async function readReserve({ endpoints, threshold, timeoutMs = 8000, moduleId = null, WS = globalThis.WebSocket, localOk = false }) {
+export async function readReserve({ endpoints, threshold, timeoutMs = 8000, moduleId = null, WS = GuardianSocket /* kanban #3724: was globalThis.WebSocket, no message cap */, localOk = false }) {
   const said = await new Promise((done) => {
     const got = new Array(endpoints.length).fill(null), counts = new Map();
     let left = endpoints.length;
