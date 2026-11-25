@@ -14,7 +14,7 @@ import { fakeLnd, fakeChain, keypair } from './server-helpers.mjs';
 
 const fx = JSON.parse(fs.readFileSync(new URL('./fixtures/candles-30d.json', import.meta.url)));
 
-test('#3613 a copied log with presses after the run\'s end is flagged sameLog, both runs', async () => {
+test('#3613 a copied log with presses after the run\'s end is flagged sameLog (the later runs; the earlier one counts it as copied, #3580)', async () => {
   const day = fx.days[fx.days.length - 1];
   let t = Date.parse('2026-11-22T10:00:00Z');
   const lnd = fakeLnd(), chain = fakeChain();
@@ -39,5 +39,6 @@ test('#3613 a copied log with presses after the run\'s end is flagged sameLog, b
   for (const c of copies) ids.push(await play(keypair(), c));
   const flags = ids.map((id) => JSON.parse(opr.db.prepare('SELECT flags FROM attempts WHERE id = ?').get(id).flags));
   console.log('#3613 MEASURED sameLog (victim, copy+2 presses, copy last release moved):', JSON.stringify(flags.map((f) => !!f.sameLog)));
-  assert.deepEqual(flags.map((f) => !!f.sameLog), [true, true, true]);
+  assert.deepEqual(flags.map((f) => !!f.sameLog), [false, true, true]);   // #3580: an identical or near copy flags the later run only
+  assert.equal(flags[0].copied, 2, 'the earlier run counts both copies');
 });
