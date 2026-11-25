@@ -119,7 +119,7 @@ async function recipients(behave = {}) {
  * `refuseMsat`: an invoice of that amount fails as lnd's NO_ROUTE does (the 666 msat share under a
  * 1000 msat min_htlc, measured live).
  */
-async function walletOnARelay({ refuseMsat = null, preimageOf = (pr) => PREIMAGES.get(pr) || 'ab'.repeat(32) } = {}) {
+async function walletOnARelay({ refuseMsat = null, relay = 'honest', preimageOf = (pr) => PREIMAGES.get(pr) || 'ab'.repeat(32) } = {}) {
   const walletSecret = rand(32);
   const walletPubkey = pageCurve.pointX(walletSecret);
   const asked = [];
@@ -132,6 +132,9 @@ async function walletOnARelay({ refuseMsat = null, preimageOf = (pr) => PREIMAGE
       if (frame[0] === 'REQ') { subs.add(frame[1]); return; }
       if (frame[0] !== 'EVENT') return;
       const event = frame[1];
+      // kanban #3692: `relay` 'stray-ok' first sends an OK false naming some other event; 'ok-false' and 'close' forward
+      // the request to the wallet (it pays) and then tell the client OK false, or close, in place of the wallet's answer.
+      if (relay === 'stray-ok') sock.send(JSON.stringify(['OK', 'ee'.repeat(32), false, 'blocked: not yours']));
       sock.send(JSON.stringify(['OK', event.id, true, '']));
       if (event.kind !== NWC_REQUEST) return;
       const opened = await nip04Decrypt(event.content, { secret: walletSecret, theirPubkey: fromHex(event.pubkey), curve: pageCurve });
@@ -144,6 +147,8 @@ async function walletOnARelay({ refuseMsat = null, preimageOf = (pr) => PREIMAGE
         : { result_type: 'pay_invoice', result: { preimage: preimageOf(said.params.invoice), fees_paid: 0 } }),
         { secret: walletSecret, theirPubkey: fromHex(event.pubkey), curve: pageCurve, random: rand });
       const reply = await signEvent({ kind: NWC_RESPONSE, tags: [['p', event.pubkey], ['e', event.id]], content, secret: walletSecret, curve: pageCurve });
+      if (relay === 'ok-false') { sock.send(JSON.stringify(['OK', event.id, false, 'error: try again'])); return; }
+      if (relay === 'close') { sock.close(); return; }
       for (const sub of subs) sock.send(JSON.stringify(['EVENT', sub, reply]));
     });
   });
@@ -683,4 +688,24 @@ test('#3693 a wallet whose preimage is not the invoice\'s has no share recorded 
   assert.equal(said.unknown.length, 2, 'both shares are outcome unknown');
   assert.equal(log.count, 0, 'nothing in the spend log');
   console.log(`  #3693 wrong preimage: paid ${said.paid.length}, unknown ${said.unknown.length}: ${said.unknown[0] && said.unknown[0].why}`);
+});
+
+// kanban #3692 (bypass audit 3): nwcCall took any ['OK', <any id>, false] and a socket close as the final answer, so a relay
+// that forwarded pay_invoice to the wallet (which paid) and then said OK false or closed had payDonation record the share
+// 'unpaid'. After the request has gone out, a relay's word is not the wallet's: such a share is outcome unknown. And an OK
+// false that names another event is not about this request at all.
+for (const relay of ['ok-false', 'close']) {
+  test(`#3692 a relay that forwards pay_invoice and then ${relay === 'close' ? 'closes' : 'says OK false'} leaves the share unknown, not unpaid`, async () => {
+    const { said, asked } = await pay(entryOf(2000n), {}, { relay });
+    assert.equal(asked.length, 2, 'the wallet was asked for (and paid) both shares');
+    assert.deepEqual(said.failed, [], 'no share the wallet may have paid is recorded unpaid');
+    assert.equal(said.unknown.length, 2);
+    console.log(`  #3692 relay ${relay}: failed ${said.failed.length}, unknown ${said.unknown.length}: ${said.unknown[0] && said.unknown[0].why}`);
+  });
+}
+test('#3692 an OK false naming another event is passed over and the wallet\'s answer is still taken', async () => {
+  const { said, asked } = await pay(entryOf(2000n), {}, { relay: 'stray-ok' });
+  assert.equal(asked.length, 2);
+  assert.equal(said.ok, true, said.why);
+  assert.equal(said.paidMsat, 2000n);
 });
