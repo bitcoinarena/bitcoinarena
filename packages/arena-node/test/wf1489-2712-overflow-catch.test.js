@@ -31,8 +31,11 @@ const tail = `export const CORE = Object.freeze({ name: 'd', RUN_TICKS: R, INPUT
 // JSON.stringify of a 1,500,000-deep array, sized on an arm64 laptop; on x86_64 (node 24, CORE_STACK_MB 32) JSON.stringify's
 // cycle check makes it quadratic (200,000 deep: 12 s), so the load hit LOAD_MS before the stack ran out and every test saw a
 // timeout, not the overflow. Array.prototype.flat(Infinity) of an array that holds itself recurses without end (no cycle check,
-// depth Infinity - 1 = Infinity): it overflows whatever a frame costs on the machine, in ~50 ms on a 32 MB stack (x86_64)
-const nest = `const a = []; a.push(a);\nconst blow = () => a.flat(Infinity);\n`;
+// depth Infinity - 1 = Infinity): it overflowed whatever a frame costs on the machine. Since the cap on the built-ins that recurse on
+// data (core-nest.js, the owner's ruling on #3540) that flat is refused at DEPTH_MAX with a fixed message instead, so the probe is now a
+// loop of built-ins on ONE object that never ends: Object.prototype.toLocaleString calls this.toString, which is itself. No data depth
+// is in it to cap, and a loop without end overflows on every machine (its outcome does not depend on the frame size)
+const nest = `const a = {}; a.toString = Object.prototype.toLocaleString;\nconst blow = () => String(a);\n`;
 
 const outcome = (src) => {
   try { const box = loadCore(coreFiles(coreOf(src))); const r = box.meta.RUN_TICKS; box.end(); return { loaded: true, r }; }

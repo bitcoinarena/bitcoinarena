@@ -26,6 +26,9 @@ export const DEPTH_MAX = 10000;
 /** The core thread's stack: room for DEPTH_MAX frames of about 3 kB each, far above what an honest core's frame takes. */
 export const CORE_STACK_MB = 32;
 export const DEPTH_SAID = `the core nested its calls more than ${DEPTH_MAX} deep`;
+// kanban #3540 (the owner 2026-11-25, option 2): a built-in that recurses on the core's data (core-nest.js) counts each level of it
+// on the same count as the core's own calls, so the two together stay under DEPTH_MAX; past it, this fixed refusal
+export const NEST_SAID = `nesting deeper than ${DEPTH_MAX}: a built-in function recursed into the core's data past the cap`;
 export const DEPTH_MODULE = 'arena:depth';
 const RESERVED = '__arena$';
 // A CORE'S SIZE, BOUNDED BEFORE IT IS INSTRUMENTED OR COMPILED (kanban #3052, #3067): instrumentCore ran in the seat's own thread on a
@@ -204,5 +207,14 @@ export const DEPTH_LOCKDOWN = `(() => {
       if (sticky !== null) throw new RE(sticky);
       if (isOverflow(err)) { sticky = 'the core overflowed the stack'; throw new RE(sticky); }
     };
-    return Object.freeze({ e, x, c, begin() { d = 0; }, over: () => sticky });
+    // kanban #3540: one level of a built-in's recursion into the core's data (core-nest.js), on the same count as e(); fits(k) says
+    // whether k more levels stay under the cap, deny() refuses - the lockdown's own, never the core's
+    const nestSaid = ${JSON.stringify(NEST_SAID)};
+    const n = () => { if (sticky !== null) throw new RE(sticky); if (++d > max) { d--; throw new RE(nestSaid); } };
+    const fits = (k) => d + k <= max;
+    const deny = () => { if (sticky !== null) throw new RE(sticky); throw new RE(nestSaid); };
+    // k levels at once (JSON.stringify's, which V8 holds on its stack while it calls the core's replacer), and given back
+    const lift = (k) => { if (sticky !== null) throw new RE(sticky); if (d + k > max) throw new RE(nestSaid); d += k; };
+    const drop = (k) => { d = d > k ? d - k : 0; };
+    return Object.freeze({ e, x, c, n, fits, deny, lift, drop, begin() { d = 0; }, over: () => sticky });
   })()`;
