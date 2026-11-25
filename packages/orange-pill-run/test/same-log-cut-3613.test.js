@@ -13,18 +13,22 @@ import { createOpr } from '../server/opr-service.mjs';
 import { fakeLnd, fakeChain, keypair } from './server-helpers.mjs';
 
 const fx = JSON.parse(fs.readFileSync(new URL('./fixtures/candles-30d.json', import.meta.url)));
+// #3718: pinned to opr-5, the version it was written on (copy 2 assumes the bot's last press runs to the end, as it does on opr-5's run;
+// on opr-6 this day's last press ends before the flag, so moving its release is another input, not a copy)
+const V = 'opr-5';
 
 test('#3613 a copied log with presses after the run\'s end is flagged sameLog (the later runs; the earlier one counts it as copied, #3580)', async () => {
   const day = fx.days[fx.days.length - 1];
   let t = Date.parse('2026-11-22T10:00:00Z');
   const lnd = fakeLnd(), chain = fakeChain();
-  const opr = createOpr({ now: () => t, sim: { GAME_VERSION: sim.GAME_VERSION, buildLevel: sim.buildLevel, runLog: sim.runLog }, fetchCandles: async () => day.candles,
+  const opr = createOpr({ now: () => t, sim: { GAME_VERSION: V, buildLevel: sim.buildLevel, runLog: sim.runLog }, fetchCandles: async () => day.candles,
     checkLevel, invoices: lnd, chain, log: () => {}, cfg: { showTest: true, entrySats: 100, adminSha: createHash('sha256').update('x').digest('hex') } });
   const made = opr.testRound({ minutes: 60, chartDay: day.day });
   assert.equal(made.ok, true, made.why);
   await opr.tick(); await opr.tick(); chain.confirm(); await opr.tick();
   const r = opr.roundRow(made.round.id);
-  const L = sim.buildLevel(day.candles, checkLevel(day.candles, r.id).seed);
+  assert.equal(r.game_version, V);
+  const L = sim.buildLevel(day.candles, checkLevel(day.candles, r.id, { version: V }).seed, V);
   const { log } = sim.recordLog(L, (w) => sim.botInput(w, { ...sim.BOT_CONFIGS[0] }));
   const want = sim.runLog(L, log), end = want.steps;
   const last = log.presses[log.presses.length - 1];

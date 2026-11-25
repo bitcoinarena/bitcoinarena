@@ -17,8 +17,11 @@ export const VERSIONS = {
   // kanban #3547, owner 2026-11-23 ~21:30Z: "Mach die nächste Runde 20 % schwerer" - opr-4 with 20 % more enemies and 20 % more
   // gaps (level.js, R.more); the same speeds, score and safe checkpoints
   "opr-5": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20, safeCp: true, runOut: 2, more: 0.2 },
+  // kanban #3718 (feedback #473, owner 2026-11-25 "klingt wie ein echtes Problem"): desktop clicks of 60-120 ms never cleared the first
+  // candle (a 3-tile step); minJ = every jump rises at least this many steps (world.js) before a let-go cuts it; the rest as opr-5
+  "opr-6": { run: 2.88, boost: 4.32, foe: 0.9, hopP: 88, hopUp: 44, timePerS: 20, safeCp: true, runOut: 2, more: 0.2, minJ: 9 },
 };
-export const GAME_VERSION = "opr-5";
+export const GAME_VERSION = "opr-6";
 // the columns from the end of the chart to the flag: 18 up to opr-3 (with the 3-step wall at 10..12), opr-4 2
 export const RUN_OUT = 18;
 // the rules of a version; throws a TypeError for one this code does not know

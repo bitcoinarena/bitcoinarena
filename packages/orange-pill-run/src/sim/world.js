@@ -41,9 +41,11 @@ export function stepWorld(W, inp) {
   if (jump && !p.prevJump) p.buffer = 9; else if (p.buffer > 0) p.buffer--;
   p.coyote = p.ground ? 8 : Math.max(0, p.coyote - 1);
   if (p.ground) p.dj = false;
-  if (p.buffer > 0 && p.coyote > 0) { p.vy = JUMP_V * (p.pw.moon > 0 ? 1.18 : 1); p.buffer = 0; p.coyote = 0; p.ground = false; W.fx.push({ kind: "dust", x: p.x + 8, y: p.y + PH, t: 14 }); }
-  else if (p.buffer > 0 && p.pw.moon > 0 && !p.dj && !p.ground) { p.vy = JUMP_V * 1.05; p.buffer = 0; p.dj = true; W.fx.push({ kind: "ring", x: p.x + 8, y: p.y + PH, t: 18, color: "#ffe9a8" }); }
-  if (!jump && p.vy < CUT_V) p.vy = CUT_V;
+  if (p.buffer > 0 && p.coyote > 0) { p.vy = JUMP_V * (p.pw.moon > 0 ? 1.18 : 1); p.buffer = 0; p.coyote = 0; p.ground = false; if (R.minJ) p.jt = R.minJ; W.fx.push({ kind: "dust", x: p.x + 8, y: p.y + PH, t: 14 }); }
+  else if (p.buffer > 0 && p.pw.moon > 0 && !p.dj && !p.ground) { p.vy = JUMP_V * 1.05; p.buffer = 0; p.dj = true; if (R.minJ) p.jt = R.minJ; W.fx.push({ kind: "ring", x: p.x + 8, y: p.y + PH, t: 18, color: "#ffe9a8" }); }
+  // opr-6 (kanban #3718): a jump rises at least R.minJ steps before a let-go cuts it, so a short click (60-120 ms) clears the
+  // first candle as a finger's tap does; a longer hold jumps higher as before
+  if (p.jt > 0) p.jt--; else if (!jump && p.vy < CUT_V) p.vy = CUT_V;
   p.prevJump = jump; p.vy = Math.min(MAXFALL, p.vy + GRAV);
   p.x += p.vx; if (p.x < 0) { p.x = 0; p.vx = 0; }
   for (let ty = Math.floor(p.y / T); ty <= Math.floor((p.y + PH - 1) / T); ty++) {

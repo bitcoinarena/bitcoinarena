@@ -14,7 +14,7 @@ const days = fx("candles-30d.json").days, pinned = fx("levels-opr4-3547.json").d
 const hash = (L) => createHash("sha256").update(JSON.stringify({ ...L, t: [...L.t], colMeta: [...L.colMeta] })).digest("hex");
 
 test("#3547 opr-5 is the game version: opr-4's rules plus more: 0.2", () => {
-  assert.equal(GAME_VERSION, "opr-5");
+  assert.ok(["opr-5", "opr-6"].includes(GAME_VERSION));   // #3718: opr-6 = opr-5 plus minJ (jump-tap-3718 pins it)
   const { more, ...r5 } = VERSIONS["opr-5"];
   assert.equal(more, 0.2); assert.deepEqual(r5, VERSIONS["opr-4"]);
 });
