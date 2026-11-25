@@ -55,6 +55,7 @@ export const DEFAULTS = Object.freeze({
   confirmations: 1, publicBases: ['https://testnet-stage.bitcoinarena.io/api/opr'], promoEnd: null, adminSha: '', workerKey: '', showTest: false, ipCrowd: 3,
   testMinutesMost: 24 * 60, logPressesMost: 6000, bodyMost: 256 * 1024, ipAttemptsShare: 2,
   ipUnplayedShare: 10,   // kanban #3598: an address's attempts that keep nothing, per round, at most this many times its kept-run share (100 in a daily round)
+  ipUnplayedWindowMs: MIN_MS,   // kanban #3755: ... counted over the attempts it opened in this last span only (a burst never locks the round)
   refusedLogNetBytes: 2e6, refusedLogRoundBytes: 200e6,   // kanban #3355: refused logs kept per round from one network (IPv6 /48, IPv4 /24) and from all
   // (kanban #3582: the network budget counts the logs of scored runs too - every log a round keeps from that network)
 });
@@ -186,6 +187,7 @@ export function createOpr(o = {}) {
   // ONE ADDRESS, A FEW PLAYERS' ATTEMPTS (kanban #3283): ip_key the caller's address as a limit counts it (an IPv6 /64 as one, faucet.js ipKey)
   try { db.exec('ALTER TABLE attempts ADD COLUMN ip_key TEXT'); } catch { /* there already */ }
   db.exec('CREATE INDEX IF NOT EXISTS attempts_by_ip_key ON attempts (round, ip_key)');
+  db.exec('CREATE INDEX IF NOT EXISTS attempts_by_ip_time ON attempts (round, ip_key, created_ms); CREATE INDEX IF NOT EXISTS attempts_by_ip_state ON attempts (round, ip_key, state)');   // kanban #3755
   // A REFUSED LOG'S NETWORK AND SIZE (kanban #3355): log_net the caller's IPv6 /48 or IPv4 /24, log_bytes the kept log's length - for the budgets
   for (const col of ['log_net TEXT', 'log_bytes INTEGER']) { try { db.exec(`ALTER TABLE attempts ADD COLUMN ${col}`); } catch { /* there already */ } }
   db.exec('CREATE INDEX IF NOT EXISTS attempts_refused_logs ON attempts (round, log_net, log_bytes)');
@@ -323,8 +325,14 @@ export function createOpr(o = {}) {
     if (!key) return false;
     const share = cfg.ipAttemptsShare * r.max_attempts;
     if (!first) return q("SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state != 'expired'").get(r.id, key).n >= share;
-    const c = q(`SELECT COALESCE(SUM(${KEPT}), 0) AS kept, COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND state != 'expired'`).get(r.id, key);
-    return c.kept >= share || c.n - c.kept >= cfg.ipUnplayedShare * share;
+    // A BURST OF THROW-AWAY ATTEMPTS LOCKS NOTHING FOR THE ROUND (kanban #3755, audit opr a8-3-1, #3374 again): the #3598 bound counted the
+    // round's never-played attempts, so 100 POST /attempt from fresh keys on a shared IPv4 (22 ms) refused every other player there for the whole
+    // daily round. They are now counted over the attempts the address opened in the last ipUnplayedWindowMs only: still at most 100 at once
+    // (#3598), and at most that many a minute after; a minute later the address's honest players get their first attempt again
+    const kept = q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND ${KEPT}`).get(r.id, key).n;
+    if (kept >= share) return true;
+    return q(`SELECT COUNT(*) AS n FROM attempts WHERE round = ? AND ip_key = ? AND created_ms > ? AND state != 'expired' AND NOT ${KEPT}`)
+      .get(r.id, key, now() - cfg.ipUnplayedWindowMs).n >= cfg.ipUnplayedShare * share;
   };
   const IP_FULL = 'this address opened all the attempts it may in this round';
   // ONE NETWORK'S KEPT LOGS, SCORED RUNS COUNTED (kanban #3582, audit opr a7-1-4): the #3355 budget counted refused logs only. Every log a round
