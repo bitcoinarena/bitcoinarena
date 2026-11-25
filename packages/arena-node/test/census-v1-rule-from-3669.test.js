@@ -12,11 +12,12 @@ const v1 = { bondScriptTemplateVersion: 1 };
 const op = { txid: 'ab'.repeat(32), vout: 0 };
 
 test('#3669 a template-1 bond confirmed at 162922 counts in a census below 163069, and not from it on', () => {
-  assert.equal(BOND_V1_RULE_FROM_CENSUS.testnet4, 163069);
+  assert.equal(BOND_V1_RULE_FROM_CENSUS.testnet4, 163197);
   assert.equal(maturityStands(v1, 162922, 'testnet4', op, 163068).ok, true, 'the posted rounds\' census (163068) is read as written');
   assert.equal(maturityStands(v1, 162922, 'testnet4', op, 163017).ok, true);
-  const later = maturityStands(v1, 162922, 'testnet4', op, 163069);
-  assert.equal(later.ok, false, 'from 163069 #3548 holds');
+  assert.equal(maturityStands(v1, 162922, 'testnet4', op, 163196).ok, true, 'the series posted at 163196 before the roll ended');
+  const later = maturityStands(v1, 162922, 'testnet4', op, 163197);
+  assert.equal(later.ok, false, 'from 163197 #3548 holds');
   assert.match(later.why, /legacy genesis bonds/);
   // no census height given (a caller outside a census): #3548 as before
   assert.equal(legacyV1Counts('testnet4', 162922, op).ok, false);
