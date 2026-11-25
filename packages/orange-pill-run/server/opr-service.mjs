@@ -570,6 +570,22 @@ export function createOpr(o = {}) {
         text != null ? net : null, text != null ? text.length : null, a.id, from);
     if (!done.changes) return { ok: false, why: 'that token was used already' };
     placeNear(a.id);
+    // A NEAR COPY IS HELD AS AN EXACT ONE IS (kanban #3747, audit opr a8-2-1): the leader's public replay (#3336), changed a little to score just
+    // above it, had a new log hash - no sameLog, review 'none' - and took the bounty row unheld (the near-copy signal is 40 bot points, below
+    // HOLD_ABOVE). A scored run that lands in a near group (nearLogs: within the 5 % length window, 90 % of the presses within 2 steps) whose
+    // first run is ANOTHER player's earlier scored run is now flagged nearCopy and put under review like a sameLog copy (#3580): held for the
+    // owner, who clears it if it was played - never refused. The earlier run only counts it (nearCopied) and keeps its review
+    if (!flags.sameLog) {
+      const me = q('SELECT near_rep FROM attempts WHERE id = ?').get(a.id);
+      const rep = me && me.near_rep && me.near_rep !== a.id ? q("SELECT id, player, flags FROM attempts WHERE id = ? AND state = 'scored'").get(me.near_rep) : null;
+      if (rep && rep.player !== player) {
+        flags.nearCopy = rep.id;
+        q("UPDATE attempts SET flags = ?, review = CASE WHEN review = 'none' THEN 'pending' ELSE review END WHERE id = ?").run(JSON.stringify(flags), a.id);
+        const f = J(rep.flags, {}) || {}; f.nearCopied = (Number(f.nearCopied) || 0) + 1;
+        q('UPDATE attempts SET flags = ? WHERE id = ?').run(JSON.stringify(f), rep.id);
+        log(`attempt ${a.id.slice(0, 8)} of ${a.round}: nearly the same inputs as ${rep.id.slice(0, 8)} of another player - held for review (#3747)`);
+      }
+    }
     if (to === 'scored' && r.state === 'listed') refreshLists(r.id);
     return { ok: true, attempt: a.id, score, paid: to === 'scored', state: to === 'scored' ? 'scored' : 'pending-entry' };
   }
