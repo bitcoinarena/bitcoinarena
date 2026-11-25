@@ -1050,6 +1050,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       try {
         const r = await fetch(`${String(peer).replace(/\/+$/, '')}/outcome?round=${toHex(target)}`, { signal: AbortSignal.timeout(2000) });
         const o = r.ok ? JSON.parse(await readTextCapped(r, LISTING_ANSWER_MAX_BYTES)) : null;
+        // A CONTRADICTION HANDED ON ACROSS THE DEADLINE (kanban #3738, audit attest-a8-2-1): a peer that took this attestation as the other
+        // side of a dispute before the deadline is VOID (dispute) for good, and answers DISPUTED - not ATTESTED. Counted as ATTESTED was:
+        // its outcomes (or values) name this one, taken at its disputedAtMs. Without it seat a went VOID, its peer refused the late
+        // hand-on and went FINAL, and neither the settlement nor the return door reached its threshold.
+        if (o && o.state === 'DISPUTED' && typeof o.disputedAtMs === 'string') {
+          const named = valued ? Array.isArray(o.valuesNamed) && o.valuesNamed.includes(String(a.value)) : Array.isArray(o.outcomesNamed) && o.outcomesNamed.includes(a.outcome);
+          if (!named) return null;
+          const at = BigInt(o.disputedAtMs);
+          return at < D ? at : null;
+        }
         if (!o || o.state !== 'ATTESTED' || typeof o.finalAtMs !== 'string') return null;
         if (valued ? o.value !== String(a.value) : o.outcome !== a.outcome) return null;
         const first = BigInt(o.finalAtMs) - W;
@@ -1193,7 +1203,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       }
     } else if (standing.state === 'DISPUTED') {
       const disp = outcomeStanding(held);
+      // disputedAtMs (kanban #3738): when the contradiction was taken here - a settlement peer's proof for one handed on across the deadline
       Object.assign(out, { outcomesNamed: disp.outcomes || [], ...(disp.values ? { valuesNamed: disp.values.map(String) } : {}), why: standing.why,
+        ...(Number.isFinite(standing.atMs) ? { disputedAtMs: String(standing.atMs) } : {}),
         proof: held.map((h) => (h.game ? gameEvidenceOf(h.game) : toHex(h.bytes))) });
     }
     return out;
