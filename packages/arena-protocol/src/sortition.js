@@ -160,15 +160,23 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
     // ONE DRAW FOR BOTH ROLES (2026.0.2): a v2 round's node serves both, so it is eligible for both
     if (!drawEligible(e, contract, role) || out.has(keyOf(e))) continue;
     const had = byKey.get(keyOf(e));
-    if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
+    const signed = e.nodeSigned !== false ? e : null;
+    if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats, signed }); continue; }
     had.bondSats += e.bondSats;
     if (compareEntries(e, had.entry) < 0) had.entry = e;
+    if (signed && (!had.signed || compareEntries(signed, had.signed) < 0)) had.signed = signed;
   }
+  // THE DRAWN ENTRY SPEAKS FOR ITS NODE ONLY IF ITS NODE SIGNED IT (kanban #3743, audit census-a8-2-1, a gap in #3348/#3364): a stranger's own
+  // bond to a node's key under another operator id stands in the census with the stranger's unsigned body (census.js `nodeSigned` false), and
+  // ground to sort first it was the key's drawn entry - every seat dialed the stranger's endpoint for the drawn node. The ticket and the order
+  // are still the key's lowest outpoint's, so who is drawn does not change; what is handed back for the key is its lowest entry whose body the
+  // node signed (an entry without the mark counts as signed, as before), and the unsigned one only when the key has no other.
   // FEWER NODE KEYS THAN SEATS: each key once, as each entry was once before - never a key twice to fill a seat. The
   // census minimum above is what refuses a census too small to hold a round (roster.test pins the smaller honest answer).
 
-  const scored = [...byKey.values()].filter(({ bondSats }) => bondSats >= bondMin).map(({ entry, bondSats }) => ({
+  const scored = [...byKey.values()].filter(({ bondSats }) => bondSats >= bondMin).map(({ entry, bondSats, signed }) => ({
     entry,
+    signed,
     ticket: ticketFor(committeeSeed, entry, drawRoleOf(contract, role)),
     weight: weightOf(bondSats, bondMin),
   }));
@@ -184,7 +192,7 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
   });
 
   // `count` is the reserve draw (drawCommittee, §5A.7): the same order, more of it
-  return scored.slice(0, Number.isInteger(count) ? count : slots).map((s) => s.entry);
+  return scored.slice(0, Number.isInteger(count) ? count : slots).map((s) => s.signed || s.entry);
 }
 
 /** THE DRAW (§5A.7): the role's `drawnForRole` lowest scores, in score order - of whom at most `slots` are seated. */
