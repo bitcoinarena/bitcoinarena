@@ -2754,5 +2754,17 @@
  "3703": {
   "text": "Other: a load-stall message shows no progress while the boot bar is already partway",
   "kind": "bug"
+ },
+ "3708": {
+  "text": "Federation: the wallet panel still shows a stake as locked after that lock was refunded",
+  "kind": "bug"
+ },
+ "3709": {
+  "text": "BTC Up/Down game: buy stays disabled as opening with no reason while the window counts down",
+  "kind": "bug"
+ },
+ "3710": {
+  "text": "BTC Up/Down game: an expired order still looks open; cancel hides it while the stake waits for the window",
+  "kind": "bug"
  }
 }
