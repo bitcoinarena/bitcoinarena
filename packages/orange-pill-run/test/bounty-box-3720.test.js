@@ -34,6 +34,6 @@ test("#3720 the prize line and the rules say the bounty details are optional and
   const pb = RULES.find((r) => r[0] === "Play bounty")[1], xr = RULES.find((r) => r[0] === "X account")[1];
   assert.match(pb, /Taking part is optional: playing and the leaderboard work without an X account or a Lightning address/);
   assert.match(xr, /bounty box, shown after a run/);
-  assert.match(xr, /saved before your first run of that round; saved later, it counts from your next round/);
+  assert.match(xr, /saved before that round ends, also after your runs/);   // #3720 rule change (owner 2026-11-25)
   assert.match(xr, /follow @bitcoinarena_io on X/);
 });

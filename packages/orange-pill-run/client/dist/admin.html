@@ -120,7 +120,7 @@ a { color: var(--btc); }
     </div>
 
     <section id="flaggedBox" style="margin-top:14px">
-      <h2>Flagged runs <small id="flaggedInfo">suspiciously strong or inhumanly precise - held off every payout list until you decide</small></h2>
+      <h2>Flagged runs <small id="flaggedInfo">suspiciously strong, inhumanly precise, or X saved after the first run (#3720) - held off every payout list until you decide</small></h2>
       <div id="flagged"></div>
     </section>
 
@@ -239,12 +239,12 @@ a { color: var(--btc); }
       acts.append(el("button", { type: "button", class: "small go", text: "Approve", disabled: f.decision !== "pending" ? "" : null, title: "a human run: it counts for payout",
         onclick: () => { if (confirm("Approve the run of " + (f.name || short(f.player)) + " (" + f.score + " points) as " + (by || "admin") + "? It is then paid like any other run.")) act("/admin/review", { attempt: f.attempt, action: "clear" }, "Run " + short(f.attempt) + " approved."); } }));
       acts.append(el("button", { type: "button", class: "small bad", text: "Disqualify", disabled: dq.has(f.player) ? "" : null,
-        onclick: () => { const why = prompt("Disqualify " + (f.name || short(f.player)) + " in " + current + " - reason:", f.kind === "strong" ? "tool-assisted run" : "bot"); if (why && why.trim()) act("/admin/disqualify", { round: current, player: f.player, why: why.trim() }, (f.name || short(f.player)) + " disqualified."); } }));
+        onclick: () => { const why = prompt("Disqualify " + (f.name || short(f.player)) + " in " + current + " - reason:", f.kind === "strong" ? "tool-assisted run" : f.kind === "late-x" ? "several keys behind one X account" : "bot"); if (why && why.trim()) act("/admin/disqualify", { round: current, player: f.player, why: why.trim() }, (f.name || short(f.player)) + " disqualified."); } }));
       tb.append(el("tr", { class: f.decision === "pending" ? "hot" : null },
         el("td", { "data-l": "Rank" }, el("span", { text: String(f.rank) })),
         el("td", { "data-l": "Player" }, el("div", {}, el("b", { text: f.name || "(no name)" }), " ", el("span", { class: "mono muted", text: short(f.player), title: f.player }))),
         el("td", { "data-l": "Score" }, el("span", { text: f.score + " · " + fmtTime(f.timeS) })),
-        el("td", { "data-l": "Flag" }, el("span", { class: "pill red", text: f.kind === "strong" ? "suspiciously strong" : "inhumanly precise" })),
+        el("td", { "data-l": "Flag" }, el("span", { class: "pill red", text: f.kind === "strong" ? "suspiciously strong" : f.kind === "late-x" ? "X saved after first run" : "inhumanly precise" })),
         el("td", { "data-l": "Why" }, el("span", { class: "why", text: f.why + (f.bot && f.bot.reasons && f.bot.reasons.length ? " · bot " + f.bot.score + ": " + f.bot.reasons.join(" · ") : "") })),
         el("td", { "data-l": "Decision" }, el("span", { class: "pill " + (f.decision === "approved" ? "green" : "red"), text: f.decision })), acts));
     }
