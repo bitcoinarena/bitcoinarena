@@ -758,7 +758,16 @@ export class OrderBook {
     // test host seat 1: this re-verification was 10.1 s of processor in 90 s, a third of all the seat did.
     if (cert && cert.record && /^[0-9]{1,15}$/.test(String(cert.record.k)) && Array.isArray(cert.record.orders)) {
       const held = this.db.prepare('SELECT batch_id, certificate FROM market_batches WHERE round_id = ? AND k = ?').get(Buffer.from(roundIdBytes), Number(cert.record.k));
-      if (held && held.certificate) { const rec = this.#recordId(roundIdBytes, cert.record); if (rec.ok && rec.id === held.batch_id) return { ok: true, fresh: false }; }
+      // COUNTED AND MATCHED BEFORE ANY SELL IS VERIFIED (kanban #3725, a gap in #2819): this ran #recordId over the POSTED record - every
+      // sell through #sellStands (entry decode + Ed25519) - before #check's count and the leader's signature: 4,000 fresh sells of one
+      // order, for a k held certified here, held the seat 6.3 s before the 400. An honest record carries no more than #recordTooBig
+      // lets through, and only a record whose items' ids hash to the held set's id is the held one - anything else goes on to #check
+      // (count, the leader's signature, then every item), so #recordId here only checks items already verified when the set was stored
+      if (held && held.certificate) {
+        { const big = this.#recordTooBig(m, cert.record); if (big) return big; }
+        const pre = this.#recordIdUnchecked(roundIdBytes, cert.record);
+        if (pre.ok && pre.id === held.batch_id) { const rec = this.#recordId(roundIdBytes, cert.record); if (rec.ok && rec.id === held.batch_id) return { ok: true, fresh: false }; }
+      }
     }
     // AT MOST ONE SIGNATURE PER SEAT (kanban #1686): a certificate carrying more signatures than the round has seats is refused before
     // any verify - a stranger's padded list held the seat's event loop for seconds, one BIP-340 verify per junk element.
