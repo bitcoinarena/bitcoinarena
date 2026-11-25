@@ -16,16 +16,30 @@ import { lnurlFor } from '../../arena-protocol/src/bech32.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { sha256, toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { signEvent, payInvoice } from './nwc.js';
+import { readJsonUpTo } from './item-buy.js';
 
 /** How long a relay is given to answer a read, in ms. */
 export const ZAP_READ_MS = 8000;
 /** The amounts the page offers, in sat. */
 export const ZAP_CHOICES_SAT = Object.freeze([21, 100, 1000]);
 
-const zapFetchJson = async (fetcher, url) => {
-  const r = await fetcher(url, { cache: 'no-store' });
-  if (!r.ok) throw new Error(`${new URL(url).host} answered ${r.status}`);
-  return r.json();
+/** The most a Lightning address server's answer (pay request, invoice) is read to, in bytes (kanban #3675). */
+export const ZAP_ANSWER_BYTES_MAX = 64 * 1024;
+
+// kanban #3675: every read of the address server ends within ZAP_READ_MS (the request aborted, and the wait ended even for a
+// fetcher that ignores the signal) and is read up to ZAP_ANSWER_BYTES_MAX. Before, a host that took the connection and never
+// answered held sendZap for good, and the page's zap dialog stayed busy and could not be closed.
+const zapFetchJson = async (fetcher, url, readMs = ZAP_READ_MS) => {
+  const ac = new AbortController();
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => { ac.abort(); reject(new Error(`${new URL(url).host} gave no answer in ${readMs} ms`)); }, readMs); });
+  try {
+    return await Promise.race([late, (async () => {
+      const r = await fetcher(url, { cache: 'no-store', signal: ac.signal });
+      if (!r.ok) throw new Error(`${new URL(url).host} answered ${r.status}`);
+      return readJsonUpTo(r, ZAP_ANSWER_BYTES_MAX);
+    })()]);
+  } finally { clearTimeout(timer); }
 };
 
 /**
