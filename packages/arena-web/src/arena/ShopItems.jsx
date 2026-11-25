@@ -5,7 +5,7 @@
 // button, off while its purchase runs. The page keeps the rules and hands them over: `items` (the shop's), `owned` (what this player owns,
 // read from the seats), `use` (the items chosen to play with, null = all owned), `picture(id)` (the item's SVG, the page's own),
 // `what(id)`, `price(priceSat)` (the price with the player's share), `onUse(id, on)` and `onBuy(item)` (resolves when the purchase is done
-// or refused). A class component; the class names are the page's, so its stylesheet reads it as before.
+// or refused), and `closed` (kanban #3699: why buying is off - no paid round of the game to read the donation sets from - or null). A class component; the class names are the page's, so its stylesheet reads it as before.
 import React from 'react';
 
 export class ShopItems extends React.Component {
@@ -15,7 +15,7 @@ export class ShopItems extends React.Component {
     try { await this.props.onBuy(it); } finally { this.setState({ buying: null }); }
   }
   render() {
-    const { items, owned, use, picture, what, price, onUse } = this.props;
+    const { items, owned, use, picture, what, price, onUse, closed } = this.props;
     return items.map((it) => {
       const mine = owned.some((o) => o.itemId === it.id);
       const sat = String(price(it.priceSat));
@@ -26,7 +26,7 @@ export class ShopItems extends React.Component {
           <div>{mine
             ? <><div className="owned">Owned ✓</div>
               <label className="use"><input type="checkbox" checked={!use || use.includes(it.id)} onChange={(e) => onUse(it.id, e.target.checked)} />Play with it</label></>
-            : <button type="button" className="buy" disabled={this.state.buying === it.id} onClick={() => this.buy(it)}>{'Buy · ' + sat + ' sat'}</button>}
+            : <button type="button" className="buy" disabled={!!closed || this.state.buying === it.id} title={closed || undefined} onClick={() => this.buy(it)}>{'Buy · ' + sat + ' sat'}</button>}
           </div>
         </div>);
     });
