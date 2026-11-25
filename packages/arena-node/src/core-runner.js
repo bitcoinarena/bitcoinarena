@@ -13,6 +13,8 @@
 //   - it does what the supervisor thread did for each core thread: hears its exit at once, reads its own memory every SAMPLE_MS while a
 //     call runs and ends it past the trigger, ends it when asked - and says each of these to the supervisor, which wakes the waiting
 //     node thread as before. The deadlines stay the node's own (core-sandbox.js).
+// kanban #3732: ONE SUCH PROCESS PER CORE (its files' hash), not one for the seat: a core whose run-time heap overrun is V8's
+// FatalProcessOutOfMemory aborts this process, and with it only the threads of that same core - never another game's.
 // The message API, supervisor -> here: spawn {id, files, entry, name, arrayBudget, liveCap, answerMax, heap, triggerMb}, call {id, op,
 // json}, end {id}; here -> supervisor: answer {id, m, high}, exit {id, code, error, caught, high}. Nothing else is read.
 import { Worker, MessageChannel } from 'node:worker_threads';
