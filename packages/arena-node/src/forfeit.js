@@ -270,6 +270,9 @@ export class Forfeit {
     // this seat decided from what it holds itself - 'own' (it held the first mark) or 'player' (its own pull of the peers on the
     // player's catch-up) - is signed without the full reach; any other ('forward', 'forfeit-ask', a label of a later code) waits
     // for every other signer node. A genuine outage caught up with every seat up still refunds at once (the pull reaches all).
+    // AND 'player' ONLY FROM THE PLAYER (kanban #3742, ruled 2026-11-25): a stranger replaying the public first mark over /play
+    // was kept as 'player' too; now that label needs a socket the entry's session key bound to itself (server.js `player`), and
+    // the replay is kept as 'play-unbound', which waits here like any other hand-over.
     if (voided && voided.learned !== 'own' && voided.learned !== 'player' && !(pulled && pulled.reached === pulled.peers))
       return refuse('this signer node was handed the ENTRY_VOID (a forward or a forfeit ask), and its proof pull reached '
         + `${pulled ? `${pulled.reached} of ${pulled.peers}` : 'none'} of the other signer nodes: it signs no refund of the lock - `

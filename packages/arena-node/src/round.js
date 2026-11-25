@@ -3460,8 +3460,11 @@ export class Round {
   /**
    * `learned` - HOW this signer node came to hold the Void (M3.3-34, ruled 2026-09-13):
    * 'own' (it held the first mark and decided the outage itself), 'player' (the
-   * player's own catch-up reached it, with the Void signer nodes' receipts), 'forward'
-   * (another signer node handed it on), 'forfeit-ask' (the push a forfeit ask makes).
+   * player's own catch-up reached it, with the Void signer nodes' receipts, on a /play socket
+   * the entry's session key bound to itself), 'forward'
+   * (another signer node handed it on), 'forfeit-ask' (the push a forfeit ask makes), 'play-unbound' (the same catch-up
+   * bytes on a /play socket the entry's session key never bound to itself - anyone may replay them; kanban #3742).
+   * Only 'own' and 'player' sign a lock refund without the proof pull reaching every other signer node (forfeit.js).
    * The first record stands.
    */
   putEntryVoid({ entryId, roundId, firstMark, evidenceKind, evidence = null, why, learned = 'own' }) {
