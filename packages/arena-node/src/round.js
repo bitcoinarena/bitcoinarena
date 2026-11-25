@@ -238,6 +238,9 @@ export class Round {
   static OFFERED_KEEP = 64;
   static OFFERED_PROOF_KEEP = 8;
   static REFUSED_IDS_KEEP = 4096;   // kanban #3013: refused mark ids kept per entry (32 bytes each)
+  // kanban #3741: the decoded mark chains equivocation() pairs offered marks against, per (round, entry), the most recent few
+  static MARK_CHAINS_KEEP = 8;
+  #markChains = new Map();
   constructor(db, now = () => Date.now(), { plugins = [] } = {}) {
     this.db = db;
     this.now = now;
@@ -1845,28 +1848,17 @@ export class Round {
       + 'WHERE round_id = ? AND entry_id = ? ORDER BY tick')
       .all(roundIdBytes, entryIdBytes);
     if (kept.length) {
-      const chain = this.db.prepare(
-        'SELECT tick, checkpoint_id, bytes FROM checkpoints '
-        + 'WHERE round_id = ? AND entry_id = ? ORDER BY tick')
-        .all(roundIdBytes, entryIdBytes)
-        .map((r) => ({
-          tick: r.tick,
-          id: new Uint8Array(r.checkpoint_id),
-          bytes: new Uint8Array(r.bytes),
-          mark: decodeCheckpoint(splitSigned(new Uint8Array(r.bytes)).body),
-        }));
-
+      const chain = this.#markChain(roundIdBytes, entryIdBytes);
       for (const k of kept) {
         const offered = new Uint8Array(k.bytes);
         const mine = decodeCheckpoint(splitSigned(offered).body);
-        const against = chain.find((c) => c.tick === k.tick)
-          || chain.find((c) => same(c.mark.previousHash, mine.previousHash));
+        const against = chain.byTick.get(k.tick) || chain.byParent.get(toHex(mine.previousHash));
         if (!against) continue;                  // nothing of ours contradicts it
         if (same(against.id, new Uint8Array(k.checkpoint_id))) continue;   // the same mark
         out.push({
           how: against.tick === k.tick ? 'two marks at one tick' : 'two chains from one parent',
           tick: k.tick,
-          stored: against.bytes,
+          stored: new Uint8Array(against.bytes),
           offered,
           seenMs: k.seen_ms,
         });
@@ -1901,6 +1893,38 @@ export class Round {
         stored: a, offered: b, seenMs: r.seen_ms, receipted: r.receipted === 1 });
     }
     return out.sort((a, b) => a.tick - b.tick);
+  }
+
+  /**
+   * THE ENTRY'S STORED MARK CHAIN, INDEXED BY TICK AND BY PARENT (kanban #3741, a gap in #3057): equivocation() decoded every
+   * checkpoint row of the entry and scanned the whole chain twice per kept offered mark on every call - GET /equivocation of a
+   * run marked at every tick (10,800 marks) with 64 refused stale-head marks held the seat's thread ~140 ms per public request,
+   * 40 strangers' GETs over 5 s. The chain is decoded once and kept until it changes. Its rows are only ever added at the head
+   * (round.checkpoint) or dropped with the whole round (transcript-prune), and each mark names its parent's id, so the count
+   * and the head's tick and id pin the whole chain: any change moves them and the chain is read again. The answer is the same
+   * as the old scans: the mark at the tick (one per tick), else the lowest-tick mark naming the same parent.
+   */
+  #markChain(roundIdBytes, entryIdBytes) {
+    const key = toHex(roundIdBytes) + toHex(entryIdBytes);
+    const n = this.db.prepare('SELECT COUNT(*) n FROM checkpoints WHERE round_id = ? AND entry_id = ?').get(roundIdBytes, entryIdBytes).n;
+    const head = this.checkpointHead(roundIdBytes, entryIdBytes);
+    const stamp = `${n}:${head.tick}:${toHex(head.id)}`;
+    const had = this.#markChains.get(key);
+    if (had && had.stamp === stamp) { this.#markChains.delete(key); this.#markChains.set(key, had); return had; }
+    const byTick = new Map(), byParent = new Map();
+    for (const r of this.db.prepare(
+      'SELECT tick, checkpoint_id, bytes FROM checkpoints WHERE round_id = ? AND entry_id = ? ORDER BY tick')
+      .all(roundIdBytes, entryIdBytes)) {
+      const bytes = new Uint8Array(r.bytes);
+      const c = { tick: r.tick, id: new Uint8Array(r.checkpoint_id), bytes };
+      byTick.set(r.tick, c);
+      const parent = toHex(decodeCheckpoint(splitSigned(bytes).body).previousHash);
+      if (!byParent.has(parent)) byParent.set(parent, c);
+    }
+    const chain = { stamp, byTick, byParent };
+    this.#markChains.delete(key); this.#markChains.set(key, chain);
+    while (this.#markChains.size > Round.MARK_CHAINS_KEEP) this.#markChains.delete(this.#markChains.keys().next().value);
+    return chain;
   }
 
   /**
