@@ -63,16 +63,33 @@ export const dialConnect = () => ({ lookup: guardedLookup });
 
 // INSTALLED ONCE, AS THE PROCESS'S OWN DISPATCHER: Node's fetch and WebSocket read it at every call. Reading globalThis.WebSocket loads
 // Node's undici and makes its Agent, whose class makes ours (no undici package is shipped).
-const SYM = Symbol.for('undici.globalDispatcher.1');
+// WHERE NODE KEEPS IT (kanban #3539): Node 24's undici (7.x) reads 'undici.globalDispatcher.1' and puts the same Agent under '.2' too;
+// Node 26's (8.x) reads '.2' and keeps under '.1' only a Dispatcher1Wrapper of that Agent for older undici copies - a wrapper whose class
+// takes a dispatcher, not Agent options ("Argument dispatcher must implement dispatch"). So the Agent class is taken from '.2' when there
+// is one, and the guarded Agent is put where the old one was: in both slots when they held the same Agent, under '.2' with a new wrapper
+// of it under '.1' when '.1' was a wrapper.
+const SYM1 = Symbol.for('undici.globalDispatcher.1');
+const SYM2 = Symbol.for('undici.globalDispatcher.2');
+/** The Agent Node's own fetch dispatches through (undici 8 under '.2', undici 7 under '.1'), or null before undici is loaded. */
+export function nativeGlobalAgent() { return globalThis[SYM2] || globalThis[SYM1] || null; }
+/** True when the dispatcher Node's fetch reads is this module's guarded Agent. */
+export function dialGuardInstalled() { const g = nativeGlobalAgent(); return !!(g && g.arenaDialGuard); }
 function install() {
   try {
-    if (globalThis[SYM] && globalThis[SYM].arenaDialGuard) return;
+    if (dialGuardInstalled()) return;
     void globalThis.fetch; void globalThis.WebSocket;
-    const g = globalThis[SYM];
+    const g1 = globalThis[SYM1], g2 = globalThis[SYM2], g = g2 || g1;
     if (!g || typeof g.constructor !== 'function') return;
     const agent = new g.constructor({ connect: dialConnect() });
     agent.arenaDialGuard = true;
-    globalThis[SYM] = agent;
+    if (g2 && g1 && g1 !== g2) {
+      globalThis[SYM2] = agent;
+      try { const w = new g1.constructor(agent); w.arenaDialGuard = true; globalThis[SYM1] = w; }
+      catch (e) { console.error(`[dial-guard] legacy dispatcher slot not replaced: ${e.message}`); }
+    } else {
+      if (g2) globalThis[SYM2] = agent;
+      globalThis[SYM1] = agent;
+    }
   } catch (e) { console.error(`[dial-guard] not installed: ${e.message}`); }
 }
 install();
