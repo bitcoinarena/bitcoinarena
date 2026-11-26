@@ -11,7 +11,7 @@ import React from 'react';
 import { NeedsPanel, ordered } from './NeedsPanel.jsx';
 import { CopyButton } from '../design/components.jsx';
 
-export const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['rounds', 'Rounds'], ['bond', 'Bond'], ['services', 'Services'], ['apps', 'Apps'], ['release', 'Updates'],
+export const SECTIONS = [['overview', 'Overview'], ['roles', 'Roles'], ['rounds', 'Rounds'], ['bond', 'Bond'], ['services', 'Services'], ['check', 'Check my node'], ['apps', 'Apps'], ['release', 'Updates'],
   ['money', 'Donations'], ['referrer', 'Referrer'], ['emergency', 'Emergency code'], ['leave', 'Leave'], ['developer', 'Developer'], ['feedback', 'Feedback'], ['login', 'Your login']];
 const HOW = { words: 'your 24 words', nsec: 'Nostr (nsec)', extension: 'Nostr (extension)', bunker: 'Nostr (remote signer)' };
 /** a place a panel is drawn into: React draws it empty and never touches what the page puts in it */
@@ -83,6 +83,8 @@ export class OwnerArea extends React.Component {
             <details className="more"><summary>How this node is drawn (details)</summary><Place id="standing" /></details></>)}
           {sec('services', <><h2>Services</h2>
             <h3 className="sh">Address</h3><Place id="address" /><Place id="services" /></>)}
+          {/* CHECK MY NODE (kanban #3798): drawn by ReachCheckPanel */}
+          {sec('check', <><h2>Check my node</h2><Place id="reach-check" /></>)}
           {sec('apps', <><h2>Apps</h2>
             <div className="card" id="store"><h3>On this node</h3><Place id="installed" className={null} /><h3>Found on the network</h3><Place id="netfound" className={null} /></div>
             <h3 className="sh">Network</h3><div className="card" id="nets">
