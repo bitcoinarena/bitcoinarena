@@ -123,12 +123,50 @@ export function createOpr(o = {}) {
   // queue without end, and the minute caps let 15 calls a minute per caller address and 150 for all in - one stranger address's 15 POST /x queued
   // 45 s, every honest POST /x waited behind them, and so did the tick at list time (no list, no round closed or made). Every lookup is counted
   // while it waits or runs: POST /x is refused (429) while its caller address has xInFlightPerCaller waiting or the service xInFlightMost
+  // A FAIR SHARE, NOT FIRST COME (kanban #3735, audit opr a8-1-3): five stranger addresses that each kept one POST /x in flight held every slot,
+  // and every honest X check was refused. The lookups now wait in a queue of the service's own and go to the X client one at a time (it answers one
+  // per 3 s anyway), round-robin by network (IPv6 /48, IPv4 /24: the network served longest ago next). The bounds stay: xInFlightPerCaller per
+  // caller address, xInFlightMost in all. When all are taken, a caller whose network holds at least two fewer places than the network holding the
+  // most takes that network's newest waiting place (that one is answered the same 429 and may try again) - so one network never holds more than
+  // its share while others wait, and no place moves back and forth. The tick's own re-checks (no caller) always get in and go first
   let xBusy = 0;
-  const xBusyBy = new Map();
-  const xLookup = xLookup0 && (async (name, ck = null) => {
-    xBusy++; if (ck) xBusyBy.set(ck, (xBusyBy.get(ck) || 0) + 1);
-    try { return await xLookup0(name); } finally { xBusy--; if (ck) { const n = xBusyBy.get(ck) - 1; if (n > 0) xBusyBy.set(ck, n); else xBusyBy.delete(ck); } }
-  });
+  const xBusyBy = new Map(), xNetBusy = new Map(), xServed = new Map(), xWait = [];
+  let xRunning = false, xSeq = 0;
+  const bump = (m, k, d) => { const n = (m.get(k) || 0) + d; if (n > 0) m.set(k, n); else m.delete(k); };
+  const xNetOf = (ck) => { if (!ck) return null; if (!ck.startsWith('ip:')) return ck; const ik = ck.slice(3); return ipNetsOf(ik)[0] || ik; };
+  const xDone = (e) => { xBusy--; if (e.ck) { bump(xBusyBy, e.ck, -1); bump(xNetBusy, e.net, -1); } };
+  const xNext = () => {
+    if (xRunning || !xWait.length) return;
+    let i = xWait.findIndex((e) => !e.ck);   // the tick's re-checks first
+    if (i < 0) {
+      i = 0;
+      for (let k = 1; k < xWait.length; k++) if ((xServed.get(xWait[k].net) ?? -1) < (xServed.get(xWait[i].net) ?? -1)) i = k;
+    }
+    const [e] = xWait.splice(i, 1);
+    if (e.net) xServed.set(e.net, ++xSeq);
+    xRunning = true;
+    Promise.resolve().then(() => xLookup0(e.name)).then(e.ok, e.no).finally(() => { xRunning = false; xDone(e); xNext(); });
+  };
+  /** Room for one more counted lookup of caller ck: true, false (refused), or a waiting place taken from a fuller network (it is answered evicted). */
+  const xRoom = (ck) => {
+    if ((xBusyBy.get(ck) || 0) >= cfg.xInFlightPerCaller) return false;
+    if (xBusy < cfg.xInFlightMost) return true;
+    const net = xNetOf(ck), mine = xNetBusy.get(net) || 0;
+    let take = -1;
+    for (let k = xWait.length - 1; k >= 0; k--) {
+      const e = xWait[k];
+      if (e.ck && e.net !== net && (xNetBusy.get(e.net) || 0) >= mine + 2 && (take < 0 || (xNetBusy.get(e.net) || 0) > (xNetBusy.get(xWait[take].net) || 0))) take = k;
+    }
+    if (take < 0) return false;
+    const [e] = xWait.splice(take, 1);
+    xDone(e); e.ok({ evicted: true });
+    return true;
+  };
+  const xLookup = xLookup0 && ((name, ck = null) => new Promise((ok, no) => {
+    const e = { name, ck, net: xNetOf(ck), ok, no };
+    xBusy++; if (ck) { bump(xBusyBy, ck, 1); bump(xNetBusy, e.net, 1); }
+    xWait.push(e); xNext();
+  }));
   const db = new DatabaseSync(o.dbPath || ':memory:');
   db.exec(`PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL; PRAGMA busy_timeout = 5000;
     CREATE TABLE IF NOT EXISTS rounds (id TEXT PRIMARY KEY, num INTEGER NOT NULL UNIQUE, test INTEGER NOT NULL, day TEXT, chart_day TEXT NOT NULL,
@@ -788,10 +826,12 @@ export function createOpr(o = {}) {
     if (last.n >= X_CHECKS_PER_HOUR) return { ok: false, code: 429, why: 'Too many checks - try again in an hour' };
     const ck = checkKeyOf(player, ip);
     if (checkCapped('x_checks', player, ck, t, cfg.xChecksPerMinAll, cfg.xChecksPerMinNet)) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
-    if ((xBusyBy.get(ck) || 0) >= cfg.xInFlightPerCaller || xBusy >= cfg.xInFlightMost) return { ok: false, code: 429, why: 'X is being asked for others right now - try again in a few seconds' };   // kanban #3597
+    const busy = { ok: false, code: 429, why: 'X is being asked for others right now - try again in a few seconds' };
+    if (!xRoom(ck)) return busy;   // kanban #3597, #3735: a fair share of the lookups in flight
     q('INSERT INTO x_checks (player, at_ms, ip_key) VALUES (?, ?, ?)').run(player, t, ck);
     let a;
     try { a = await xLookup(name, ck); } catch (e) { a = { userId: null, why: String(e && e.message || e) }; }
+    if (a && a.evicted) return busy;   // kanban #3735: its waiting place went to a caller of an emptier network before X was asked
     if (a && !a.userId && /no such X account/i.test(String(a.why || ''))) return { ok: false, code: 404, why: 'no such X account', username: name };
     if (!a || !a.userId) { log(`x check for ${player.slice(0, 8)} not answered: ${a && a.why}`); return { ok: false, code: 503, why: 'X could not be checked right now - try again in a minute' }; }
     const userId = String(a.userId), username = String(a.username || name).replace(/^@/, '');
