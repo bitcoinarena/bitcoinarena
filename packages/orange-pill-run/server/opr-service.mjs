@@ -232,6 +232,13 @@ export function createOpr(o = {}) {
   for (const col of ['near_rep TEXT', 'presses_n INTEGER']) { try { db.exec(`ALTER TABLE attempts ADD COLUMN ${col}`); } catch { /* there already */ } }
   db.exec('CREATE INDEX IF NOT EXISTS attempts_near ON attempts (round, near_rep, presses_n); CREATE INDEX IF NOT EXISTS attempts_by_player ON attempts (player, created_ms);');
   const q = (sql) => db.prepare(sql);
+  // THE STORE STATE THE KEPT PUBLIC ANSWERS ARE STAMPED WITH (kanban #3737, audit opr a8-1-2): SQLite's total_changes() moved on every valid
+  // sign-in (its auth_seen row) and every wallet or X ask (ln_checks, x_checks), none of which is on any board - so a stranger's free signed
+  // GET /me before each unsigned GET /board rebuilt the board every time, as before #3354. Those bookkeeping writes go through sideRun and are
+  // taken off: storeState() moves only with a write the public answers may read
+  let sideChanges = 0;
+  const sideRun = (sql, ...args) => { const r = q(sql).run(...args); sideChanges += Number(r.changes) || 0; return r; };
+  const storeState = () => q('SELECT total_changes() AS n').get().n - sideChanges;
   const roundRow = (id) => q('SELECT * FROM rounds WHERE id = ?').get(String(id));
   const levels = new Map();   // round id -> built level
   const levelOf = (r) => { let L = levels.get(r.id); if (!L) { L = sim.buildLevel(J(r.candles), J(r.seed), r.game_version); levels.set(r.id, L); } return L; };
@@ -668,7 +675,7 @@ export function createOpr(o = {}) {
     if (last != null && t - last < LN_CHECK_GAP_MS) return { ok: false, code: 429, why: 'One check every few seconds - try again in a moment' };
     const ck = checkKeyOf(player, ip);
     if (checkCapped('ln_checks', player, ck, t, cfg.lnChecksPerMinAll, cfg.lnChecksPerMinNet)) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
-    q('INSERT INTO ln_checks (player, at_ms, ip_key) VALUES (?, ?, ?)').run(player, t, ck);
+    sideRun('INSERT INTO ln_checks (player, at_ms, ip_key) VALUES (?, ?, ?)', player, t, ck);
     let c;
     try { c = await lnCheck(s.address); } catch { c = { ok: false, why: 'That wallet did not answer' }; }
     if (!c || !c.ok) { log(`ln address of ${player.slice(0, 8)} not kept: ${c && c.why}`); return { ok: false, code: 400, why: String((c && c.why) || 'That wallet did not answer').slice(0, 80) }; }
@@ -688,7 +695,7 @@ export function createOpr(o = {}) {
   // this one (read only - never changed by a caller)
   const bestKept = new Map(), BEST_KEPT_MOST = 64;
   function keptBoard(round) {
-    const n = q('SELECT total_changes() AS n').get().n, k = bestKept.get(round);
+    const n = storeState(), k = bestKept.get(round);   // kanban #3737: bookkeeping writes left out
     if (k && k.n === n) return k;
     const board = boardOf(round), v = { n, board, ids: new Set(board.map((b) => b.attempt)) };
     if (bestKept.size >= BEST_KEPT_MOST) bestKept.clear();
@@ -828,7 +835,7 @@ export function createOpr(o = {}) {
     if (checkCapped('x_checks', player, ck, t, cfg.xChecksPerMinAll, cfg.xChecksPerMinNet)) return { ok: false, code: 429, why: 'Too many checks right now - try again in a minute' };
     const busy = { ok: false, code: 429, why: 'X is being asked for others right now - try again in a few seconds' };
     if (!xRoom(ck)) return busy;   // kanban #3597, #3735: a fair share of the lookups in flight
-    q('INSERT INTO x_checks (player, at_ms, ip_key) VALUES (?, ?, ?)').run(player, t, ck);
+    sideRun('INSERT INTO x_checks (player, at_ms, ip_key) VALUES (?, ?, ?)', player, t, ck);
     let a;
     try { a = await xLookup(name, ck); } catch (e) { a = { userId: null, why: String(e && e.message || e) }; }
     if (a && a.evicted) return busy;   // kanban #3735: its waiting place went to a caller of an emptier network before X was asked
@@ -1145,8 +1152,8 @@ export function createOpr(o = {}) {
         followJob = recheckRound(r).then((res) => { if (res.changed.length) refreshLists(r.id); }).catch((e) => log(`follow re-check of ${r.id} failed: ${e.message}`)).finally(() => { followJob = null; });
         break;
       }
-      q('DELETE FROM auth_seen WHERE at_ms < ?').run(now() - 5 * MIN_MS);
-      q('DELETE FROM ln_checks WHERE at_ms < ?').run(now() - 60 * MIN_MS);
+      sideRun('DELETE FROM auth_seen WHERE at_ms < ?', now() - 5 * MIN_MS);
+      sideRun('DELETE FROM ln_checks WHERE at_ms < ?', now() - 60 * MIN_MS);
     } finally { ticking = false; }
   }
 
@@ -1177,7 +1184,7 @@ export function createOpr(o = {}) {
   }
 
   // ---------- HTTP ----------
-  const seenAuth = (id) => { try { q('INSERT INTO auth_seen (id, at_ms) VALUES (?, ?)').run(id, now()); return false; } catch { return true; } };
+  const seenAuth = (id) => { try { sideRun('INSERT INTO auth_seen (id, at_ms) VALUES (?, ?)', id, now()); return false; } catch { return true; } };
   /** WHO ASKS (NIP-98, the feedback sign-in's kind 27235): signed within a minute, naming this URL and method, the body's hash on a POST, used once. */
   function authOf(req, path, body) {
     let e = null;
@@ -1279,7 +1286,7 @@ export function createOpr(o = {}) {
         // rebuild the board as before #3354 and push the honest answers out of the kept map
         const arg = path === '/board' ? url.searchParams.get('round') : path === '/round' ? url.searchParams.get('id') : null;
         const rr = path === '/rounds' ? null : arg ? roundRow(arg) : currentRound();
-        const stamp = `${q('SELECT total_changes() AS n').get().n}|${Math.floor(now() / 1000)}`, k = `${path}|${rr ? rr.id : '-'}`;
+        const stamp = `${storeState()}|${Math.floor(now() / 1000)}`, k = `${path}|${rr ? rr.id : '-'}`;
         const kept = publicKept.get(k);
         if (kept && kept.stamp === stamp) { res.writeHead(kept.code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(kept.body); return; }
         const sendKept = (code, body) => { const b = JSON.stringify(body); if (publicKept.size >= PUBLIC_KEPT_MOST) publicKept.clear(); publicKept.set(k, { stamp, code, body: b }); res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(b); };
