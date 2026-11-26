@@ -60,6 +60,7 @@ import { handLock, postLockClaim } from './page-lock.js';
 import { invoiceQrSvg } from './qr.js';
 import { decodeGhost } from '../../arena-protocol/src/ghost.js';
 import { TYPE_GHOST } from '../../arena-protocol/src/constants.js';
+import { playOwnerDigest } from '../../arena-protocol/src/play-owner.js';   // kanban #3799
 import { discover } from './directory.js';
 import { readWithOneRetry } from './reread.js';
 import { NO_SHARES } from '../../arena-protocol/src/handout.js';
@@ -296,6 +297,8 @@ const CLOSED = 'closed: ';
 // an open socket had its batch held and asked again for the rest of the run - no resume ran, the socket never closed - and the
 // peers never got it. Only this client's own close handler and no-socket paths say CLOSED; a node's text that starts with it is
 // that node's refusal and reaches the callers as one.
+/** How long a peer seat's answer to a socket-binding step is waited for (kanban #3799). */
+const BIND_WITHIN_MS = 5000;
 const nodeSaid = (text) => (text.startsWith(CLOSED) ? `error ${text}` : text);
 
 /**
@@ -817,6 +820,34 @@ export class Client {
     return { lock: this.lockHanded, feeLock: this.feeLockHanded };
   }
 
+  /**
+   * A /play SOCKET SHOWN TO BE THE PLAYER'S (kanban #3799, follow-up of #3742): a seat keeps a Void learned on a socket as the player's
+   * only when the entry's session key signed that socket's nonce (playOwnerDigest over the seat's key, the nonce and the entry id) - every
+   * other copy of the same public bytes is 'play-unbound' and waits for the full reach. So once the client knows its entry, each socket asks
+   * `nonce`, signs it with the session key and sends `player <entry> <signature>`, once per socket and entry. A seat on an older build
+   * answers 'error unknown text message' to both, which changes nothing; a failure is never fatal to the run.
+   */
+  #bindSocket(sock, say) {
+    const w = this.where;
+    if (!w || !sock) return null;
+    if (!this.boundSockets) this.boundSockets = new WeakMap();
+    const eh = toHex(w.entryId);
+    if (this.boundSockets.get(sock) === eh) return null;
+    this.boundSockets.set(sock, eh);
+    return (async () => {
+      try {
+        const a = String(await say('nonce'));
+        const m = /^nonce ([0-9a-f]{64}) ([0-9a-f]{64})$/.exec(a.trim());
+        if (!m) return false;
+        const sig = await this.sign(playOwnerDigest({ seatPubkey: fromHex(m[2]), nonce: fromHex(m[1]), entryId: w.entryId }));
+        const r = String(await say(`player ${eh} ${toHex(sig)}`));
+        const ok = r.trim() === `player ${eh}`;
+        if (!ok && this.boundSockets.get(sock) === eh) this.boundSockets.delete(sock);
+        return ok;
+      } catch { if (this.boundSockets.get(sock) === eh) this.boundSockets.delete(sock); return false; }
+    })();
+  }
+
   /** A socket to another committee node, for checkpoints only. */
   peerLink(base) {
     const had = this.peerLinks.get(base);
@@ -830,7 +861,7 @@ export class Client {
         const waiting = link.said.shift();
         if (waiting) waiting(typeof e.data === 'string' ? nodeSaid(e.data) : new Uint8Array(e.data));
       });
-      sock.addEventListener('open', () => { link.sock = sock; link.opening = null; resolve(link); });
+      sock.addEventListener('open', () => { link.sock = sock; link.opening = null; resolve(link); this.#bindSocket(sock, (m) => this.sendPeer(base, m, BIND_WITHIN_MS)); });
       sock.addEventListener('error', () => { link.opening = null; resolve(link); });
       sock.addEventListener('close', () => {
         const waiting = link.said; link.said = [];
@@ -1172,6 +1203,7 @@ export class Client {
         this.sock = sock;
         if (!this.ended) this.state = 'ready';
         resolve(this);
+        this.#bindSocket(sock, (m) => this.send(m));   // kanban #3799: show the seat this socket is the player's
       });
 
       // A DROPPED SOCKET IS NOT AN ERROR, it is the normal thing that happens
@@ -2335,6 +2367,9 @@ export class Client {
     this.nodeFault = null;
     this.homeFault = null;
     this.where = { roundId, entryId };
+    // kanban #3799: every socket already open is bound to this entry too (a socket opened before the round was set)
+    if (this.sock) this.#bindSocket(this.sock, (m) => this.send(m));
+    for (const [base, link] of this.peerLinks) if (link && link.sock) this.#bindSocket(link.sock, (m) => this.sendPeer(base, m, BIND_WITHIN_MS));
     // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK: the round's tick it joined at, so its run ends with the round's.
     // An entry at tick 0 starts where it always did.
     const joinTick = this.joinedEntry && Number.isInteger(this.joinedEntry.joinTick) ? this.joinedEntry.joinTick : 0;
