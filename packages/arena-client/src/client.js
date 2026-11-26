@@ -541,6 +541,10 @@ export class Client {
     // saying the same thing five times, and 13C counts NODES.
     this.witnesses = new Map();
     this.batchHead = GENESIS;     // and the input chain's, which is a separate chain
+    // EVERY HEAD THE INPUT CHAIN TOOK, with the tick it reaches (kanban #3758): { through, id } in chain order, appended only
+    // where batchHead moves on (a batch the peers only might take is not here) and rebuilt from the served chain on resume.
+    // A mark names the one that reaches its tick - see `#inputHeadThrough`.
+    this.inputHeads = [];
     // WHETHER THIS CLIENT'S OWN INPUTS ARE LANDING. A run whose batches are
     // refused looks exactly like a healthy one from outside - the socket is
     // up and the player is driving - so the fact is counted and the node's
@@ -1035,6 +1039,17 @@ export class Client {
   }
 
   /** Has every committee node answered that it holds this run's inputs before `tick`? */
+  /**
+   * THE INPUT HEAD A MARK AT `tick` NAMES (kanban #3758): the first batch of this client's chain that reaches the tick, so the
+   * replay that mark commits to runs through every input before it (#3567 ends a close there). Not the newest head: a batch
+   * past the mark may not have reached a peer yet, and a seat refuses a mark naming inputs it has not seen. The mark waits until
+   * the peers hold every tick before it, so they hold this one. No batch yet (a mark at the join tick): GENESIS.
+   */
+  #inputHeadThrough(tick) {
+    for (const h of this.inputHeads) if (h.through >= tick) return h.id;
+    return this.inputHeads.length ? this.inputHeads[this.inputHeads.length - 1].id : GENESIS;
+  }
+
   #holdsThrough(tick) {
     if (this.nextTick < tick) return false;
     for (const base of this.peers) if (this.peerFeed(base).ticks < tick) return false;
@@ -1603,6 +1618,7 @@ export class Client {
           && await this.#carriedByPeers(bytes, b.firstTick + ticks.length)) {
         this.batchHead = batchId(b);
         this.nextTick = b.firstTick + ticks.length;
+        this.inputHeads.push({ through: this.nextTick, id: this.batchHead });
         this.homeRefusals = (this.homeRefusals || 0) + 1;
         const why = typeof answer === 'string' ? answer : 'the node answered the batch with a binary frame, not a tick count';
         this.homeRefusedWhy = why;
@@ -1613,6 +1629,7 @@ export class Client {
     }
     this.batchHead = batchId(b);
     this.nextTick = b.firstTick + ticks.length;
+    this.inputHeads.push({ through: this.nextTick, id: this.batchHead });
     this.homeRefusedWhy = null;
     // AND THE SAME BYTES GO TO EVERY OTHER COMMITTEE NODE, in the order this
     // node took them - see `pumpPeers`. Every batch is KEPT, peers or not: a
@@ -2007,6 +2024,7 @@ export class Client {
     const last = t.batches[t.batches.length - 1];
     this.batchHead = last ? batchId(last) : GENESIS;
     this.nextTick = last ? batchTicks(last).at(-1) + 1 : entry.joinTick;
+    { let through = entry.joinTick; this.inputHeads = t.batches.map((b) => { const at = batchTicks(b); if (at.length) through = at.at(-1) + 1; return { through, id: batchId(b) }; }); }
 
     // THE NODE MAY ALREADY HOLD WHAT THIS CLIENT STILL HOLDS: a batch it took
     // whose answer never arrived. Those words are published, so they leave the
@@ -2337,6 +2355,7 @@ export class Client {
     this.marksRefused = 0;
     this.marksRefusedWhy = null;
     this.published = [];
+    this.inputHeads = [];
     this.homeHolds = 0;
     this.peerFeeds = new Map();
     this.batchesInterrupted = 0;
@@ -2423,7 +2442,7 @@ export class Client {
       let mark = null;
       // THE RUN'S FINAL MARK (ruled 2026-09-23): sent to the nodes that already hold its inputs, not held for every
       // peer - it has no successor, so no second child of its parent can follow it. See `markNow` and `#catchUpFinal`.
-      if (!this.ended && stateHash) { try { mark = await this.markNow(stateHash, tick, GENESIS, { final: true }); } catch { mark = null; } }
+      if (!this.ended && stateHash) { try { mark = await this.markNow(stateHash, tick, null, { final: true }); } catch { mark = null; } }
       const unsent = this.hold.length;
       if (!this.ended) {
         this.ended = true;
@@ -2801,7 +2820,7 @@ export class Client {
    * opposite and are never dropped while there is room: they are the
    * transcript.
    */
-  markNow(stateHash, tick, inputChainHash = GENESIS, { final = false } = {}) {
+  markNow(stateHash, tick, inputChainHash = null, { final = false } = {}) {
     // A PEER WHOSE FEED STOPPED ON A REFUSAL IS TRIED AGAIN once a second,
     // here, so a peer that was briefly down catches up without a batch of its own.
     this.pumpPeers();
@@ -2896,8 +2915,11 @@ export class Client {
             };
           }
         }
+        // THE INPUTS IT COMES FROM, NAMED (kanban #3758, ruled 2026-11-25: the client sends the real head): a mark naming GENESIS commits
+        // to no batch, and since #3567 a seat replays a close only through the inputs the last carried mark committed to - a run of GENESIS
+        // marks was cut back to its join tick and no seat could sign it. Read here, after the wait, so it is a head the peers now hold.
         const r = await this.mark(stateHash, {
-          roundId: where.roundId, entryId: where.entryId, tick, inputChainHash, final,
+          roundId: where.roundId, entryId: where.entryId, tick, inputChainHash: inputChainHash || this.#inputHeadThrough(tick), final,
         });
         // A MARK NEITHER CARRIED NOR PENDING, AND REFUSED SOMEWHERE, MAY STILL BE THE SEATS' HEAD. Measured
         // live: all 7 seats stored and receipted a mark (testnet4 ea63aa94 @1620; the control on 0.0.2815, entry 0b68a08f,
