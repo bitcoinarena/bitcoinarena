@@ -90,41 +90,102 @@ export function bodyBudget({ total, perAddress = Math.floor(total / 2), reserve 
  * `watch(ws, socket, address)` right after handleUpgrade's callback got `ws`: setSocket has run, so the counter is put in front
  * of ws's own data listener (the upgrade's `head` was unshifted onto the socket there and comes as a data event, counted too).
  */
-export function messageBudget({ total, perAddress = Math.floor(total / 2), reserve = 4 * 1024 * 1024, smallMost = 256 * 1024, messageMs = 15000 } = {}) {
+export function messageBudget({ total, perAddress = Math.floor(total / 2), reserve = 4 * 1024 * 1024, smallMost = 256 * 1024, messageMs = 15000, evictOldest = false } = {}) {
   let main = 0; let spare = 0;
   const mainBy = new Map(); const spareBy = new Map();
+  // THE OLDEST UNFINISHED MESSAGE GOES, NOT THE NEWCOMER (kanban #3734, audit nostr a8-1-1, `evictOldest`): with one first-come pool, a stranger
+  // whose sockets each hold part of a frame (renewed every messageMs) kept the budget and the reserve full, and every honest socket that sent a
+  // message in more than one read was ended at its first bytes - behind the tunnel every peer has one address, so the per-address shares do
+  // not help. With `evictOldest` a message that finds no room ends the sockets whose unfinished message began first (of the same address when
+  // that address's share is what is full) until it fits; only when none began before it is it ended itself. An honest message is in flight for
+  // a moment, a message held to pin memory is old: to cut off an honest one the stranger has to renew the whole budget in that moment.
+  // `open` holds the sockets with an unfinished message, in the order their messages began (Map insertion order)
+  const open = new Map();
   const add = (m, k, n) => { const v = (m.get(k) || 0) + n; if (v > 0) m.set(k, v); else m.delete(k); };
   const plain = (a) => { const s = String(a || ''); return s.startsWith('::ffff:') ? s.slice(7) : s; };
 
   // `live()` (kanban #3188): false once `ws` no longer parses what `socket` reads (a dialled socket closing after a refused frame drains and drops it)
+  //
+  // WHAT IS HELD IS READ OFF THE FRAMES, NOT OFF WS'S EVENTS (kanban #3733, audit nostr a8-1-2): ws parses a read synchronously, so one read that
+  // holds a whole small message and then the start of a big frame was counted, and then all of it was given back - and the deadline cleared - on
+  // the small message's 'message': the unfinished frame behind it was held with no charge and no deadline. Now the counter walks the frame headers
+  // of every read itself (2-14 header bytes, then the payload length they name) and charges exactly the bytes past the last whole message: the
+  // open message's frames so far, a control frame not yet whole, a header not yet whole. A message that ends inside a read gives its bytes back,
+  // and if the read goes on into the next message, that message's deadline starts there.
   const watch = (ws, socket, address, { live = null } = {}) => {
     const who = plain(address !== undefined ? address : socket && socket.remoteAddress);
-    let pending = 0; let inMain = 0; let inSpare = 0; let timer = null; let ended = false;
-    const release = () => {
-      main -= inMain; add(mainBy, who, -inMain); spare -= inSpare; add(spareBy, who, -inSpare); inMain = 0; inSpare = 0; pending = 0;
-      if (timer) { clearTimeout(timer); timer = null; }
-    };
-    const end = () => { if (ended) return; ended = true; release(); try { ws.terminate(); } catch { /* gone */ } try { socket.destroy(); } catch { /* gone */ } };
-    const take = (n) => {
-      if (ended || n <= 0) return;
-      if (pending === 0 && !timer) { timer = setTimeout(end, messageMs); if (timer.unref) timer.unref(); }
-      pending += n;
-      if (main + n <= total && (mainBy.get(who) || 0) + n <= perAddress) { main += n; inMain += n; add(mainBy, who, n); return; }
-      if (pending <= smallMost && spare + n <= reserve && (spareBy.get(who) || 0) + n <= Math.floor(reserve / 2)) { spare += n; inSpare += n; add(spareBy, who, n); return; }
-      end();
-    };
-    // a control frame (at most 125 bytes, masked from a client: 2 + 4 header bytes) is no part of a message
-    const giveBack = (data) => {
-      if (ended) return;
-      let n = 6 + (data ? data.length : 0);
+    let inMain = 0; let inSpare = 0; let timer = null; let ended = false;
+    // the frame reader: `head` the header bytes so far, `left` the payload bytes still to come of the frame being read (-1: reading a header)
+    const head = []; let left = -1; let control = false; let fin = false; let message = 0; let controlBytes = 0;
+    const charged = () => inMain + inSpare;
+    const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const arm = () => { clear(); timer = setTimeout(end, messageMs); if (timer.unref) timer.unref(); open.delete(me); open.set(me, me); };
+    const giveBack = (n) => {
       const fromSpare = Math.min(n, inSpare); inSpare -= fromSpare; spare -= fromSpare; add(spareBy, who, -fromSpare); n -= fromSpare;
       const fromMain = Math.min(n, inMain); inMain -= fromMain; main -= fromMain; add(mainBy, who, -fromMain);
-      pending = Math.max(0, pending - 6 - (data ? data.length : 0));
-      if (pending === 0) release();
     };
-    socket.prependListener('data', (c) => { if (!live || live()) take(c.length); });
-    ws.on('message', () => { if (!ended) release(); });
-    ws.on('ping', giveBack); ws.on('pong', giveBack);
+    const me = { who, end: () => { if (ended) release(); else end(); } };
+    const release = () => { giveBack(charged()); clear(); open.delete(me); };
+    function end() { if (ended) return; ended = true; release(); try { ws.terminate(); } catch { /* gone */ } try { socket.destroy(); } catch { /* gone */ } }
+    // charge (or give back) the difference to `held`, the bytes of the open message and of a frame not yet whole
+    const hold = (held) => {
+      const n = held - charged();
+      if (n < 0) return giveBack(-n);
+      if (n === 0) return;
+      for (;;) {
+        if (main + n <= total && (mainBy.get(who) || 0) + n <= perAddress) { main += n; inMain += n; add(mainBy, who, n); return; }
+        if (held <= smallMost && spare + n <= reserve && (spareBy.get(who) || 0) + n <= Math.floor(reserve / 2)) { spare += n; inSpare += n; add(spareBy, who, n); return; }
+        if (!evictOldest) break;
+        // only the address's own sockets free its share; only older messages go (`open` is in start order, so those before `me`)
+        const ownShare = main + n <= total;
+        let victim = null;
+        for (const other of open.keys()) {
+          if (other === me) break;
+          if (ownShare && other.who !== who) continue;
+          victim = other; break;
+        }
+        if (!victim) break;
+        victim.end();
+      }
+      end();
+    };
+    const frameDone = () => {
+      left = -1; head.length = 0;
+      if (control) { controlBytes = 0; return false; }
+      if (!fin) return false;
+      message = 0; return true;                      // a whole message: its bytes are no longer held
+    };
+    const read = (c) => {
+      let i = 0; let whole = false;
+      while (i < c.length) {
+        if (left < 0) {
+          head.push(c[i++]);
+          if (head.length < 2) continue;
+          const len7 = head[1] & 0x7f;
+          const need = 2 + (len7 === 126 ? 2 : len7 === 127 ? 8 : 0) + (head[1] & 0x80 ? 4 : 0);
+          if (head.length < need) continue;
+          const b = Buffer.from(head);
+          left = len7 === 126 ? b.readUInt16BE(2) : len7 === 127 ? Number(b.readBigUInt64BE(2)) : len7;
+          fin = (head[0] & 0x80) !== 0; control = (head[0] & 0x08) !== 0;
+          if (control) controlBytes = need; else message += need;
+          head.length = 0;
+          if (left === 0 && frameDone()) whole = true;
+          continue;
+        }
+        const n = Math.min(left, c.length - i); i += n; left -= n;
+        if (control) controlBytes += n; else message += n;
+        if (left === 0 && frameDone()) whole = true;
+      }
+      return whole;
+    };
+    socket.prependListener('data', (c) => {
+      if (ended || (live && !live())) return;
+      const whole = read(c);
+      const held = message + controlBytes + head.length;
+      if (held === 0) return release();
+      if (whole || !timer) arm();                  // a message's deadline runs from its first byte
+      hold(held);
+    });
     ws.on('close', () => { ended = true; release(); });
     socket.on('close', () => { ended = true; release(); });
   };
