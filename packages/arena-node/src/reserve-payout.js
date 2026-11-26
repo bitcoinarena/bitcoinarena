@@ -1092,7 +1092,21 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     const txid = rec.txid || (had && had.txid) || null;
     // THE ROWS THE STEP MAKES, kept in the same step: the change, a leaderboard's winners, a move's claim, a refund's return
     const rows = [];
-    if (txid && BigInt(rec.plan.changeMsat || 0) > 0n) rows.push(changeRowOf(rec.plan, txid));
+    if (txid && BigInt(rec.plan.changeMsat || 0) > 0n) {
+      // A NON-SIGNER BOOKS THE CHANGE THE FEDERATION HOLDS (kanban #3746, RULED 2026-11-26): a plan of made-up inputs only marks no real
+      // reserve spent, yet its change row was booked here - a phantom reserve row. A seat with no share of the key books the change only
+      // when the federation holds that output now; a change already spent by a later payout is no reserve anyway, and its own record marks
+      // it. The record itself is taken as before; a signer seat (planStands above) books as before
+      const row = changeRowOf(rec.plan, txid);
+      let keep = true;
+      if (!(g && g.signer)) {
+        const port = await portOf(rec.plan.federation);
+        if (!port) return refuse('this seat has no port into the federation: the payout\'s change is not booked yet', 503);
+        let s; try { s = await port.status(row.outpoint); } catch (e) { return refuse(`this seat cannot read the federation: ${e.message}`, 503); }
+        keep = !!(s && s.stored);
+      }
+      if (keep) rows.push(row);
+    }
     if (rec.state === PAYOUT.PAID && rec.plan.kind === 'leaderboard') rows.push(...winnerRowsOf(rec.plan, txid));
     if (rec.state === PAYOUT.CLAIMED) rows.push(claimRowOf(rec.plan, rec.claimTxid, rec.claimMsat));
     if (rec.state === PAYOUT.REFUNDED) {
