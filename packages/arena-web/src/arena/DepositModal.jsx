@@ -67,6 +67,7 @@ export class DepositModal extends React.Component {
   watcher(o) {
     return (d, final) => {
       if (o !== this.active || d.invoice !== this.state.invoice) return;
+      this.endedInvoice = d.invoice;   // kanban #3781: the faucet's later answer does not say over this end
       const again = o.restMsat === null ? ' Pick an amount to get a new one.' : '';
       if (final === 'Claimed') this.status(3, this.fromFaucet ? `${this.props.faucet.sats} sats from the faucet are now in your wallet.` : `Payment received! ${sats(d.amountMsat)} are now in your wallet.`, 'ok');
       else if (final === 'Expired') this.status(3, 'This invoice has expired and nothing was charged.' + again, 'fail');
@@ -99,7 +100,9 @@ export class DepositModal extends React.Component {
       if (mine !== this.token || this.gone) return;
       this.set({ invoice: d.invoice, invoiceText: d.invoice, want: BigInt(d.amountMsat) });
       await f.ask(d.invoice);
-      if (mine === this.token) this.status(2, `The faucet paid. Your ${f.sats} sats arrive in a few seconds …`, 'busy');
+      // AN END ALREADY SAID STAYS (kanban #3781, feedback #511): the invoice's wait can end before the faucet answers - "The faucet paid ... arrive
+      // in a few seconds" then stood over the wait's failure (or over the green line) for good
+      if (mine === this.token && this.endedInvoice !== d.invoice) this.status(2, `The faucet paid. Your ${f.sats} sats arrive in a few seconds …`, 'busy');
     } catch (e) {
       this.fromFaucet = false;
       if (mine === this.token) { this.set({ faucetBusy: false }); this.status(3, e && e.message ? e.message : String(e), 'fail'); }
