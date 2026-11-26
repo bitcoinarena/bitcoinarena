@@ -40,3 +40,21 @@ test('a8-3-1 one guardian\'s SENT whose plan puts a made-up input first marks no
   assert.equal(w.reserveRows.filter((r) => spent.has(r.outpoint)).length, 0, 'the federation\'s real, unspent reserve outputs read spent');
   assert.equal(phantom.length, 0, 'a change row the federation never held was booked');
 });
+
+// THE ALL-MADE-UP PLAN (kanban #3746, RULED 2026-11-26): no real reserve listed, so every input reads spent - the record may stand, but the
+// non-signer seat books no change the federation does not hold
+test('a8-3-1 ruling: a SENT whose plan lists only made-up inputs books no phantom change row at a non-signer seat', async () => {
+  const NON_SIGNER = 6;
+  const w = world({ more: (i) => (i === NON_SIGNER ? { guardians: () => new Map([[FED, { members: NODE_KEYS, key: KEY, needed: 5, signer: null, peers: [] }]]) } : {}) });
+  const real = await (async () => { const x = world(); await x.seats[0].api.round({ height: 500 }); return x.seats[0].api.stateOf(PROPOSAL).plan; })();
+  const pid = 'cd'.repeat(32);
+  const plan = { ...real, proposal: pid, nonce: toHex(nonceOf(pid, 0)), refunds: [{ outpoint: `${'ee'.repeat(32)}:0`, amountMsat: '900000000000' }], changeMsat: '500000000000' };
+  const api = w.seats[NON_SIGNER].api;
+  const payouts = api.payoutsOfRecord({ plan });
+  const built = await w.port.settle({ claimPk: KEY, claims: [], refunds: plan.refunds.map((x) => ({ outpoint: outpointOf(x.outpoint), amountMsat: BigInt(x.amountMsat) })), payouts, nonce: fromHex(plan.nonce) });
+  const rec = signedBy(SECRET_OF.get(NODE_KEYS[3]), { proposal: pid, planId: planIdOf(plan), federation: FED, state: PAYOUT.SENT, plan, txid: String(built.message) });
+  const got = await api.learn(rec);
+  const phantom = w.state.kept.filter((k) => k.seat === NON_SIGNER);
+  console.log(`FACTS a8-3-1 all made up: ${JSON.stringify({ ok: got.ok, kept: got.kept, why: got.why, phantomRows: phantom.map((k) => k.row) })}`);
+  assert.equal(phantom.length, 0, 'a change row the federation never held was booked');
+});
