@@ -32,6 +32,7 @@ import { lockFromClient } from './lock-result.js';
 import { feeLockPays } from '../../arena-protocol/src/lock-settlement.js';
 import { roundLocks, playerFor, sharesNeededFor, sourceKey } from './join.js';
 import { seatsOf, seatVoice, hostOf } from './seat-identity.js';
+import { bindsIdentity } from '../../arena-protocol/src/identity-proof.js';   // kanban #3800
 import { encodeRoundContract, decodeRoundContract, roundId, custodyFieldsAreValid, entryId } from '../../arena-protocol/src/contracts.js';
 import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
@@ -2740,8 +2741,9 @@ export const distinctSeats = (nodes) => {
 // not at all when they disagree. The threshold is capped by those seats, not by URLs.
 // `advertised` (kanban #3730): the addresses the census adverts name per key (seat-identity.js; by default the ones this page checked) - a
 // key proven elsewhere is a relay, not that seat.
-export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null, advertised } = {}) {
-  const seats = await seatsOf(nodes, { keys, verify, fetcher, advertised });
+// `bound` (kanban #3800): the round is of protocol 34+ - a URL proves a key only with a proof bound to its host (seatProofs sets it).
+export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null, advertised, bound = false } = {}) {
+  const seats = await seatsOf(nodes, { keys, verify, fetcher, advertised, bound });
   // EVERY SIGNER NODE AT ONCE (kanban #593)
   const asked = seats.flatMap((seat) => seat.urls.map((node) => ({ seat, node })));
   const answers = await Promise.all(asked.map(async ({ node }) => {
@@ -2794,7 +2796,7 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1
   return { ok: false, agreeing: 0, needed: need, why: `no seat holds an accepted settlement of this round yet (${said.join('; ')})` };
 }
 // WHAT A SEAT PROVES ITSELF AGAINST (kanban #3574): the round's node keys and the page's BIP-340 verify, for settlementOf's seatsOf
-const seatProofs = (round, curve) => ({ keys: Array.isArray(round && round.nodes) ? round.nodes : [],
+const seatProofs = (round, curve) => ({ keys: Array.isArray(round && round.nodes) ? round.nodes : [], bound: bindsIdentity(round && round.protocolVersion),   // kanban #3800
   verify: curve && typeof curve.verify === 'function' ? (sig, msg, key) => { try { return !!curve.verify(sig, msg, key); } catch { return false; } } : null });
 /** HOW MANY SEATS MUST AGREE ON A ROUND'S SETTLEMENT (kanban #1163): its settlement threshold, never more than the seats asked. */
 export const settlementAgreement = (round, nodes = []) => {

@@ -12480,6 +12480,52 @@ async function dealHandout({ preimage, signerNodes, roundId, playerPubkey,
   return { ok: true, handout, id: handoutId(handout) };
 }
 
+// ---- arena-protocol/src/identity-proof.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A SEAT'S KEY, PROVEN AT THE ADDRESS IT WAS ASKED AT (kanban #3800, RULED 2026-11-26 on the #3730 PR's open point; protocol 34).
+//
+// GET /identity?nonce=<fresh 32 bytes> answers the seat's BIP-340 signature over identityProofDigest(nonce) (kanban #2982/#3253). That digest
+// names only the nonce, so a box that passes the ask on to a round seat's public door hands back the seat's real signature, and the box's own
+// path "proves" the seat's key: one extra voice where the link does not name the real seat (the limit #3730 left, kanban #3773).
+//
+// So the seat also signs the address it was asked at: identityBoundDigest(nonce, at), `at` the Host of the request as the seat got it (host
+// and port as a URL's `host` spells them, lower case). The asker checks that `at` is the host it asked. A relay that reaches the seat by the
+// seat's own public name (a tunnel, a CDN: the name routes the request) gets a proof bound to the seat's host, never its own.
+//
+// What it cannot stop: a seat reachable on a raw address (an IP and port, no name in front) takes any Host a relay sends, and signs that.
+// The Host header is the only word of the address the seat has: X-Forwarded-Host is not read, because a relay sets it through every proxy.
+//
+// The answer keeps the unbound signature beside the bound one (rounds below 34 and older pages read it, as today); the page counts a key's
+// voice for a URL of a round of 34+ only with the bound proof (seat-identity.js `bound`), and rounds below 34 keep today's rule.
+
+
+
+const IDENTITY_BOUND_VERSION = 34;
+/** Whether a round of protocol version `v` counts a seat's voice for a URL only with a proof bound to that URL's host (kanban #3800). */
+const bindsIdentity = (v) => Number.isInteger(Number(v)) && Number(v) >= IDENTITY_BOUND_VERSION;
+
+/**
+ * A host as both sides spell it: lower case, the name without trailing dots, the port kept where one is named (a URL's `host`, a request's
+ * Host header). '' for nothing.
+ */
+function identityHostKey(host) {
+  const h = String(host ?? '').trim().toLowerCase();
+  if (!h) return '';
+  if (h.startsWith('[')) return h;                       // an IPv6 literal, [..] and an optional port, as it is
+  const m = /^(.*?)(:\d+)?$/.exec(h);
+  return m[1].replace(/\.+$/, '') + (m[2] || '');
+}
+
+/** The bound digest: the nonce (32 bytes, fixed, so the two parts cannot be shifted into each other) then the host key's UTF-8. */
+function identityBoundDigest(nonce, at) {
+  if (!(nonce instanceof Uint8Array) || nonce.length !== 32) throw new Error('an identity proof is over a 32-byte nonce');
+  const host = utf8Encode(identityHostKey(at));
+  const msg = new Uint8Array(32 + host.length);
+  msg.set(nonce, 0); msg.set(host, 32);
+  return taggedHash('ARENA/v1/NodeIdentityProofAt', msg);
+}
+
 // ---- arena-client/src/node-discovery.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -12614,6 +12660,7 @@ function mergeNodes(known, found) {
 
 
 
+
 /** The digest a seat signs at GET /identity?nonce= (the same as arena-node's identityProofDigest). */
 const identityProofDigest = (nonce) => taggedHash('ARENA/v1/NodeIdentityProof', nonce);
 
@@ -12638,10 +12685,27 @@ const PROVEN_KEYS = new Map(), PROVEN_KEYS_MAX = 2000;
 const forgetProofs = () => PROVEN_KEYS.clear();
 const proofNonce = () => { const n = new Uint8Array(32); globalThis.crypto.getRandomValues(n); return n; };
 
-/** The node key the seat at `base` proves over a fresh nonce (64 hex, lower case), or null. `verify(sig, msg, key)`: BIP-340. */
-async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, now = Date.now() } = {}) {
+// A PROOF BOUND TO THE ADDRESS ASKED (kanban #3800, RULED 2026-11-26, protocol 34): the seat signs, beside the nonce, the Host it was asked
+// at (`at`, `atSig`: arena-protocol identity-proof.js). With `bound` (a round of 34+, bindsIdentity) a URL proves a key only where `at` is
+// the URL's own host, or the host the page's alt route for it reaches (window.ARENA_VIA_ALT: the page's own routes, never the link's) - a
+// box that relays a seat's /identity gets the seat's host signed, not its own, so its path proves nothing. Without it: today's rule.
+const askedHosts = (base) => {
+  const out = new Set();
+  const add = (u) => { try { const h = identityHostKey(new URL(String(u)).host); if (h) out.add(h); } catch { /* not a URL */ } };
+  add(base);
+  const via = typeof globalThis.ARENA_VIA_ALT === 'function' ? globalThis.ARENA_VIA_ALT : null;
+  if (via) { try { add(via(String(base))); } catch { /* no route */ } }
+  return out;
+};
+
+/**
+ * The node key the seat at `base` proves over a fresh nonce (64 hex, lower case), or null. `verify(sig, msg, key)`: BIP-340. `bound`: only a
+ * proof bound to the host asked counts (kanban #3800).
+ */
+async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, now = Date.now(), bound = false } = {}) {
   base = seatUrlTrimmed(base);
-  const kept = PROVEN_KEYS.get(base);
+  const keptAs = `${bound ? 'bound' : 'any'} ${base}`;   // a key proven unbound never stands for a bound ask
+  const kept = PROVEN_KEYS.get(keptAs);
   if (kept && now - kept.at < PROOF_KEEP_MS) return kept.key;
   if (typeof verify !== 'function') return null;
   try {
@@ -12651,9 +12715,13 @@ async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, now = Dat
     const j = JSON.parse(await r.text());
     const key = j && typeof j.node === 'string' ? j.node.toLowerCase() : '';
     if (!/^[0-9a-f]{64}$/.test(key) || !/^[0-9a-f]{128}$/i.test(String(j.sig))) return null;
-    if (!verify(fromHex(String(j.sig).toLowerCase()), identityProofDigest(nonce), fromHex(key))) return null;
+    if (bound) {
+      const at = typeof j.at === 'string' ? identityHostKey(j.at) : '';
+      if (!at || !askedHosts(base).has(at) || !/^[0-9a-f]{128}$/i.test(String(j.atSig))) return null;
+      if (!verify(fromHex(String(j.atSig).toLowerCase()), identityBoundDigest(nonce, at), fromHex(key))) return null;
+    } else if (!verify(fromHex(String(j.sig).toLowerCase()), identityProofDigest(nonce), fromHex(key))) return null;
     if (PROVEN_KEYS.size >= PROVEN_KEYS_MAX) PROVEN_KEYS.delete(PROVEN_KEYS.keys().next().value);
-    PROVEN_KEYS.set(base, { key, at: now });
+    PROVEN_KEYS.set(keptAs, { key, at: now });
     return key;
   } catch { return null; }
 }
@@ -12670,7 +12738,8 @@ async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, now = Dat
 //   path proves nothing and stays in its host's one seat, and the seat keeps its voice (#3585's rule, page side);
 // - otherwise a key proven at several URLs is one seat whose URLs must agree (seatVoice): a relay can stall that seat's vote, not cast it.
 // A box relaying a round seat the link does not name at all still proves that key - one more voice, as one more hostname of the box would
-// be (the limit stated above). Binding the proof to the address asked is a change of the digest, the node's and the page's together.
+// be (the limit stated above) - in a round below 34. From 34 (kanban #3800) the proof is bound to the host asked (`bound`, above), and the
+// relayed proof names the seat's host, not the box's.
 /** A seat URL as adverts and links are compared: scheme and host lower case, no trailing slash. */
 const seatUrlKey = (u) => {
   try { const x = new URL(String(u)); return `${x.protocol}//${x.host.toLowerCase().replace(/\.+$/, '')}${x.pathname.replace(/\/+$/, '')}`; } catch { return seatUrlTrimmed(u); }
@@ -12713,7 +12782,8 @@ const advertKeys = (roots) => {
  * by default the adverts of the censuses this page checked, noteAdverts; null for none) - where one of a key's URLs is its advert's, the
  * key is that URL's alone (kanban #3730). Without keys or verify every host is one seat.
  */
-async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 8000, advertised } = {}) {
+// `bound` (kanban #3800): a round of 34+ (bindsIdentity) - a URL proves a key only with a proof bound to its host.
+async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 8000, advertised, bound = false } = {}) {
   const want = new Set((keys || []).map(seatKeyHex).filter(Boolean));
   const sources = distinctSources(nodes);
   const order = new Map(sources.map((u, i) => [u, i]));
@@ -12725,7 +12795,7 @@ async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 
   if (!asking) {
     for (const [host, urls] of byHost) seats.push({ id: `host:${host}`, urls, key: null });
   } else {
-    const proven = await Promise.all(sources.map((u) => provenKeyAt(u, { fetcher, verify, ms })));
+    const proven = await Promise.all(sources.map((u) => provenKeyAt(u, { fetcher, verify, ms, bound })));
     const byKey = new Map();
     sources.forEach((u, i) => { const k = proven[i]; if (k && want.has(k)) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(u); } });
     const advertOf = advertLookup(advertised);
@@ -16629,7 +16699,8 @@ function countRandomness(nodes, reads, committee = 0) {
 // Where no curve is loaded (no proof can be checked: a test harness, never a page that dealt the handout) each URL counts, as before.
 const handoutVerify = () => { const c = globalThis.ARENA_CURVE; return c && typeof c.verify === 'function' ? (sg, m, k) => { try { return !!c.verify(sg, m, k); } catch { return false; } } : null; };
 const handoutKeys = (stake) => { try { return decodeHandout(stake.body).shares.map((x) => x.signerNodePubkey).filter((k) => k instanceof Uint8Array); } catch { return []; } };
-async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, graceMs = 300, waitMs = 20000, out = null, keys = null, verify = undefined } = {}) {
+// `bound` (kanban #3800): the round is of protocol 34+ (bindsIdentity) - a URL proves a signer node's key only with a proof bound to its host.
+async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, graceMs = 300, waitMs = 20000, out = null, keys = null, verify = undefined, bound = false } = {}) {
   if (!stake || !stake.body) throw new Error('there is no dealt stake to publish');
   // THE SIGNER NODES THAT MUST HOLD IT are the threshold it was dealt at - which
   // `stakeFor` makes the round's. The default was a flat 5 (M3.3-26).
@@ -16664,7 +16735,7 @@ async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, grace
   // with no curve to check a proof by (a page has one before it can deal a handout at all: dealHandout), each URL counts, as before
   const proofCheck = verify !== undefined ? verify : handoutVerify();
   const seatIds = nodes.map((u, i) => (typeof proofCheck === 'function' ? `host:${hostOf(u)}` : `url:${i}`));
-  const grouping = (typeof proofCheck !== 'function' ? Promise.resolve([]) : seatsOf(nodes, { keys: keys || handoutKeys(stake), verify: proofCheck, fetcher, ms: Math.min(8000, waitMs) }))
+  const grouping = (typeof proofCheck !== 'function' ? Promise.resolve([]) : seatsOf(nodes, { keys: keys || handoutKeys(stake), verify: proofCheck, fetcher, ms: Math.min(8000, waitMs), bound }))
     .then((groups) => {
       const idOf = new Map();
       for (const g of groups) for (const u of g.urls) idOf.set(u, g.id);
@@ -16750,8 +16821,8 @@ function h2hLockRefusal({ put = null, entryCloseMs, leadMs, now = Date.now() } =
  * unless `needed` seats still take it; then h2hLockRefusal on that fresh answer. Answers null (lock) or why not (nothing is locked).
  * The gap left is the lock's own time (2-3 s), the one the #1485 lead covers.
  */
-async function h2hLockRecheck({ stake, nodes, needed, put = null, entryCloseMs, leadMs, fetcher = fetch, waitMs = 6000, graceMs = 300, now = () => Date.now() } = {}) {
-  const fresh = await postHandout(stake, nodes, { fetcher, needed, waitMs, graceMs });
+async function h2hLockRecheck({ stake, nodes, needed, put = null, entryCloseMs, leadMs, fetcher = fetch, waitMs = 6000, graceMs = 300, now = () => Date.now(), bound = false } = {}) {
+  const fresh = await postHandout(stake, nodes, { fetcher, needed, waitMs, graceMs, bound });
   if (!fresh.ok) return `the seats no longer take this handout - ${fresh.refused.length ? fresh.refused[0].slice(0, 200) : fresh.why} - nothing was locked`;
   return h2hLockRefusal({ put: fresh.seatCloseAtMs !== null && fresh.seatCloseAtMs !== undefined ? fresh : put, entryCloseMs, leadMs, now: now() });
 }
@@ -19528,6 +19599,7 @@ function lockClaimKeyOf(entry) {
 
 
 
+
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
 /**
@@ -22230,8 +22302,9 @@ const distinctSeats = (nodes) => {
 // not at all when they disagree. The threshold is capped by those seats, not by URLs.
 // `advertised` (kanban #3730): the addresses the census adverts name per key (seat-identity.js; by default the ones this page checked) - a
 // key proven elsewhere is a relay, not that seat.
-async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null, advertised } = {}) {
-  const seats = await seatsOf(nodes, { keys, verify, fetcher, advertised });
+// `bound` (kanban #3800): the round is of protocol 34+ - a URL proves a key only with a proof bound to its host (seatProofs sets it).
+async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null, advertised, bound = false } = {}) {
+  const seats = await seatsOf(nodes, { keys, verify, fetcher, advertised, bound });
   // EVERY SIGNER NODE AT ONCE (kanban #593)
   const asked = seats.flatMap((seat) => seat.urls.map((node) => ({ seat, node })));
   const answers = await Promise.all(asked.map(async ({ node }) => {
@@ -22284,7 +22357,7 @@ async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee
   return { ok: false, agreeing: 0, needed: need, why: `no seat holds an accepted settlement of this round yet (${said.join('; ')})` };
 }
 // WHAT A SEAT PROVES ITSELF AGAINST (kanban #3574): the round's node keys and the page's BIP-340 verify, for settlementOf's seatsOf
-const seatProofs = (round, curve) => ({ keys: Array.isArray(round && round.nodes) ? round.nodes : [],
+const seatProofs = (round, curve) => ({ keys: Array.isArray(round && round.nodes) ? round.nodes : [], bound: bindsIdentity(round && round.protocolVersion),   // kanban #3800
   verify: curve && typeof curve.verify === 'function' ? (sig, msg, key) => { try { return !!curve.verify(sig, msg, key); } catch { return false; } } : null });
 /** HOW MANY SEATS MUST AGREE ON A ROUND'S SETTLEMENT (kanban #1163): its settlement threshold, never more than the seats asked. */
 const settlementAgreement = (round, nodes = []) => {
@@ -44655,7 +44728,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          donationNotedState: donationNotedState, notedDonationForLink: notedDonationForLink,
          settlementBy: settlementBy,
          stakeFor: stakeFor, fetchSettlementSignerNodes: fetchSettlementSignerNodes,
-         roundPays: roundPays, postHandout: postHandout, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,
+         roundPays: roundPays, postHandout: postHandout, bindsIdentity: bindsIdentity /* kanban #3800 */, attestedClaimKey: attestedClaimKey, roundLocks: roundLocks,
          seatClockAheadMs: seatClockAheadMs, h2hLockRefusal: h2hLockRefusal, h2hLockRecheck: h2hLockRecheck,
          awaitAttestedClaimKey: awaitAttestedClaimKey,
          sharesNeededFor: sharesNeededFor,

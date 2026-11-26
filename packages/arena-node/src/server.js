@@ -16,6 +16,7 @@
 // One process, one player, no verification. There is no bond here, no quota
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
+import { identityBoundDigest as boundIdentityDigest, identityHostKey as boundIdentityHost } from '../../arena-protocol/src/identity-proof.js';   // kanban #3800
 import { seasonRoundStands } from './season-stands.js';
 import { gzipSync } from 'node:zlib';
 import { tableAnchorOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
@@ -380,6 +381,8 @@ export function bondMinCanonical(values, b) {
 // A NODE KEY PROVEN AT AN ADDRESS (kanban #2982, #3253): what a seat signs, BIP-340 with its node key, when asked GET /identity?nonce=. The
 // asker's fresh nonce makes the answer the seat's word now, not one replayed from another address.
 export const identityProofDigest = (nonce) => taggedHash('ARENA/v1/NodeIdentityProof', nonce);
+// AND AT THE ADDRESS ASKED (kanban #3800, protocol 34): beside it the seat signs identityBoundDigest(nonce, at), `at` the Host it was asked at
+// (arena-protocol identity-proof.js) - a relay reaching the seat by the seat's own name gets a proof of the seat's host, never of its own
 // whether the seat at `base` signs for `key` (64 hex) over a fresh nonce - false on any other answer, or none in `ms`
 export async function provesNodeKey(base, key, { fetch: f = fetch, ms = 8000 } = {}) {
   try {
@@ -9047,9 +9050,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const nonce = url.searchParams.get('nonce');
         if (nonce === null) return bytes(res, 200, round.pubkey);
         if (!/^[0-9a-f]{64}$/i.test(nonce)) return text(res, 400, 'GET /identity?nonce=<32 bytes hex>');
+        // kanban #3800: `at` the Host this ask came in by (never X-Forwarded-Host: a relay sets that through every proxy), and `atSig` over it
+        const n = fromHex(nonce.toLowerCase()), at = boundIdentityHost(req.headers.host);
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), nonce: nonce.toLowerCase(),
-          sig: toHex(schnorr.sign(identityProofDigest(fromHex(nonce.toLowerCase())), round.identity.secret)) }));
+          sig: toHex(schnorr.sign(identityProofDigest(n), round.identity.secret)),
+          ...(at ? { at, atSig: toHex(schnorr.sign(boundIdentityDigest(n, at), round.identity.secret)) } : {}) }));
       }
 
       // THE ICON OF ITS PAGES (the 2026.1.9.11 install test: the dashboard and the owner page logged a missing favicon.ico at every load)
