@@ -133,6 +133,7 @@ import { season, seasonWindow, mergeSeasonAccounts, seasonRoundsToJson, seasonRo
 import { seasonRounds, seasonRoundOf, signedSeasonRoundsJson } from './season-read.js';
 import { createWinnersBook } from './leaderboard-freeze.js';
 import { slotsForRole } from '../../arena-protocol/src/sortition.js';
+import { dialEntryOf } from '../../arena-protocol/src/address-announcement.js';   // kanban #3743
 import { createOwner, ownerStatementMessage } from './owner.js';
 import { donationReport } from './owner-donations.js';
 import { leaveStatus, takesRound } from './owner-leave.js';
@@ -7509,7 +7510,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const signed = ownSeatings.has(`${fid}:${ep}`) ? [ownSeatings.get(`${fid}:${ep}`)] : [];
         for (const node of seatedHex) {
           if (node === toHex(round.pubkey)) continue;
-          const e = entries.find((x) => toHex(x.pubkey) === node);
+          const e = dialEntryOf(entries, node);   // kanban #3743: the node's own signed entry, not a stranger's bond to its key
           if (!e || !e.advert || !e.advert.endpoint) continue;
           try {
             const peerAt = addressBook.endpointOf(e); if (!peerAt) continue;   // kanban #3082: a refused endpoint is not dialed
@@ -7556,7 +7557,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const epoch = Math.floor(Number(await chainTip()) / GATEWAY_EPOCH_BLOCKS) - 1;
       const now = fedRecords.censusNow ? fedRecords.censusNow() : { ok: false };
       const entries = now.ok ? now.entries : [];
-      const endpointOf = (node) => { const e = entries.find((x) => toHex(x.pubkey) === node); const peerAt = e && e.advert && e.advert.endpoint ? addressBook.endpointOf(e) : null; return peerAt ? String(peerAt).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null; };
+      const endpointOf = (node) => { const e = dialEntryOf(entries, node) /* kanban #3743 */; const peerAt = e && e.advert && e.advert.endpoint ? addressBook.endpointOf(e) : null; return peerAt ? String(peerAt).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '') : null; };
       const me = toHex(round.pubkey);
       for (const { federation: fid } of fedRecords.list()) {
         const rec = fedRecords.recordOf(fid);

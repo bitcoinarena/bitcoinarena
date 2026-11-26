@@ -58,6 +58,26 @@ export function endpointOf(entry, announced) {
   const census = entry && entry.advert ? entry.advert.endpoint || null : null;
   const a = announced && entry ? announced.get(hexOf(entry.pubkey)) : null;
   if (!a) return census;
+  // AN UNSIGNED BODY'S DATE SHADOWS NOTHING (kanban #3743): an entry whose body its node did not sign (census.js `nodeSigned` false - a
+  // stranger's own bond to the node's key) names a date the stranger chose, 2^52 ms put it ahead of every announcement for good. The node's
+  // own signed announcement stands over it whatever its date.
+  if (entry.nodeSigned === false) return a.endpoint;
   const advertMs = entry.advert && entry.advert.timestamp !== undefined ? Number(entry.advert.timestamp) : 0;
   return a.atMs >= advertMs ? a.endpoint : census;
+}
+
+/**
+ * THE ENTRY TO DIAL A NODE AT (kanban #3743): of a census's entries under `nodePubkey` (bytes or hex), the first whose body the node signed
+ * (census.js `nodeSigned`; an entry without the mark counts as signed), else the first - never a stranger's own bond to the node's key while
+ * the node's own entry is there. null when the census names no such node.
+ */
+export function dialEntryOf(entries, nodePubkey) {
+  const node = hexOf(nodePubkey);
+  let first = null;
+  for (const e of entries || []) {
+    if (!e || !e.pubkey || hexOf(e.pubkey) !== node) continue;
+    if (e.nodeSigned !== false) return e;
+    if (!first) first = e;
+  }
+  return first;
 }

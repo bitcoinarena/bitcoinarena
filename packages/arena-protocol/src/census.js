@@ -1528,7 +1528,10 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
             + `round runs ${protocolVersionName(contract.protocolVersion)}` });
           continue;
         }
-        eligible.push(e); continue;
+        // NODE-SIGNED (kanban #3348): whether the body that decides this entry is one its node signed - a stranger's own bond to a node's key
+        // under another operator id carries an unsigned body, and the emergency doors take no emergency key from it
+        eligible.push({ ...e, nodeSigned: signedOwn.has(e.decidedBy ? `${Array.from(e.decidedBy.txid).join(',')}:${e.decidedBy.vout}` : `${Array.from(raw.txid).join(',')}:${raw.vout}`) });
+        continue;
       }
       const roles = u.advert.roles || [];
       const versions = u.advert.protocolVersions || [];
@@ -1549,7 +1552,7 @@ export function deriveCensus(views, { contract, candidates, resolve, verifyAdver
       }
       // the update's games replace the bond's first advertisement's (a hosted-games change is an update)
       eligible.push({ ...e, advert: sumsBonds(contract) ? ownMaturity(u.advert, e.advert) : u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
-        updatedBy: { txid: u.txid, height: u.height, position: u.position } });
+        updatedBy: { txid: u.txid, height: u.height, position: u.position }, nodeSigned: true });   // an update is checked against the node key
     }
   }
 
