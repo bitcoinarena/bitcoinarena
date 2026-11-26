@@ -174,6 +174,8 @@ body.bridged .tag { margin-left: 0; }
 .bbox .bchange { flex: none; padding: 3px 10px; font-size: .82rem; border-color: var(--btc); color: var(--btc); }
 #result .bbox .lnrow { margin: 0 0 6px; } #result .bbox .lnwhy { margin: 0 0 6px !important; }
 .bbox > :last-child { margin-bottom: 0 !important; }
+.bbox.short { padding: 6px 10px; } .bbox.short .bstat { margin: 0; font-weight: 500; } .bbox.short .bwho { color: var(--soft); font-weight: 400; overflow-wrap: anywhere; }
+.bbox.short .bchange { padding: 1px 8px; border: 0; background: none; text-decoration: underline; }
 @media (max-height: 760px) { .bbox { padding: 6px 9px; margin-top: 8px; } .bbox .bnote { font-size: .76rem; } }
 @media (max-height: 760px) { #result .box { padding: 12px 14px; } #result .row { margin-top: 10px; } .row.r3 button { padding: 9px 6px; } .prize.rp { margin: 6px 0 0 !important; } }
 /* THE SPEAKER AND THE ROUND IN THE HUD (owner 2026-11-22: "Oben ist ungenutzter Platz"): no top row on a free round; render.js places them */
@@ -1727,6 +1729,15 @@ function xLine(me, sats = PRIZE_SATS) {
   // kanban #3534: an X account that does not follow @bitcoinarena_io (or was not asked yet) keeps the field, for Check again, with the follow link
   return { ok, text, parts, link: !me.x || needsFollow(me), follow: needsFollow(me), ln: !hasLn };
 }
+/**
+ * THE SHORT FORM OF THE BOUNTY BOX (kanban #3796, owner 2026-11-26: "Wenn beide gecheckt sind und der Entry valide, nur noch die Kurzfassung ... Es ist
+ * zu voll"): one line once the X account is checked (follows) and the Lightning address is saved - not a draw, the day's best run wins. null otherwise.
+ */
+function bountyShort(me, sats = PRIZE_SATS) {
+  const x = xLine(me, sats);
+  if (!x || !x.ok) return null;
+  return { text: "✓ You're eligible for today's " + fmtSats(sats) + " sat prize", who: (me.x.username ? "@" + me.x.username : "X linked") + " · ⚡ " + me.lnAddress };
+}
 /** FOLLOWING @bitcoinarena_io IS REQUIRED (kanban #3534, owner 2026-11-23): the account, the link, and whether /me says this player still has to. */
 const X_HOUSE = "bitcoinarena_io";
 const FOLLOW_URL = "https://x.com/bitcoinarena_io";   // one export per line: client/build.mjs names the first only
@@ -1963,7 +1974,7 @@ function xSaveAnswer(j, typed) {
 /** The leaderboard rows: [[rank, name, score, time, placed]] */
 const boardRows = (board, me = null) => (board || []).map((r) => ({ rank: String(r.rank), name: String(r.name || ""), score: fmtSats(r.score), time: fmtTime(r.timeS), placed: !!r.placed, replay: r.replay || null, me: isMine(r, me) }));
 
-return { fmtSats, fmtLeft, fmtTime, isMine, myBest, xLine, X_HOUSE, FOLLOW_URL, needsFollow, usedOf, INTRO_TOP, introBoard, isFree, FREE_LABEL, introModel, FEE_GUESS_SATS, payableOf, PRIZE_SATS, prizeLine, promoLine, entryLine, resultModel, lnSyntaxWhy, lnFieldModel, xHandleOf, xFieldModel, xSaveAnswer, boardRows };
+return { fmtSats, fmtLeft, fmtTime, isMine, myBest, xLine, bountyShort, X_HOUSE, FOLLOW_URL, needsFollow, usedOf, INTRO_TOP, introBoard, isFree, FREE_LABEL, introModel, FEE_GUESS_SATS, payableOf, PRIZE_SATS, prizeLine, promoLine, entryLine, resultModel, lnSyntaxWhy, lnFieldModel, xHandleOf, xFieldModel, xSaveAnswer, boardRows };
 })();
 __m["client/src/rules.js"] = (() => {
 // Orange Pill Run - the public rules (kanban #3251). One source: the game's Rules sheet and the rules page (client/dist/rules.html) both read it.
@@ -2207,7 +2218,7 @@ const { resultOf, validateLog } = __m["src/sim/replay.js"];
 const { fit, drawWorld, view, usd } = __m["client/src/render.js"];
 const { makeApi } = __m["client/src/api.js"];
 const { createEntry, entryOf } = __m["client/src/entry.js"];
-const { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, X_HOUSE, FOLLOW_URL, PRIZE_SATS } = __m["client/src/screens.js"];
+const { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, bountyShort, X_HOUSE, FOLLOW_URL, PRIZE_SATS } = __m["client/src/screens.js"];
 const { RULES, RULES_TITLE, hintText } = __m["client/src/rules.js"];
 const { makeAudio, snapWorld, worldEvents } = __m["client/src/audio.js"];
 const { makeClock, snapMovers, drawBetween } = __m["client/src/frameloop.js"];
@@ -2619,6 +2630,18 @@ function paintBounty(on, st) {
   // the service's rule (#3720, owner 2026-11-25; was #3281: only before the first run): an X account saved before the round ends counts in it
   $("rBExtra").textContent = !me.x ? " An X handle saved before the round ends counts for today's round." : "";
   const hasX = !!me.x, hasLn = !!me.lnAddress;
+  // kanban #3796 (owner 2026-11-26): X checked + Lightning saved + this run counts -> one short line and Change; the full box again on Change
+  const short = !BB.open && !XF.r.dirty && !LN.r.dirty && !(XF.r.msg && XF.r.msg.kind === "bad") && !(LN.r.msg && LN.r.msg.kind === "bad")
+    && document.activeElement !== $("rXfIn") && document.activeElement !== $("rLnIn") ? bountyShort(me, sats) : null;
+  box.classList.toggle("short", !!short); $("rBHead").parentElement.hidden = !!short; $("rBNote").hidden = !!short;
+  if (short) {
+    XF.r.msg = null; LN.r.msg = null; $("rNot").hidden = false;
+    const t = $("rNotText"); t.textContent = ""; const a = document.createElement("span"); a.className = "st-ok"; a.textContent = short.text;
+    const b = document.createElement("span"); b.className = "bwho"; b.textContent = short.who; t.append(a, " · ", b);
+    const ch = $("rBChange"); ch.hidden = false; ch.textContent = "Change"; paintXf("r", false); paintLn("r", false);
+    HOOKS.bounty = { on: true, short: true, status: t.textContent, xField: false, lnField: false, change: "Change" };
+    return;
+  }
   const xOn = !hasX || !!(st && st.link) || BB.open || XF.r.dirty || !!XF.r.msg || document.activeElement === $("rXfIn");
   // an X account with an open X field says its reason under the field (follow / Check again): the status line does not say it twice (phone)
   if (st && st.link && xOn) st = { ...st, parts: st.parts.filter((x) => x.ok || !/^X /.test(x.text)) };
@@ -2626,12 +2649,12 @@ function paintBounty(on, st) {
   const lnOn = !hasLn || BB.open || LN.r.dirty || !!LN.r.msg || document.activeElement === $("rLnIn");
   const ch = $("rBChange"); ch.hidden = !((hasX && !xOn) || (hasLn && !lnOn) || BB.open); ch.textContent = BB.open ? "Done" : "Change";
   paintXf("r", xOn); paintLn("r", lnOn);
-  HOOKS.bounty = { on: true, head: $("rBHead").textContent, note: $("rBNote").textContent, status: stOn ? $("rNotText").textContent : "", xField: !$("rXf").hidden, lnField: !$("rLn").hidden, change: ch.hidden ? null : ch.textContent };
+  HOOKS.bounty = { on: true, short: false, head: $("rBHead").textContent, note: $("rBNote").textContent, status: stOn ? $("rNotText").textContent : "", xField: !$("rXf").hidden, lnField: !$("rLn").hidden, change: ch.hidden ? null : ch.textContent };
 }
 $("rBChange").addEventListener("click", () => {
   BB.open = !BB.open;
   if (BB.open) { const xi = $("rXfIn"), u = S.me && S.me.x && S.me.x.username; if (u && !XF.r.dirty) xi.value = "@" + u; }
-  else { for (const k of [XF.r, LN.r]) { k.dirty = false; k.msg = null; } $("rXfIn").value = ""; }
+  else { for (const k of [XF.r, LN.r]) { k.dirty = false; k.msg = null; } $("rXfIn").value = ""; for (const i of ["rXfIn", "rLnIn"]) if (document.activeElement === $(i)) $(i).blur(); }   // #3796: Done goes back to the short line
   if (resultArgs) paintResult(resultArgs);
   if (BB.open) $("rXf").hidden ? $("rLnIn").focus() : $("rXfIn").focus();
 });
