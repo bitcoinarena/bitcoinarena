@@ -449,7 +449,7 @@ function paintBounty(on, st) {
 $("rBChange").addEventListener("click", () => {
   BB.open = !BB.open;
   if (BB.open) { const xi = $("rXfIn"), u = S.me && S.me.x && S.me.x.username; if (u && !XF.r.dirty) xi.value = "@" + u; }
-  else { for (const k of [XF.r, LN.r]) { k.dirty = false; k.msg = null; } $("rXfIn").value = ""; }
+  else { for (const k of [XF.r, LN.r]) { k.dirty = false; k.msg = null; } $("rXfIn").value = ""; for (const i of ["rXfIn", "rLnIn"]) if (document.activeElement === $(i)) $(i).blur(); }   // #3796: Done goes back to the short line
   if (resultArgs) paintResult(resultArgs);
   if (BB.open) $("rXf").hidden ? $("rLnIn").focus() : $("rXfIn").focus();
 });
