@@ -1205,6 +1205,18 @@ export class OrderBook {
       q.sigs.push({ seat: x.record.leader, signature: x.record.leaderSig, batchId: x.batchId });
       q.ids.set(x.batchId, x.record);
     }
+    // A BATCH VOID HERE IS DECIDED AGAIN ONLY FOR A SEAT THAT STILL HOLDS IT SIGNED (kanban #3537, #2114 variant): VOID is for good, yet a k
+    // void here went through #decide again - a void ask to every seat and a void posted to every seat, ~50 ms a k - each time a seat listed
+    // it pending. One seat's proposal listing records of its own past k's (its own leaderSig, nothing more) made every lead() void again
+    // every k it had voided before: 7 new and 7 old ones held one batch 860 ms against a 500 ms interval, and PENDING_PER_PROPOSAL lets it
+    // list 64. Such a k is skipped unless a seat other than its leader proves, by its own signature over a set of k, that it holds k signed
+    // (a seat the void never reached): for it the void is decided and handed out again, as before.
+    for (const [pk, q] of pending) {
+      if (this.#state(ridBuf, Number(pk)) !== BATCH.VOID) continue;
+      const leader = toHex(this.leaderOf(m.contract, BigInt(pk))).toLowerCase();
+      const others = q.sigs.filter((s) => String(s.seat).toLowerCase() !== leader);
+      if (![...q.ids.keys()].some((bid) => this.#counted(m, bid, others.filter((s) => s.batchId === bid)).length)) pending.delete(pk);
+    }
     const decided = [];
     for (const [pk, q] of [...pending].sort((a, b) => Number(a[0]) - Number(b[0]))) {
       // the set most seats signed (an honest seat signs one set per batch)
