@@ -26,7 +26,8 @@ import { answersUpTo } from './peer-read.js';   // kanban #2650
 import { peerEndpointRefusal } from './address-book.js';   // kanban #3090/#3093
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
-  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, RESTRICTION_RANK, selfConsistentRestrictive, thresholdOf } from '../../arena-protocol/src/federation-record.js';
+  FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, RESTRICTION_RANK, selfConsistentRestrictive, thresholdOf,
+  listsSignedGuardians } from '../../arena-protocol/src/federation-record.js';
 
 /**
  * The census nodes guarding `federationId`, as the record lists them. `keys` (optional, kanban #2603): the federation config's guardian
@@ -38,7 +39,11 @@ import { buildFederationRecord, encodeFederationRecord, federationRecordId, join
 // (entry -> URL | null), when given, resolves `advertEndpoint` - a refused endpoint (a loopback/private host, a path, a query that swallows
 // the door) becomes '' and is not dialed by gather, mirror or closedAtGuardians. Without it the advert is taken as it is (the body rows
 // do not use advertEndpoint).
-export function guardiansOf(census, federationId, keys = null, dialOf = null) {
+// ONLY THE GUARDIAN'S OWN SIGNED ENTRY (kanban #3801, protocol 34): `signedOnly` (listsSignedGuardians at the body's network and census
+// height) leaves out every entry whose body its node did not sign (census.js `nodeSigned` false - a stranger's own bond to the guardian's
+// key under another operator id), so neither its claim nor its bondTxid/vout, operatorId or guardianEndpoint reaches the body. Off, the
+// rows are today's, byte for byte.
+export function guardiansOf(census, federationId, keys = null, dialOf = null, signedOnly = false) {
   const fid = toHex(federationId);
   const wanted = keys ? guardianKeySet(keys) : null;
   const keysTaken = new Set();
@@ -46,7 +51,7 @@ export function guardiansOf(census, federationId, keys = null, dialOf = null) {
   const claims = (e) => ((e.advert && e.advert.guardianOf) || []).filter((x) => toHex(x.federationId) === fid && (!wanted || wanted.has(toHex(x.guardianKey))));
   // ONE ROW PER NODE, ITS BOND THE SUM OF ITS OUTPUTS (kanban #544): an added second output names the same guardian, not a second one;
   // the row's bond outpoint is the node's lowest
-  for (const n of nodeBonds((census.entries || []).filter((e) => claims(e).length))) {
+  for (const n of nodeBonds((census.entries || []).filter((e) => claims(e).length && !(signedOnly && e.nodeSigned === false)))) {
     const e = n.entry, g = wanted ? claims(e).find((x) => !keysTaken.has(toHex(x.guardianKey))) : e.advert.guardianOf.find((x) => toHex(x.federationId) === fid);
     if (!g) continue;
     if (wanted) keysTaken.add(toHex(g.guardianKey));
@@ -511,6 +516,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const cb = chainBasis(atHeight);
     return namesFed(cb, fidHex) ? cb : b;
   }
+  // THE GUARDIANS OF A BASIS (kanban #3801): the body, the mirror, closedAtGuardians and censusGuardians read one list, so from the network's
+  // protocol-34 height (listsSignedGuardians) every one of them leaves a stranger's unsigned entry out together
+  const guardiansAt = (b, federationId, keys, dial = dialOf) => guardiansOf(b.census, federationId, keys, dial, listsSignedGuardians(b.networkId || networkId, b.height));
   function roundBasis(atHeight = null) {
     if (newest) {
       const best = newest();
@@ -554,7 +562,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const fid = toHex(federationId);
     const invite = inviteFor(fid);
     if (!invite) return { ok: false, why: 'this seat names no invite for that federation' };
-    const guardians = withConfigEndpoints(guardiansOf(b.census, federationId, keys, dialOf), eps, toHex);
+    const guardians = withConfigEndpoints(guardiansAt(b, federationId, keys), eps, toHex);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const succ = successorOf(fid);
     // A RETIREMENT CLOSES ONLY AN EMPTY FEDERATION (kanban #1980): the owners' consents were checked against an empty audit and reserve 0
@@ -773,7 +781,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const fid = toHex(federationId);
     const censusKept = pass.kept;
     let keys = await keysFor(fid);
-    const guardians = guardiansOf(b.census, federationId, keys, dialOf);
+    const guardians = guardiansAt(b, federationId, keys);
     if (!guardians.length) return { ok: false, why: 'no census node guards that federation' };
     const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
     let best = null; let why = 'none of its guardians holds a record';
@@ -1063,7 +1071,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       const fid = String(fidHex).toLowerCase();
       const b = basisFor(fid);
       if (!b || !b.ok) return { closed: 0, of: 0, why: (b && b.why) || 'no census' };
-      const guardians = guardiansOf(b.census, fromHex(fid), await keysFor(fid), dialOf);
+      const guardians = guardiansAt(b, fromHex(fid), await keysFor(fid));
       const answers = await Promise.all(guardians.map(async (g) => {
         const base = String(g.advertEndpoint || '').replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
         if (toHex(g.nodePubkey) === toHex(round.pubkey)) { const k = kept.get(fid); return !!k && k.status === 'CLOSED'; }
@@ -1100,7 +1108,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     // THE FEDERATION'S GUARDIANS BY THE CENSUS (kanban #552): node keys hex of the census that names it (the held round's, else the chain's) -
     // what stands before this seat holds its record (seatedGuardians is null then; "the census rule then stands")
     censusGuardians(fidHex) {
-      try { const b = basisFor(String(fidHex).toLowerCase()); return b && b.ok ? guardiansOf(b.census, fromHex(String(fidHex)), keysKnown.get(String(fidHex).toLowerCase()) || null).map((g) => toHex(g.nodePubkey)) : []; } catch { return []; }
+      try { const b = basisFor(String(fidHex).toLowerCase()); return b && b.ok ? guardiansAt(b, fromHex(String(fidHex)), keysKnown.get(String(fidHex).toLowerCase()) || null, null).map((g) => toHex(g.nodePubkey)) : []; } catch { return []; }
     },
     seatedGuardians(fidHex) {
       const k = kept.get(String(fidHex).toLowerCase());
