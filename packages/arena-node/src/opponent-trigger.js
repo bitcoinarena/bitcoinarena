@@ -23,3 +23,20 @@ export function botMayEnter({ entries = [], locks = new Map(), botKeys = new Set
   if (Number(closeMs) - nowMs < minLeftMs) return { go: false, why: 'too little left to enter' };
   return { go: true, why: 'a player\'s stake lock is verified' };
 }
+
+/** The verified tap keys of a GET /opponent row: `tapKeys` (kanban #3729), or the one `tapKey` an older faucet names. */
+export const tapKeysOf = (w) => (Array.isArray(w && w.tapKeys) ? w.tapKeys : (w && w.tapKey ? [w.tapKey] : [])).map(String).filter((k) => /^[0-9a-f]{64}$/.test(k));
+
+/**
+ * THE TAP KEY THE BOT MAY LEARN AS A KNOWN PLAYER (kanban #2901; #3309, #3729, audit faucet a5-2-1 + a8-1-1): a tap key is the tab's identity
+ * key, not the entry's player key, so nothing at the seats ties it to the entry whose lock verified. It was learnt whenever any non-bot entry's
+ * lock verified, and a stranger who signed a tap of a real player's round with his own fresh key got that never-staked key into KNOWN. Now a
+ * tap key is learnt only when it is the one key that tapped the round and the round holds exactly one non-bot entry, whose stake lock a seat
+ * verified. `tapKeys`: the row's verified tap keys (tapKeysOf); `entries`, `locks`, `botKeys` as for botMayEnter. Returns a key hex or null.
+ */
+export function tapKeyToLearn({ tapKeys = [], entries = [], locks = new Map(), botKeys = new Set() }) {
+  const keys = [...new Set(tapKeys.map(String))];
+  if (keys.length !== 1 || botKeys.has(keys[0])) return null;
+  const others = entries.filter((e) => e && e.entry && !botKeys.has(String(e.player || '')));
+  return others.length === 1 && locks.has(others[0].entry) ? keys[0] : null;
+}
