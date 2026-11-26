@@ -72,10 +72,31 @@ export const coreNameOf = (c) => (typeof c.name === 'string' && c.name ? c.name.
 // (TRIAL_CODE: a new build with another trial tries every version again), the signed manifest, and each core's hash, name, entry and
 // configs. A later start still checks everything else (signatures, every file's hash, the scan) and loads each core within REGISTER_MS;
 // only the trial of the same bytes under the same trial is not run again.
+// THE MARK NAMES THE WHOLE REALM THE TRIAL RAN IN (kanban #3731, audit hosting a8-1-1, gap in #3679): TRIAL_CODE was the bytes of
+// plugin-trial.js, core-sandbox.js and plugin-check.js only, but the trial's verdict is decided as much by the realm the core runs in -
+// core-host.js (the LOCKDOWN), core-driver.js, core-depth.js (and the acorn it parses with), core-intrinsics.js, core-compile-apart.js,
+// core-supervisor.js, core-runner.js - and the sandbox fixes (#3316, #3358, #3242, #2808, #3065) each changed only those. So a release that
+// closed a hole kept every older mark, and a seat hosted, untried, a version its own trial refuses, failing at every h2h close of it. It is
+// now every core-*.js of this folder (read when the module loads, so a realm file added later - core-nest.js, #3540 - counts without being
+// listed), vendor/acorn.mjs, the trial and the check, each by name and bytes, and the Node build that runs them (its V8 decides too).
 export const TRIAL_MARK_FILE = 'trial-passed.json';
+export const TRIAL_CODE_FILES = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const realm = readdirSync(here).filter((f) => /^core-[\w-]+\.js$/.test(f)).sort();
+    return Object.freeze(['plugin-trial.js', 'plugin-check.js', 'vendor/acorn.mjs', ...realm]);
+  } catch { return null; }
+})();
 const TRIAL_CODE = (() => {
-  try { return sha(Buffer.concat(['./plugin-trial.js', './core-sandbox.js', './plugin-check.js'].map((f) => readFileSync(fileURLToPath(new URL(f, import.meta.url)))))); }
-  catch { return null; }   // never a mark when the trial's code cannot be read
+  if (TRIAL_CODE_FILES === null || !TRIAL_CODE_FILES.includes('core-sandbox.js') || !TRIAL_CODE_FILES.includes('core-host.js')) return null;
+  try {
+    const h = createHash('sha256').update(`arena trial code v2\0${process.version}\0`);
+    for (const f of TRIAL_CODE_FILES) {
+      const bytes = readFileSync(fileURLToPath(new URL(`./${f}`, import.meta.url)));
+      h.update(`${f}\0${bytes.length}\0`).update(bytes);
+    }
+    return h.digest('hex');
+  } catch { return null; }   // never a mark when the trial's code cannot be read
 })();
 const trialKeyOf = (pkg) => (TRIAL_CODE === null ? null : sha(JSON.stringify([TRIAL_CODE, String(pkg.manifest),
   pkg.cores.map((c) => [String(c.hash), coreNameOf(c), Array.isArray(c.files) ? String(c.entry) : null, Array.isArray(c.configs) ? c.configs.map(String) : []])])));
