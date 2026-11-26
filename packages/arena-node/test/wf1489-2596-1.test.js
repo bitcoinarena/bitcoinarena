@@ -10,6 +10,12 @@
 // they reproduce it, and the objection HOLDS at B alone (SUSPENDED there, a re-run, relayed on) - while A and C refuse it.
 // Safe: a seat takes carried inputs past the ticks it holds only when a run this seat or a committee seat holds vouches for
 // them (it reproduces every receipted mark, or it is those inputs); otherwise they are refused at step 'inputs', unreplayed.
+// REBUILT FOR MARKS THAT NAME THEIR INPUTS (kanban #3760, after #3567 and #3758). The attack first ran on a live run: its marks
+// named GENESIS, the canonical transcript carried no batch, and the inputs travelled beside it as free JSON. A seat no longer
+// signs such a run (#3567) and an honest client never sends one (#3758; #3762 for the run an old client still sends). Now the
+// final mark names the batch of the second half the seats were sent (b2, which B never got), so the canonical transcript
+// carries b1 and b2, pinned by the transcript hash the objection names, and the door replays those - not T2 beside them. The
+// mark over T2 is reproduced by nothing, and B refuses the objection like A: it cannot decide alone over a tail no seat stored.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -55,7 +61,7 @@ async function scene({ honest = false } = {}) {
     const b1 = { roundId: w.rid, entryId: p.eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: ticks.slice(0, K), liquidations: [], loads: bedFrom(0) };
     const b2 = { roundId: w.rid, entryId: p.eid, previousHash: batchId(b1), firstTick: K, ticks: ticks.slice(K), liquidations: [], loads: [] };
     const batch = (b) => signedBatchOf(b, (id) => ed25519.sign(id, p.session));
-    // TWO LIVE MARKS: one at K over the first half (every seat holds it), and the final one over the honest bed and T2
+    // TWO MARKS: one at K over the first half (every seat holds it), and the final one naming b2, its state over the honest bed and T2
     const st = init(seedWordForEntry(p.entry, w.randomness || RANDOMNESS));
     submitLoad(st, ...bedFrom(0)[0].slice(1));
     const hashOf = () => Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16)));
@@ -100,7 +106,8 @@ async function scene({ honest = false } = {}) {
     const ask = (claimed) => buildObjectionBundle({ base: base(A), roundId: w.rid, entryId: p.eid, signedRunId: against,
       playerPubkey: signed.playerPubkey, claimed, inputs });
     const probe = await checkObjectionAt({ base: base(A), roundId: w.rid, entryId: p.eid, bundle: (await ask({ outcome: signed.outcome, score: signed.score })).bundle });
-    const claimed = probe.replayed || { outcome: signed.outcome, score: signed.score };
+    // the claim: what the probe names, else (no replay reproduces the mark, so it names none) another score than the signed one
+    const claimed = probe.replayed || { outcome: signed.outcome, score: honest ? signed.score : signed.score + 1 };
     const b = await ask(claimed);
     const atA = await postObjection(A, w, p.eid, b.bundle);
     const textA = (await atA.text()).trim();
@@ -113,11 +120,12 @@ async function scene({ honest = false } = {}) {
   } finally { await w.close(); }
 }
 
-test('wf1489 #2596-1: a seat holding a prefix of a live run does not uphold an objection over a tail no seat stored', async () => {
+test('wf1489 #2596-1: a seat holding a prefix of a run does not uphold an objection over a tail no seat stored', async () => {
   const { facts, atA, r, text, claimed, signed } = await scene();
-  assert.notEqual(claimed.score, signed.score, 'T2 replays to the signed score - not the case the test names');
+  assert.notEqual(claimed.score, signed.score, 'the objection claims the signed score - not the case the test names');
   assert.equal(atA.status, 422, 'seat A (which stored the whole run) refuses it already - #1990');
   assert.equal(r.status, 422, `seat B, holding the first half of the run, took an objection over a tail no seat stored: ${r.status} ${text} (now ${facts.afterB})`);
+  assert.match(text, /do not reproduce the receipted checkpoint/, 'seat B did not replay the batches the canonical transcript carries');
   assert.notEqual(facts.afterB, 'SUSPENDED');
 });
 

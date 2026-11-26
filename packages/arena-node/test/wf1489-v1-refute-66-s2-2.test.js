@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // kanban #1489 v1-refute-66-s2-2 (a refute of #1488 / Hexbox #011 at cc9338fed): THE OBJECTION DOOR TAKES A LOAD NO
-// HONEST BED DECLARES. The batch door (Round.batch -> load-checks.js) refuses Hexbox's full bed at 0 sats / 0 BTC. But a
-// seat receipts a live mark (inputChainHash = GENESIS) without replaying it, and an objection on a live run carries its
-// inputs as free JSON beside the transcript (objection-check.js inputsFormOf) - bound only by the receipted marks' state
-// hashes, which the player computed himself. So the player sends the seats an honest bed, signs his mark over the
-// forbidden bed (0 fee, 0 BTC, room 393214), gets it receipted, and after the close objects with inputs that carry the
-// forbidden load: the replay reproduces every receipted mark, gives another score than the committee signed, and the
-// objection HOLDS (the result SUSPENDED; a second one after the re-run VOIDs and slashes the signers).
-// THE RETRY: the committee's re-run replays the seats' own stored inputs, gives the signed score again, and the player
-// objects a second time with the same forbidden-bed inputs, against the re-run: the entry goes VOID and the honest
-// re-run signers are filed for slashing (REPLAY_CONTRADICTS) - on a load the batch door would never have taken.
-// Safe: the second objection is refused like the first; the entry is not VOID and no slash proof is filed.
+// HONEST BED DECLARES. The batch door (Round.batch -> load-checks.js) refuses Hexbox's full bed at 0 sats / 0 BTC. The
+// attack: the player sends the seats an honest bed, signs his mark over the forbidden bed (0 fee, 0 BTC, room 393214), gets
+// it receipted, and after the close objects with inputs carrying the forbidden load. If that objection held (SUSPENDED),
+// the committee's re-run would replay the stored inputs and give the signed score again, and a second objection with the
+// same inputs against the re-run would VOID the entry and file the honest re-run signers for slashing (REPLAY_CONTRADICTS).
+// REBUILT FOR MARKS THAT NAME THEIR INPUTS (kanban #3760, after #3567 and #3758). The attack first ran on a live run: its marks
+// named GENESIS, the canonical transcript carried no batch, and the objection's inputs went beside it as free JSON. A seat no
+// longer signs such a run (#3567), and an honest client never sends one (#3758; #3762 for the run an old client still sends).
+// Against marks that name their inputs, the forbidden load has no way in:
+//   1. a batch carrying it is refused at the batch door, so no mark can name one: a mark naming it is refused too;
+//   2. the mark names the honest batch the seats hold, its state hash over the forbidden bed: the run is signed over the
+//      stored inputs, and an objection carrying the forbidden load as JSON beside that batch transcript is refused - so no
+//      re-run starts, there is no second objection to make, the entry is not VOID and no slash proof is filed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ed25519 } from '@noble/curves/ed25519.js';
@@ -22,10 +24,9 @@ import { resultFinality } from '../src/finality.js';
 import { runId } from '../src/verdict.js';
 import { loadValueRefusal } from '../src/load-checks.js';
 import { buildObjectionBundle } from '../tools/objection-bundle.mjs';
-import { checkObjectionAt } from '../tools/check-objection.mjs';
 import { splitSignedResult, decodePlayerResult } from '../../arena-protocol/src/result.js';
 import { decodeTranscript } from '../../arena-protocol/src/transcript.js';
-import { signedBatchOf } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
@@ -38,66 +39,71 @@ const until = async (ok, ms = 30000) => { for (const stop = Date.now() + ms; Dat
 const postObjection = (d, w, eid, body) => fetch(`${base(d)}/objection?round=${toHex(w.rid)}&entry=${toHex(eid)}`, { method: 'POST', body });
 const ownResult = (d, w, eid) => decodePlayerResult(splitSignedResult(d.round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === toHex(d.round.pubkey)).bytes).body);
 const stateAt = (d, w, eid) => resultFinality(d.round, w.rid, eid);
+const answer = (rc) => (rc instanceof Uint8Array ? `${rc.length} bytes` : String(rc).slice(0, 160));
 
 const FORBIDDEN = [0, 0, 0, 393214];                     // Hexbox #011 attack 1: a full bed, 0 sats, 0 BTC
 
-
-async function forbiddenRun(w) {
-  const p = await lockAndPlay(w, WINNER, { noMarks: true });
-  const play = playFor(WINNER, w.randomness);
-  const ticks = Array.from({ length: WINNER.ticks }, (_, t) => play.words(t));
-  const input = { roundId: w.rid, entryId: p.eid, previousHash: GENESIS_HASH, firstTick: 0, ticks, liquidations: [], loads: bedFrom(0) };
-  const st = init(seedWordForEntry(p.entry, w.randomness || RANDOMNESS));
-  submitLoad(st, FORBIDDEN[1], FORBIDDEN[2], FORBIDDEN[3]);
-  for (let t = 0; t < WINNER.ticks; t++) step(st, ...ticks[t]);
-  const mark = { roundId: w.rid, entryId: p.eid, tick: WINNER.ticks,
-    stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
-    inputChainHash: GENESIS_HASH, previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(p.session) };
-  const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), p.session));
-  for (const d of [w.a, w.b]) {
-    assert.equal(String(await say(d.port, signedBatchOf(input, (id) => ed25519.sign(id, p.session)))), String(WINNER.ticks));
-    const rc = await say(d.port, signedMark);
-    assert.ok(rc instanceof Uint8Array && rc.length === SIGNED_RECEIPT_BYTES, `the mark was not receipted: ${String(rc).slice(0, 160)}`);
-  }
-  return p;
-}
-
-test('wf1489 v1-refute-66-s2-2: a second objection after the re-run cannot VOID the entry and slash its signers on a load the batch door refuses', async () => {
+test('wf1489 v1-refute-66-s2-2: a load the batch door refuses reaches no mark and no objection, so it cannot VOID the entry or slash its signers', async () => {
+  assert.notEqual(loadValueRefusal(FORBIDDEN), null, 'the batch door takes this load - not the case the test names');
   const w = await lockRound({ endMs: testNow() + 4000 });
   try {
-    const p = await forbiddenRun(w);
+    const p = await lockAndPlay(w, WINNER, { noMarks: true });
+    const play = playFor(WINNER, w.randomness);
+    const ticks = Array.from({ length: WINNER.ticks }, (_, t) => play.words(t));
+    const signB = (b) => signedBatchOf(b, (id) => ed25519.sign(id, p.session));
+    const sign = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), p.session));
+    const input = { roundId: w.rid, entryId: p.eid, previousHash: GENESIS_HASH, firstTick: 0, ticks, liquidations: [], loads: bedFrom(0) };
+    const forbidden = { ...input, loads: [FORBIDDEN] };
+    const st = init(seedWordForEntry(p.entry, w.randomness || RANDOMNESS));
+    submitLoad(st, FORBIDDEN[1], FORBIDDEN[2], FORBIDDEN[3]);
+    for (let t = 0; t < WINNER.ticks; t++) step(st, ...ticks[t]);
+    const mark = { roundId: w.rid, entryId: p.eid, tick: WINNER.ticks,
+      stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
+      previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(p.session) };
+    // each step at both seats before the next: a receipted mark is handed on to the peer, which then holds it
+    const answers = [{}, {}];
+    const atBoth = async (key, bytes) => { for (const [i, d] of [w.a, w.b].entries()) answers[i][key] = answer(await say(d.port, bytes)); };
+    // DOOR 1: the forbidden bed in a batch, and a mark naming that batch
+    await atBoth('forbiddenBatch', signB(forbidden));
+    await atBoth('toForbidden', sign({ ...mark, inputChainHash: batchId(forbidden) }));
+    // DOOR 2: the honest bed in a batch, and the mark over the forbidden bed naming it
+    await atBoth('took', signB(input));
+    await atBoth('toHeld', sign({ ...mark, inputChainHash: batchId(input) }));
+    for (const a of answers) {
+      assert.match(a.forbiddenBatch, /^error /, `the batch door took a batch carrying ${JSON.stringify(FORBIDDEN)}: ${JSON.stringify(answers)}`);
+      assert.match(a.toForbidden, /names inputs this node has not seen/, `a mark naming the refused batch: ${JSON.stringify(answers)}`);
+      assert.equal(a.took, String(WINNER.ticks), `setup: the honest batch: ${JSON.stringify(answers)}`);
+      assert.equal(a.toHeld, `${SIGNED_RECEIPT_BYTES} bytes`, `setup: the mark naming the held batch was not receipted: ${JSON.stringify(answers)}`);
+    }
     await closeRound(w, { window: false });
     assert.ok(await until(() => [w.a, w.b].every((d) => stateAt(d, w, p.eid).state === 'PROVISIONALLY_FINAL')), 'not signed at both seats');
     const signed = ownResult(w.a, w, p.eid);
     const canon = new Uint8Array(await (await fetch(`${base(w.b)}/canonical?round=${toHex(w.rid)}&entry=${toHex(p.eid)}`)).arrayBuffer());
+    assert.deepEqual(decodeTranscript(canon).batches.map((b) => toHex(batchId(b))), [toHex(batchId(input))], 'setup: the canonical transcript carries the batch the mark committed to');
     const j = await (await fetch(`${base(w.b)}/replay/transcript?round=${toHex(w.rid)}&entry=${toHex(p.eid)}`)).json();
     delete j.clock;
     j.loads = [FORBIDDEN];
     const inputs = new TextEncoder().encode(JSON.stringify(j));
-    const ask = (against, claimed) => buildObjectionBundle({ base: base(w.b), roundId: w.rid, entryId: p.eid, signedRunId: against,
-      playerPubkey: signed.playerPubkey, claimed, transcript: canon, inputs });
-    const probe = await checkObjectionAt({ base: base(w.b), roundId: w.rid, entryId: p.eid, bundle: (await ask(runId(signed), { outcome: signed.outcome, score: signed.score })).bundle });
-    const claimed = probe.replayed || { outcome: signed.outcome, score: signed.score };
+    const claimed = { outcome: signed.outcome, score: signed.score + 1 };
     // THE FIRST OBJECTION, at both seats
-    const first = await ask(runId(signed), claimed);
+    const first = await buildObjectionBundle({ base: base(w.b), roundId: w.rid, entryId: p.eid, signedRunId: runId(signed),
+      playerPubkey: signed.playerPubkey, claimed, transcript: canon, inputs });
     const firsts = [];
     for (const d of [w.a, w.b]) { const r = await postObjection(d, w, p.eid, first.bundle); firsts.push([r.status, (await r.text()).trim()]); }
-    // THE RE-RUN, agreed by both seats (it replays their stored inputs)
-    const agreed = await until(() => [w.a, w.b].every((d) => { const f = stateAt(d, w, p.eid); return f.rerun && f.rerun.runId; }), 30000);
-    const rerunRun = stateAt(w.a, w, p.eid).rerun && stateAt(w.a, w, p.eid).rerun.runId;
-    const facts = { signed: { outcome: signed.outcome, score: signed.score }, claimed, firsts, agreed, rerunRun: rerunRun && rerunRun.slice(0, 16),
-      states: [w.a, w.b].map((d) => stateAt(d, w, p.eid).state) };
-    if (!agreed) { console.log('  FACTS:', JSON.stringify(facts)); assert.equal(firsts[0][0], 422, `the first objection held (${JSON.stringify(firsts)}) and the re-run never agreed`); return; }
-    // THE RETRY: the same forbidden-bed inputs against the agreed re-run
-    const second = await ask(Buffer.from(rerunRun, 'hex'), claimed);
-    const r2 = await postObjection(w.a, w, p.eid, second.bundle);
-    const t2 = (await r2.text()).trim();
-    await wait(500);
-    const after = stateAt(w.a, w, p.eid);
-    const proofs = w.a.round.slashProofs(w.rid, p.eid);
-    Object.assign(facts, { second: [r2.status, t2], after: [after.state, after.why], slashProofs: proofs.length });
-    console.log('  FACTS:', JSON.stringify(facts));
-    assert.notEqual(after.state, 'VOID', `the entry was VOIDed by two objections whose inputs carry ${JSON.stringify(FORBIDDEN)}: ${after.why}`);
-    assert.equal(proofs.length, 0, `${proofs.length} slash proof(s) filed against honest seats on inputs carrying ${JSON.stringify(FORBIDDEN)}`);
+    await wait(1000);
+    const after = [w.a, w.b].map((d) => stateAt(d, w, p.eid));
+    const proofs = [w.a, w.b].map((d) => d.round.slashProofs(w.rid, p.eid).length);
+    console.log('  FACTS:', JSON.stringify({ answers, signed: { outcome: signed.outcome, score: signed.score }, firsts,
+      after: after.map((f) => [f.state, f.rerun ? 'rerun' : null]), slashProofs: proofs }));
+    for (const [status, text] of firsts) {
+      assert.equal(status, 422, `an objection carrying ${JSON.stringify(FORBIDDEN)} beside the batch transcript was taken: ${text}`);
+      assert.match(text, /do not reproduce the receipted checkpoint/);
+    }
+    // NO RE-RUN, SO NO SECOND OBJECTION: the entry stays as signed, and nobody is filed for slashing
+    for (const f of after) {
+      assert.equal(f.state, 'PROVISIONALLY_FINAL', `the entry is ${f.state}: ${f.why}`);
+      assert.ok(!f.rerun, 'a re-run started on an objection carrying a load the batch door refuses');
+    }
+    assert.deepEqual(proofs, [0, 0], `slash proof(s) filed against honest seats on inputs carrying ${JSON.stringify(FORBIDDEN)}`);
   } finally { await w.close(); }
 });
