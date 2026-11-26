@@ -8893,7 +8893,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const announced = new Map();
   try { for (const r of round.db.prepare('SELECT series, body, last_close_ms FROM expected_grids WHERE last_close_ms > ?').all(Date.now())) announced.set(r.series, JSON.parse(r.body)); } catch { /* none kept */ }
   const EXPECTED_AHEAD_MS = 96 * 3600000;   // kanban #1378: measured 2026-11-09 on live seats, honest grids close at most 42 h ahead
-  function announceGrid(line, txHex) {
+  async function announceGrid(line, txHex) {
     let t; try { t = parseSeriesLine(String(line)); } catch (e) { return { ok: false, code: 400, why: `that is not a series line: ${e.message}` }; }
     if (!isGridSeries(t)) return { ok: false, code: 400, why: 'only a grid series is announced here' };
     const lead = seriesLeadIsValid(t); if (!lead.ok) return { ok: false, code: 409, why: lead.why };
@@ -8917,7 +8917,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       committeeTimeMs: Number(t.committeeTimeMs), federation: t.federationId ? toHex(t.federationId) : '',
       // ITS CREATOR, whose signature over the series id was checked above: who a day marker of its publication is from (kanban #1168)
       creator: t.creatorPubkey instanceof Uint8Array ? toHex(t.creatorPubkey) : null,
-      publication: { txid: toHex(Uint8Array.from(tx.txid).reverse()), height: null }, announcedAtMs: Date.now() };
+      publication: { txid: toHex(Uint8Array.from(tx.txid).reverse()), height: null }, announcedAtMs: Date.now(),
+      // THE COINS IT SPENDS: a later announcement of this grid that spends one of them is a fee raise of it (kanban #3740)
+      inputs: tx.inputs.map((i) => `${toHex(Uint8Array.from(i.previousTxid).reverse())}:${i.previousVout}`) };
+    // ONE PUBLICATION REPLACES ANOTHER ONLY ON BETTER EVIDENCE (kanban #3740, audit gossip r2-2: the series line is public, the door is open,
+    // and the transaction is only parsed - a stranger re-posted the line with made-up bytes carrying the publication output, and since #1126
+    // every seat named a txid that never confirms, the honest grid "publication unconfirmed" until its last close). A fee raise (#1126) still
+    // replaces it: the new one must be in this node's mempool or recent blocks, and the kept one in neither or spent from the same coins. A
+    // seat that reads no chain takes only one spending a coin the kept one spends. The first announcement is still taken unread (#1378:
+    // the publication may reach this node's mempool seconds after it is announced); a made-up first one gives way to the real one this way.
+    const kept = announced.get(id);
+    if (kept && kept.publication && kept.publication.txid !== e.publication.txid) {
+      const shares = Array.isArray(kept.inputs) && e.inputs.some((o) => kept.inputs.includes(o));
+      let better = shares;
+      if (typeof chainInMempool === 'function') {
+        const seen = async (txid) => {
+          try { if (await chainInMempool(txid)) return true; } catch { /* read below */ }
+          if (typeof chainTip !== 'function' || typeof chainBlockTxids !== 'function') return false;
+          try { const tip = Number(await chainTip()); for (let h = tip; h > tip - PENDING_BACK; h--) if ((await idsAt(h)).has(txid)) return true; } catch { /* not seen */ }
+          return false;
+        };
+        better = (await seen(e.publication.txid)) && (shares || !(await seen(String(kept.publication.txid))));
+      }
+      if (!better) return { ok: false, code: 409, why: `series ${id.slice(0, 16)} keeps publication ${String(kept.publication.txid).slice(0, 16)}: ${e.publication.txid.slice(0, 16)} is ${typeof chainInMempool === 'function' ? 'not in this node\'s mempool or chain, or the kept one is and this one spends none of its coins' : 'no fee raise of it (it spends none of its coins)'}` };
+      if (announced.get(id) !== kept) return { ok: false, code: 409, why: `series ${id.slice(0, 16)} was announced again meanwhile` };
+    }
     announced.set(id, e);
     try { round.db.prepare('INSERT INTO expected_grids (series, body, last_close_ms) VALUES (?, ?, ?) ON CONFLICT(series) DO UPDATE SET body = excluded.body, last_close_ms = excluded.last_close_ms').run(id, JSON.stringify(e), lastClose); } catch { /* kept in memory */ }
     pendingKept.forget();
@@ -10445,7 +10469,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       // line must be a grid its creator signed, and the transaction must carry that series' publication output; kept until its last close
       if (req.method === 'POST' && url.pathname === '/expected') {
         let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'an announcement is JSON { line, tx }'); }
-        const got = announceGrid(j.line, j.tx);
+        const got = await announceGrid(j.line, j.tx);
         return claimJson(got.ok ? 200 : got.code, got);
       }
       if (req.method === 'GET' && url.pathname === '/expected') {
