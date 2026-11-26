@@ -12436,6 +12436,34 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
               return text(res, 409, `that lock is the ${kind} lock of an entry this signer node holds, and its lock doors still take it: it is settled with the round, never returned as refused (kanban #1848, #2547)`);
           }
         }
+        // NOR THE LOCK OF AN ENTRY OF ANOTHER ROUND WHOSE LOCK DOORS STILL TAKE IT (kanban #3750, audit entry a8-3-1, gap in #2547/#1639): the
+        // claim key is the committee's DKG key (claimKeyOf), shared by every round of the same seats, and a non-h2h round takes a handout after
+        // its close - so a stranger forged a handout of an older closed round R2 with a live R1 player's public A0 and key, and handed that
+        // player's in-flight R1 stake lock to this seat's R2 return door first. It was kept as R2's refused lock, returnedHere (#1639) refused it
+        // at POST /lock for R1 for good, one seat staked the R1 entry and this one never could. The guard above reads only the asked round's
+        // entries. So an entry this seat holds in any other round that names this outpoint as its stake or fee lock, that the lock fits (the
+        // entry player's refund key; for a stake, the entry's stake point as its image), and whose round's lock doors still take it, keeps the
+        // lock for that round: refused here. Once those doors close it is no stake there and comes back here (or by its own round's door).
+        {
+          const ridHex = toHex(rid);
+          const img = fields.paymentImage || {};
+          for (const kind of ['stake', 'fee']) {
+            const fits = (bytes) => {
+              let e; try { e = decodeEntryContract(bytes); } catch { return false; }
+              if (toHex(e.roundId) === ridHex) return false;
+              if (toHex(refundKeyOf(e.playerPubkey)) !== toHex(fields.refundPk)) return false;
+              if (kind === 'stake' && !(img.kind === 'point' && img.bytes instanceof Uint8Array && e.stakePoint && toHex(e.stakePoint) === toHex(img.bytes))) return false;
+              return true;
+            };
+            const f = typeof round.firstNamingOfLock === 'function' ? round.firstNamingOfLock(null, kind, outpoint, null, fits) : null;
+            if (!f) continue;
+            let e; try { e = decodeEntryContract(f.bytes); } catch { continue; }
+            const stored = round.entry(f.entryId);
+            if (!stored || offerRefusalOfRound(e.roundId, { held: true })) continue;
+            if (lockAfterCloseRefusal(stored, f.entryId, kind) || orderLockAfterClose(stored)) continue;
+            return text(res, 409, `that lock is the ${kind} lock of an entry this signer node holds in another round (${toHex(e.roundId).slice(0, 16)}), and that round's lock doors still take it: it is settled with that round, never returned as refused for this one (kanban #2547, #3750)`);
+          }
+        }
         const claimPk = claimKeyOf(rid);
         if (!(claimPk instanceof Uint8Array) || toHex(claimPk) !== toHex(fields.claimPk))
           return text(res, 409, 'that lock names another claim key than this round\'s');
