@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 
 const DIR = mkdtempSync(join(tmpdir(), 'wf1489-a44-refute-22-s2-1-'));
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
-const FILES = ['core-sandbox.js', 'core-supervisor.js', 'core-host.js', 'core-driver.js', 'core-hash.js', 'core-depth.js', 'vendor/acorn.mjs'];   // core-depth: kanban #2220
+const FILES = ['core-sandbox.js', 'core-supervisor.js', 'core-host.js', 'core-driver.js', 'core-hash.js', 'core-depth.js', 'core-nest.js', 'vendor/acorn.mjs'];   // core-depth: kanban #2220; core-nest: #3540
 const install = (where) => {
   const d = join(DIR, where, 'src');
   mkdirSync(join(d, 'vendor'), { recursive: true });

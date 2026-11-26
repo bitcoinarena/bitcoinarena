@@ -27,8 +27,15 @@ const coreOf = (src) => {
 };
 const tail = `export const CORE = Object.freeze({ name: 'd', RUN_TICKS: R, INPUT_WORDS: 5, start: () => ({}), eventsOf: () => ({ count: {}, before() {} }),
   step() {}, stateHash: () => 'h', result: () => ({ outcome: 'DELIVERED', score: 0, heat: 0 }) });`;
-// a builtin's own recursion (JSON.stringify of a deeply nested array) runs out of V8's stack - no core function is entered
-const nest = `let a = []; for (let i = 0; i < 1500000; i++) a = [a];\nconst blow = () => JSON.stringify(a);\n`;
+// a builtin's own recursion runs out of V8's stack - no core function is entered while it recurses. kanban #3540: the probe was
+// JSON.stringify of a 1,500,000-deep array, sized on an arm64 laptop; on x86_64 (node 24, CORE_STACK_MB 32) JSON.stringify's
+// cycle check makes it quadratic (200,000 deep: 12 s), so the load hit LOAD_MS before the stack ran out and every test saw a
+// timeout, not the overflow. Array.prototype.flat(Infinity) of an array that holds itself recurses without end (no cycle check,
+// depth Infinity - 1 = Infinity): it overflowed whatever a frame costs on the machine. Since the cap on the built-ins that recurse on
+// data (core-nest.js, the owner's ruling on #3540) that flat is refused at DEPTH_MAX with a fixed message instead, so the probe is now a
+// loop of built-ins on ONE object that never ends: Object.prototype.toLocaleString calls this.toString, which is itself. No data depth
+// is in it to cap, and a loop without end overflows on every machine (its outcome does not depend on the frame size)
+const nest = `const a = {}; a.toString = Object.prototype.toLocaleString;\nconst blow = () => String(a);\n`;
 
 const outcome = (src) => {
   try { const box = loadCore(coreFiles(coreOf(src))); const r = box.meta.RUN_TICKS; box.end(); return { loaded: true, r }; }
@@ -44,6 +51,7 @@ test('control: an identifier catch of V8\'s overflow is sticky (the load fails)'
 test('a destructuring catch of V8\'s overflow is sticky too', () => {
   const o = outcome(`${nest}let R = 1; try { blow(); } catch ({ message }) { R = message === 'Maximum call stack size exceeded' ? 777 : 2; }\n${tail}`);
   assert.equal(o.loaded, false, `the core caught V8's stack overflow and loaded with RUN_TICKS ${o.r} (777 = it read the overflow)`);
+  assert.match(o.why, /overflowed the stack/);   // kanban #3540: refused for the overflow, not for a load deadline
 });
 
 test('an overflow wrapped in a SuppressedError is sticky too', () => {
@@ -55,9 +63,11 @@ try { s.dispose(); } catch (e) { R = e && e.error && e.error.message === 'Maximu
 ${tail}`;
   const o = outcome(src);
   assert.equal(o.loaded, false, `the core caught V8's stack overflow inside a SuppressedError and loaded with RUN_TICKS ${o.r} (777/778 = it read the overflow)`);
+  assert.match(o.why, /overflowed the stack/);   // kanban #3540: refused for the overflow, not for a load deadline
 });
 
 test('a finally that returns swallows V8\'s overflow, and that is sticky too', () => {
   const o = outcome(`${nest}const probe = () => { let ok = false; try { blow(); ok = true; } finally { return ok ? 1 : 779; } };\nconst R = probe();\n${tail}`);
   assert.equal(o.loaded, false, `the core swallowed V8's stack overflow in a finally and loaded with RUN_TICKS ${o.r} (779 = it read the overflow)`);
+  assert.match(o.why, /overflowed the stack/);   // kanban #3540: refused for the overflow, not for a load deadline
 });

@@ -26,7 +26,10 @@ const coreOf = (src) => {
 };
 const tail = `export const CORE = Object.freeze({ name: 'd', RUN_TICKS: R, INPUT_WORDS: 5, start: () => ({}), eventsOf: () => ({ count: {}, before() {} }),
   step() {}, stateHash: () => 'h', result: () => ({ outcome: 'DELIVERED', score: 0, heat: 0 }) });`;
-const nest = `let a = []; for (let i = 0; i < 400000; i++) a = [a];\n`;
+// kanban #3540: the probe was flat(Infinity) of a 400000-deep array; the cap on the built-ins that recurse on data (core-nest.js) now refuses
+// that at DEPTH_MAX with its own message, so the overflow is an endless loop of built-ins on one object (no data depth to cap; it overflows
+// on every machine): its toString is Object.prototype.toLocaleString, which calls this.toString
+const nest = `const loop = {}; loop.toString = Object.prototype.toLocaleString;\n`;
 const outcome = (src) => {
   try { const box = loadCore(coreFiles(coreOf(src))); const r = box.meta.RUN_TICKS; box.end(); return { loaded: true, r }; }
   catch (e) { return { loaded: false, why: e.message }; }
@@ -34,7 +37,7 @@ const outcome = (src) => {
 const reader = (wraps) => `${nest}let R = 1;
 const s = new DisposableStack();
 for (let k = 0; k < ${wraps}; k++) s.defer(() => { throw 5; });
-s.defer(a.flat.bind(a, Infinity));
+s.defer(Object.prototype.toLocaleString.bind(loop));
 try { s.dispose(); } catch (e) {
   let x = e, levels = 0;
   while (x && typeof x === 'object' && 'suppressed' in x) { x = x.suppressed; levels++; }
