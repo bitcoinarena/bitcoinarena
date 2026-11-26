@@ -152,12 +152,17 @@ export async function sendToRelay(url, events, { connect = (u) => new WebSocket(
     ws.on('error', done);
     ws.on('close', done);
     ws.on('open', () => { for (const e of events) { try { ws.send(JSON.stringify(['EVENT', e])); } catch { /* closed under us */ } } });
+    // A RELAY'S FRAME NEVER THROWS OUT OF THIS LISTENER (kanban #3780, feedback #509): ["OK", id, false, {"toString":0}] made String() throw
+    // here - uncaught in the ws listener, the zap address process ended and re-sent the owed receipt to the same relay on every start.
+    // The reason counts only as a string; anything else in the frame costs that frame alone.
     ws.on('message', (raw) => {
-      let m; try { m = JSON.parse(String(raw)); } catch { return; }
-      if (!Array.isArray(m) || m[0] !== 'OK' || !want.has(m[1])) return;
-      answers.set(m[1], { ok: m[2] === true, why: String(m[3] ?? '') });
-      want.delete(m[1]);
-      if (!want.size) done();
+      try {
+        let m; try { m = JSON.parse(String(raw)); } catch { return; }
+        if (!Array.isArray(m) || m[0] !== 'OK' || typeof m[1] !== 'string' || !want.has(m[1])) return;
+        answers.set(m[1], { ok: m[2] === true, why: typeof m[3] === 'string' ? m[3].slice(0, 500) : '' });
+        want.delete(m[1]);
+        if (!want.size) done();
+      } catch { /* a malformed frame from this relay: ignored */ }
     });
   });
   try { ws.terminate(); } catch { /* gone */ }
