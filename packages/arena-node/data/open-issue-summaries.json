@@ -1407,6 +1407,10 @@
   "text": "Node software: the full node and client test suites on main still need triage",
   "kind": "bug"
  },
+ "3080": {
+  "text": "BTC Up/Down game: cancelled and expired seat orders can look open and cancellable after a new session",
+  "kind": "bug"
+ },
  "3083": {
   "text": "Committees and bonds: an electrum-mode node never reads a census because batched chain calls are refused",
   "kind": "bug"
@@ -3005,6 +3009,10 @@
  },
  "3794": {
   "text": "Rock Paper Scissors game: a late pick can leave the placing notice up, and presence can contradict the stage",
+  "kind": "bug"
+ },
+ "3797": {
+  "text": "Rock Paper Scissors game: the page keeps asking every seat for rounds that are missing",
   "kind": "bug"
  }
 }
