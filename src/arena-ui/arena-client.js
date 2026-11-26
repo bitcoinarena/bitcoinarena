@@ -20005,7 +20005,11 @@ function walletStoreFor(storage, federationId, secret) {
   let seen = null;
   const readGen = () => { try { return storage.getItem(genKey); } catch { return null; } };
   // not marked (storage full): another tab does not see this write - the refusal path below (already spent: opened again, once more) covers it
-  const mark = () => { const t = `${TAB_MARK}.${++walletGenCount}`; try { storage.setItem(genKey, t); seen = t; } catch { /* see above */ } };
+  // A WRITE NEVER HIDES ANOTHER CLIENT'S (kanban #3783, feedback #560): this set `seen` to its own mark on every write, so a client that wrote after
+  // another one (an older client of this tab still finishing a refund's notes, or another tab) took the other's write as seen and never opened
+  // again - the refund's 1,940 sat were in storage, the balance read the client's own copy without them. A write over a mark this store did not
+  // see leaves it stale, until it is opened again from storage.
+  const mark = () => { const t = `${TAB_MARK}.${++walletGenCount}`; try { const was = readGen(); storage.setItem(genKey, t); seen = was === seen ? t : '\u0000another'; } catch { /* see above */ } };
   return {
     stale() { return readGen() !== seen; },
     entries() {
@@ -20026,8 +20030,13 @@ function walletStoreFor(storage, federationId, secret) {
 // wrote it since. And refused as already spent (a write another tab could not mark, an older page's tab), the wallet is opened again from storage
 // and the spend made once more - only where the refusal comes with the call itself, so nothing was paid: a submission accepted behind
 // (lockSubmit, paySubmit -> lockAccepted) is never made twice here; its refusal opens the wallet again for the next press.
+// kanban #3783: and a lock's refund or redeem - its notes are issued by the client that makes it, so it is made by the wallet as storage holds it now
 const FRESH_SPENDS = new Set(['sendEcash', 'sendAllEcash', 'withdraw', 'lock', 'lockBoth', 'lockHash', 'lockWithDonations', 'lockSubmit', 'paySubmit',
-  'balanceMsat', 'withdrawableMsat']);
+  'balanceMsat', 'withdrawableMsat', 'refund', 'redeem']);
+// kanban #3783: the client that made a refund or redeem is held while its notes are issued - a client no longer referenced is freed by the
+// lock client's FinalizationRegistry, and with it the state machines that would have issued the notes
+const ISSUES_NOTES = new Set(['refund', 'redeem']);
+const HELD_ISSUERS = 16;
 // the acceptance of a submission is read by the client that made it (never one opened since); its refusal as already spent opens the wallet again
 const REFUSED_BEHIND = new Set(['lockAccepted']);
 const RETRY_SPENDS = new Set(['sendEcash', 'sendAllEcash', 'withdraw', 'lock', 'lockBoth', 'lockHash', 'lockWithDonations']);
@@ -20040,6 +20049,8 @@ const EARLY_REFUSAL_MS = 400;
 function freshWallet(client, store, reopen, onStep = () => {}) {
   if (!client || typeof client !== 'object' || !store || typeof store.stale !== 'function') return client;
   let inner = client, st = store, reopening = null, forced = false;
+  const madeBy = new Map();   // kanban #3781: operation -> the client that made the receive
+  const issuers = [];          // kanban #3783: the clients that made the last refunds and redeems, held
   const again = (why) => {
     if (!reopening) {
       reopening = (async () => {
@@ -20057,10 +20068,28 @@ function freshWallet(client, store, reopen, onStep = () => {}) {
       if (p === FRESH_INNER) return inner;
       const v = inner[p];
       if (typeof v !== 'function') return v;
+      // A RECEIVE IS AWAITED ON THE CLIENT THAT MADE IT (kanban #3781, feedback #511: the second faucet top-up was paid, the wallet was opened again
+      // from storage by a balance read between the invoice and its wait, and the wait went to the new client - "Operation not found", nothing
+      // claimed). The operation lives in the state machines of the client that made it; that client is kept for its wait.
+      if (p === 'receive') {
+        const made = inner;
+        return async (...a) => {
+          const r = await made.receive(...a);
+          try { const op = JSON.parse(r).operation; if (op) { madeBy.set(String(op), made); if (madeBy.size > 256) madeBy.delete(madeBy.keys().next().value); } } catch { /* no operation named: waited on the current client */ }
+          return r;
+        };
+      }
+      if (p === 'awaitReceive') {
+        return async (op, ...a) => {
+          // kept after the wait too: a page's resume and the offer's own watch may both wait on one operation
+          return (madeBy.get(String(op)) || inner).awaitReceive(op, ...a);
+        };
+      }
       if (typeof p !== 'string' || !(FRESH_SPENDS.has(p) || REFUSED_BEHIND.has(p))) return v.bind(inner);
       const made = inner;
       return async (...a) => {
         const c = REFUSED_BEHIND.has(p) ? made : await current();
+        if (ISSUES_NOTES.has(p) && !issuers.includes(c)) { issuers.push(c); if (issuers.length > HELD_ISSUERS) issuers.shift(); }
         try { return await c[p](...a); } catch (e) {
           if (!isAlreadySpent(e)) throw e;
           if (!RETRY_SPENDS.has(p)) { forced = true; throw e; }
@@ -22554,7 +22583,7 @@ async function returnStake({ round, roundId, invite, seed, curve, LockClient, st
     // what each accepted redeem brought, by its own balance reads (kanban #2350)
     broughtMsat: rs.filter((r) => r.accepted === true).reduce((t, r) => t + broughtOf(r.amount_msat, r.balance_before, r.balance_after), 0n),
     balance_before: rs.length ? rs[0].balance_before : undefined, balance_after: rs.length ? rs[rs.length - 1].balance_after : undefined,
-    txid: rs.length ? rs[0].txid : undefined, forfeitFrom: rs.length ? rs[0].forfeitFrom : undefined,
+    txid: rs.length ? rs[0].txid : undefined, txids: rs.filter((r) => r.accepted === true).map((r) => r.txid).filter(Boolean), forfeitFrom: rs.length ? rs[0].forfeitFrom : undefined,
     why: ok ? undefined : spent ? 'the stake lock is already spent - back to this seed\'s key, the only key that can after the seats\' forfeit'
       : (rs.find((r) => r.error) || {}).error || 'the federation did not accept the redeem' };
   if (ok && storage) {
@@ -23194,7 +23223,7 @@ async function refundKept({ round, roundId, seed, curve, client, storage, kept =
     }
     const said = JSON.parse(await client.refund(txid, outIdx, JSON.stringify(lockFieldsToJson(l.fields)), toHex(player.secret)));
     each.push({ kind: l.kind, state: said.accepted === true ? 'refunded' : 'refused', amountMsat, error: said.error || null,
-      balance_before: said.balance_before, balance_after: said.balance_after });
+      balance_before: said.balance_before, balance_after: said.balance_after, txid: said.txid || null });
   }
   const refunded = each.filter((e) => e.state === 'refunded');
   const open = each.some((e) => e.state === 'waiting' || e.state === 'refused');
@@ -23753,12 +23782,66 @@ function collectWithin(work, ms = COLLECT_RECORD_MS, what = 'this record') {
   return Promise.race([run, late]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * A ROW ONLY FOR MONEY THAT LANDED (kanban #3783, feedback #560, round 9aff4727): the federation accepted the refund of a 1,940 sat stake lock, its
+ * notes were still being issued when the lock client's 20 s of balance reads ended, and broughtOf counted a redeem with no growth at the lock's
+ * amount (#2350) - the history said "+1,940 sat" while the balance stayed 93 sat. A refund or redeem whose own reads saw no growth and whose
+ * transaction the wallet still issues notes for (issuingDetail) has not landed: its row waits under arena.credit.pending.<fed16>.<row id> and is
+ * written by landPendingCredits once that transaction issues nothing more. A client that cannot tell (no issuingDetail) counts it as before.
+ */
+const PENDING_CREDIT_PREFIX = 'arena.credit.pending.';
+async function issuingTxids(client) {
+  if (!client || typeof client.issuingDetail !== 'function') return null;
+  try { return new Set((JSON.parse(await client.issuingDetail()) || []).map((x) => String((x && x.txid) || '').toLowerCase()).filter(Boolean)); } catch { return null; }
+}
+const grewOn = (before, after) => before !== undefined && before !== null && after !== undefined && after !== null && BigInt(after) > BigInt(before);
+/** The transactions of this collect's accepted refunds and redeems whose notes were not seen landing and are still being issued. */
+async function arrivingTxids(client, got) {
+  const said = [];
+  const r = got && got.refund;
+  if (r && Array.isArray(r.locks)) for (const e of r.locks) if (e.state === 'refunded' && e.txid && !grewOn(e.balance_before, e.balance_after)) said.push(e.txid);
+  const s = got && got.stake;
+  if (s && s.ok && !s.kept && !grewOn(s.balance_before, s.balance_after)) for (const t of (s.txids || (s.txid ? [s.txid] : []))) said.push(t);
+  if (!said.length) return [];
+  const issuing = await issuingTxids(client);
+  return issuing ? said.filter((t) => issuing.has(String(t).toLowerCase())) : [];
+}
+const pendingCreditKeys = (storage, federationId) => {
+  const pre = `${PENDING_CREDIT_PREFIX}${toHex(federationId).slice(0, 16)}.`;
+  return storageKeys(storage).filter((k) => k.startsWith(pre));
+};
+/** Writes each waiting row whose transactions this wallet no longer issues notes for; answers how many it wrote. */
+async function landPendingCredits({ client, storage, federationId } = {}) {
+  if (!storage || !client || !(federationId instanceof Uint8Array)) return 0;
+  const keys = pendingCreditKeys(storage, federationId);
+  if (!keys.length) return 0;
+  const issuing = await issuingTxids(client);
+  let wrote = 0;
+  for (const k of keys) {
+    let p; try { p = JSON.parse(storage.getItem(k)); } catch { continue; }
+    if (!p || !p.rowId) continue;
+    if (issuing && (p.txids || []).some((t) => issuing.has(String(t).toLowerCase()))) continue;
+    if (ledgerAppend(storage, federationId, p.row, p.rowId) || storage.getItem(`${ledgerKey(federationId)}.${String(p.rowId).toLowerCase()}`) !== null) {
+      try { storage.removeItem(k); } catch { /* landed again next pass, the row id keeps it one row */ }
+      wrote += 1;
+    }
+  }
+  return wrote;
+}
+
 async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, order = 0 } = {}) {
+  // kanban #3783: rows waiting for their notes are looked at on every pass, also after the round owes nothing more
+  if (storage && round && round.federationId instanceof Uint8Array && pendingCreditKeys(storage, round.federationId).length) {
+    try { await landPendingCredits({ client: await playerWallet({ round, invite, seed, LockClient, storage }), storage, federationId: round.federationId }); } catch { /* the next pass */ }
+  }
   if (!look || !(look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n)) return { collected: false, creditedMsat: 0n };
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
   const got = await collectOwed({ look, client, round, roundId, invite, seed, curve, LockClient, storage, nodes, order, ...(fetcher ? { fetcher } : {}) });
   // WHAT THE REDEEMS BROUGHT, NOT WHAT THE WALLET GREW WHILE THEY RAN (kanban #2350, #2038): the page locks the next stake from this same wallet meanwhile
-  const creditedMsat = collectBrought(got);
+  const brought = collectBrought(got);
+  // kanban #3783: and only once it landed - notes still being issued for an accepted refund are a row that waits
+  const arriving = await arrivingTxids(client, got);
+  const creditedMsat = arriving.length ? 0n : brought;
   // and the contracts redeemed in THIS call, the row's key (kanban #2038); an answer from the tab's note (kept) names none
   const parts = [];
   if (got.payout && got.payout.ok && !got.payout.kept) parts.push(`p:${got.payout.txid}:${got.payout.outIdx}`);
@@ -23772,11 +23855,15 @@ async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, cur
   const mine = toHex(refundKeyOf(playerFor({ ...round, id: roundId }, { seed, curve, order }).pubkey));
   const rowId = `col-${toHex(sha256(new TextEncoder().encode(`${toHex(roundId)}|${mine}|${order}|${parts.join('|')}`))).slice(0, 40)}`;
   if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind, msat: String(creditedMsat), round: toHex(roundId) }, rowId);
+  else if (arriving.length && brought > 0n && storage) {
+    try { storage.setItem(`${PENDING_CREDIT_PREFIX}${toHex(round.federationId).slice(0, 16)}.${rowId}`,
+      JSON.stringify({ rowId, txids: arriving, row: { kind, msat: String(brought), round: toHex(roundId) } })); } catch { /* a full browser: no row, the money is not touched */ }
+  }
   // COLLECTED ONLY WHEN SOMETHING WAS (kanban #593: this said `collected: true` whatever came of the redeems - the record of round
   // 8464c5fd was marked done with its 100 sat still in the federation, the redeem never tried): a payout, stake or refund the
   // federation accepted, or money that reached the wallet
   const collected = creditedMsat > 0n || [got.payout, got.stake, got.refund].some((x) => x && x.ok);
-  return { collected, got, creditedMsat, why: collected ? null : [got.payout, got.stake, got.refund].filter((x) => x && !x.ok).map((x) => x.why).filter(Boolean).join('; ') || null };
+  return { collected, got, creditedMsat, arrivingMsat: arriving.length ? brought : 0n, why: collected ? null : [got.payout, got.stake, got.refund].filter((x) => x && !x.ok).map((x) => x.why).filter(Boolean).join('; ') || null };
 }
 
 /**
@@ -24051,8 +24138,10 @@ function moveLegAhead(storage, federationId, made, msat, row, phrase16 = null) {
     ...(phrase16 ? { phrase16: String(phrase16).toLowerCase() } : {}) });
 }
 // `rows`: the history's two kinds - a join's swap, or the player's own Move (movePlayerWallet)
+const MOVE_REFUND_WAIT_MS = 30000;
+const satText = (msat) => { const m = BigInt(msat); return `${m / 1000n}${m % 1000n ? '.' + String(m % 1000n).padStart(3, '0').replace(/0+$/, '') : ''} sat`; };
 async function swapForRound({ from, to, amountMsat, gateways = [], storage = null, fromFederationId = null, toFederationId = null, onState = () => {},
-  rows = ['swapped-out', 'swapped-in'], phrase16 = null }) {
+  rows = ['swapped-out', 'swapped-in'], phrase16 = null, refundWaitMs = MOVE_REFUND_WAIT_MS, refundPollMs = 1000 }) {
   const amount = BigInt(amountMsat);
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   const inRow = { kind: rows[1], from: hex(fromFederationId) };
@@ -24092,9 +24181,25 @@ async function swapForRound({ from, to, amountMsat, gateways = [], storage = nul
   // THE RECEIVE ENDED Expired / Failure: its entry goes; Claimed ends below, with its row; anything else keeps it for the next page's resume
   if (final && final !== 'Claimed') depositEnded(storage, toFederationId, made.operation, final, null);
   if (!(said.state === 'Success' && final === 'Claimed')) {
-    const why = said.state === 'Success' ? `the receive in the round's federation ended ${final}` : `the payment from the other federation ended ${said.state}${said.state === 'Refunded' ? ` - the money is back there (${tried.length} gateway pair${tried.length === 1 ? '' : 's'} tried)` : ''}`;
-    onState({ state: 'stopped', why, tried });
-    return { ok: false, state: 'stopped', why, tried };
+    let why = said.state === 'Success' ? `the receive in the round's federation ended ${final}` : `the payment from the other federation ended ${said.state}${said.state === 'Refunded' ? ` - the money is back there (${tried.length} gateway pair${tried.length === 1 ? '' : 's'} tried)` : ''}`;
+    // A FAILED PAYMENT'S HELD SATS, SAID (kanban #3777, feedback #502: "Nothing was moved ... ended Failure" while the balance had fallen 13 sat):
+    // LNv2's Failure is a funding transaction the federation rejected (`said.why`, e.g. a note already spent): its notes left the balance at once
+    // and come back only through the mint client's refund - later, or for a note spent elsewhere never. Waited for a bounded time, then said.
+    let heldMsat = 0n;
+    if (said.state === 'Failure') {
+      const until = Date.now() + refundWaitMs;
+      for (;;) {
+        try { heldMsat = before - BigInt(await from.balanceMsat()); } catch { /* read again */ }
+        if (heldMsat <= 0n || Date.now() >= until) break;
+        await new Promise((r) => setTimeout(r, refundPollMs));
+      }
+      if (heldMsat < 0n) heldMsat = 0n;
+      if (said.why) why += ` (the federation: ${String(said.why).slice(0, 200)})`;
+      why += heldMsat > 0n ? ` - ${satText(heldMsat)} of that wallet are still held by the failed payment; its refund was not seen yet (they come back when the federation refunds the notes)`
+        : ' - the money is back there';
+    }
+    onState({ state: 'stopped', why, tried, heldMsat });
+    return { ok: false, state: 'stopped', why, tried, heldMsat };
   }
   const feeMsat = before - BigInt(await from.balanceMsat()) - amount;
   if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: rows[0], msat: String(amount), feeMsat: String(feeMsat), to: hex(toFederationId) });
