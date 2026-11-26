@@ -4,16 +4,17 @@
 // The rest of this header is the s2-1 case it extends:
 // kanban #1489 v1-refute-29 s2 (#1517, #1706 recheck): a seat that does not hold the whole run (a peer fed behind, or one that missed
 // the tail across a restart) gets no help from 7a, and then every one-word copy is a full replay of its own.
+// REBUILT FOR MARKS THAT NAME THEIR INPUTS (kanban #3760, after #3567 and #3758). The copies first went against a live run:
+// its mark named GENESIS, the canonical transcript carried no batch, and the inputs travelled beside it as free JSON - the
+// part a stranger varied, one replay key each, which the cap (#1878) bounds. A seat no longer signs such a run (#3567) and an
+// honest client never sends one (#3758; #3762 for the run an old client still sends). The run's mark now names its batch, so
+// the door replays the transcript's own batches, pinned by the transcript hash the objection names: every copy is the honest
+// bundle's one replay key (liveRunKeyOf answers none for a batch transcript), and the cap is never what answers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lockRound, lockAndPlay, closeRound } from './lock-round-fixture.js';
-import { WINNER, wait, say, playFor, loaded, RANDOMNESS, GENESIS_HASH } from './window-fixture.js';
-import { ed25519 } from '@noble/curves/ed25519.js';
-import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
+import { WINNER, wait, say } from './window-fixture.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
-import { init, step } from '../../nextblock/src/sim.js';
-import { hash as stateHash } from '../../nextblock/src/state.js';
-import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
 import { testNow } from './test-clock.js';
 import { resultFinality } from '../src/finality.js';
 import { runId } from '../src/verdict.js';
@@ -30,22 +31,16 @@ const postObjection = (d, w, eid, body) => fetch(`${base(d)}/objection?round=${t
 const ownResult = (d, w, eid) => decodePlayerResult(splitSignedResult(d.round.results(w.rid, eid).find((r) => toHex(r.nodePubkey) === toHex(d.round.pubkey)).bytes).body);
 const stateAt = (d, w, eid) => resultFinality(d.round, w.rid, eid);
 
-test("wf1489 v1-refute-29 s3: a cap filled while peers were down closes the door for the entry for good, the true run too", { todo: 'kanban #1489 merge19v1: on the 1.9 line #1952/#1990 (item 66) binds a live run\'s objection inputs to the run this seat stored, which the session key signed - inputs that differ from it are refused before any replay (step inputs), so this reference-run path (#1706/#1878) is not reached; no copy costs a replay either way' }, async () => {
+test("wf1489 v1-refute-29 s3: copies sent while peers were down fill no cap, and the true run is checked on its merits once they are back", async () => {
   const w = await lockRound({ endMs: testNow() + 4000 });
   try {
-    // A LIVE RUN (canonical = receipted marks over no batches): the ticks sent as a batch, the one mark naming GENESIS
+    // THE RUN, AS THE CLIENT SENDS IT: its batch, and its one mark naming that batch
     const honest = await lockAndPlay(w, WINNER, { noMarks: true });
-    const play = playFor(WINNER, w.randomness);
-    const st = loaded(init(seedWordForEntry(honest.entry, w.randomness || RANDOMNESS)));
-    for (let t = 0; t < WINNER.ticks; t++) step(st, ...play.words(t));
-    const mark = { roundId: w.rid, entryId: honest.eid, tick: WINNER.ticks, stateHash: Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16))),
-      inputChainHash: GENESIS_HASH, previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(honest.session) };
-    const signedMark = joinSigned(encodeCheckpoint(mark), ed25519.sign(checkpointId(mark), honest.session));
     for (const d of [w.a, w.b]) {
       const got = await say(d.port, honest.late[0]);
       assert.ok(got === String(WINNER.ticks) || got === '0', `batch: ${String(got).slice(0, 160)}`);
-      const rc = await say(d.port, signedMark);
-      assert.equal(rc.length, SIGNED_RECEIPT_BYTES, typeof rc === 'string' ? `the GENESIS mark was refused: ${rc}` : undefined);
+      const rc = await say(d.port, honest.late[1]);
+      assert.ok(rc instanceof Uint8Array && rc.length === SIGNED_RECEIPT_BYTES, `the mark was refused: ${String(rc).slice(0, 160)}`);
     }
     await closeRound(w, { window: false });
     assert.ok(await until(() => [w.a, w.b].every((d) => stateAt(d, w, honest.eid).state === 'PROVISIONALLY_FINAL')), 'run not signed at both seats');
@@ -53,8 +48,10 @@ test("wf1489 v1-refute-29 s3: a cap filled while peers were down closes the door
     const b = await buildObjectionBundle({ base: base(w.b), roundId: w.rid, entryId: honest.eid, signedRunId: runId(signed),
       playerPubkey: signed.playerPubkey, claimed: { outcome: signed.outcome, score: signed.score } });
     const p = decodeObjectionBundle(b.bundle);
-    assert.ok(p.inputs, 'the variant needs a live run');
-    const j0 = JSON.parse(Buffer.from(p.inputs).toString('utf8'));
+    assert.equal(decodeTranscript(p.transcript).batches.length, 1, 'setup: the canonical transcript carries the batch the mark committed to');
+    // the inputs as any seat hands them out, varied beside the transcript as the stranger did beside a live run's
+    const j0 = await (await fetch(`${base(w.b)}/replay/transcript?round=${toHex(w.rid)}&entry=${toHex(honest.eid)}`)).json();
+    delete j0.clock;
     // SEAT A DOES NOT HOLD THE RUN'S LAST TICK (a peer behind on the feed / the tail missed across a restart): the row is moved
     // out of the run's span (no row is removed), so A's own run stops one tick short of the receipted mark.
     const last = w.a.round.db.prepare('SELECT tick FROM ticks WHERE round_id = ? AND entry_id = ? ORDER BY tick DESC LIMIT 1').get(w.rid, honest.eid);
@@ -68,15 +65,14 @@ test("wf1489 v1-refute-29 s3: a cap filled while peers were down closes the door
     const answers = [];
     for (let i = 0; i < OBJECTION_VARIANTS_PER_ENTRY; i++) { const r = await postObjection(w.a, w, honest.eid, enc(copy(i))); answers.push([r.status, (await r.text()).trim()]); }
     assert.ok(answers.every((a) => a[0] === 422 && !/without a replay/.test(a[1])), JSON.stringify(answers));
-    // THE SEATS ARE BACK, AND THE 30 s RETRY (OBJECTION_REFERENCE_RETRY_MS) HAS PASSED: the last ask is dated 31 s back
+    // THE SEATS ARE BACK, AND THE 30 s RETRY (OBJECTION_REFERENCE_RETRY_MS) HAS PASSED: the last ask, if any, is dated 31 s back
     w.a.verifier.peers = (peersUp && peersUp.length) ? peersUp : [base(w.b)];
     const mem = w.a.verifier.objectionMemory.get(`${toHex(w.rid)}:${toHex(honest.eid)}`);
-    assert.ok(mem, 'the door kept memory for the entry');
-    mem.askedMs.set('at', Date.now() - 31000);
-    // THE TRUE RUN (the public bundle's own inputs, which reproduce every receipted mark) - what a genuine objection carries
-    const r = await postObjection(w.a, w, honest.eid, enc(j0)); const text = (await r.text()).trim();
-    console.log('  FACTS:', JSON.stringify({ status: r.status, text: text.slice(0, 200), reference: mem.reference.size }));
+    if (mem && mem.askedMs) mem.askedMs.set('at', Date.now() - 31000);
+    // THE TRUE RUN (the public bundle as built, its inputs the transcript's batches) - what a genuine objection carries
+    const r = await postObjection(w.a, w, honest.eid, b.bundle); const text = (await r.text()).trim();
+    console.log('  FACTS:', JSON.stringify({ answers: [...new Set(answers.map((a) => a.join(' ')))], status: r.status, text: text.slice(0, 200) }));
     assert.ok(!/without a replay/.test(text), `the true run was refused by the cap, unchecked, with the committee seats reachable again: ${text}`);
-    assert.ok(mem.reference.size > 0, 'the seat never asked the committee seats again for a reference run');
+    assert.equal(text, answers[0][1], 'the true run was answered otherwise than the copies, which replay the same batches');
   } finally { await w.close(); }
 });
