@@ -80,6 +80,10 @@ export function drawnForRole(contract, role) {
   return Math.min(slots + 2, 2 * t - 1);
 }
 
+/** Whether a round's draw counts only node-signed census entries (kanban #3743): protocol 2026.0.34 or later. */
+export const SIGNED_DRAW_VERSION = 34;
+const drawsSignedOnly = (contract) => { const v = Number(contract && contract.protocolVersion); return Number.isInteger(v) && v >= SIGNED_DRAW_VERSION; };
+
 export function selectCommittee({ entries, contract, role, exclude, committeeSeed, count }) {
   // EVERY NUMBER THAT DECIDES THE COMMITTEE COMES OFF THE CONTRACT.
   //
@@ -159,6 +163,10 @@ export function selectCommittee({ entries, contract, role, exclude, committeeSee
     // the role, and for game/verify the round's game hosted (census.js eligibleFor)
     // ONE DRAW FOR BOTH ROLES (2026.0.2): a v2 round's node serves both, so it is eligible for both
     if (!drawEligible(e, contract, role) || out.has(keyOf(e))) continue;
+    // ONLY THE NODE'S OWN BONDS DRAW IT (kanban #3743, RULED 2026-11-26 on the PR #95 question, protocol 34): a stranger's bond to a node's
+    // key (census nodeSigned false) set the key's ticket from the stranger's outpoint and added its sats to the key's weight, so a stranger
+    // could grind whether a node is drawn. From 34 an entry its node did not sign is no part of the draw; below 34 the draw is as before
+    if (drawsSignedOnly(contract) && e.nodeSigned === false) continue;
     const had = byKey.get(keyOf(e));
     const signed = e.nodeSigned !== false ? e : null;
     if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats, signed }); continue; }
