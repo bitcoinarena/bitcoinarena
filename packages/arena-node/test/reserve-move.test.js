@@ -248,3 +248,25 @@ test('a gateway failure: the move\'s contract expires and is refunded to X\'s re
   assert.ok(held(seats[0], X) > 150000000n - 100000n, 'the reserves are back under X\'s key, less fees');
   assert.equal(held(seats[7], Y), 0n);
 });
+
+test('#2925 a CLAIMED record the destination does not hold is believed nowhere: no reserve row from a made-up claim (feedback #227)', async () => {
+  const { recordDigestOf } = await import('../src/reserve-payout.js');
+  const { seats, deliver, held, xCoord, yCoord } = world();
+  const [a] = await xCoord.api.round({ height: 500 });
+  assert.equal(a.state, PAYOUT.PAID, a.why);
+  await deliver();
+  const paid = xCoord.api.stateOf(MOVE);
+  const sk = SECRET_OF.get(KY[3]);
+  const r = { ...paid, state: PAYOUT.CLAIMED, claimTxid: 'ee'.repeat(32), claimMsat: String(paid.plan.invoiceMsat), from: KY[3] };
+  delete r.sig;
+  const forged = { ...r, sig: toHex(schnorr.sign(recordDigestOf(r), sk)) };
+  for (const s of seats.filter((x) => x.fed === X)) {
+    const got = await s.api.learn(forged);
+    assert.equal(got.ok, false, `an X seat kept a made-up claim: ${JSON.stringify(got)}`);
+    assert.equal(held(s, Y), 0n, 'no destination row from a claim the destination does not hold');
+  }
+  const [b] = await yCoord.api.round({ height: 502 });
+  assert.equal(b.state, PAYOUT.CLAIMED, b.why);
+  await deliver();
+  assert.ok(seats.every((s) => s.api.stateOf(MOVE).state === PAYOUT.CLAIMED), 'the real claim still stands everywhere');
+});
