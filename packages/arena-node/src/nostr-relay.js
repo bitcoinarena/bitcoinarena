@@ -368,9 +368,11 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // a message of up to maxPayload (128 KiB), and with no cap on sockets per address (the tunnel) N sockets that each sent most of a frame and
   // never its end held N x 128 KiB for as long as they stayed open. Every socket's bytes since its last whole message now count against
   // lim.wsBudget (one budget for all: behind the tunnel every peer has the same address, so no per-address share), with a small reserve for
-  // small messages past it, and a message unfinished for lim.wsMessageMs is not waited for (body-budget.js messageBudget, as server.js's)
+  // small messages past it, and a message unfinished for lim.wsMessageMs is not waited for (body-budget.js messageBudget, as server.js's).
+  // Being one pool for every peer, it must not be first come, first served (kanban #3734): a message that finds it full ends the sockets
+  // whose unfinished messages began first, not itself (evictOldest), so a stranger's held frames do not get every honest socket ended
   const wsMessages = messageBudget({ total: lim.wsBudget, perAddress: lim.wsBudget, reserve: Math.max(512 * 1024, Math.floor(lim.wsBudget / 4)),
-    smallMost: MAX_EVENT_BYTES * 2, messageMs: lim.wsMessageMs });
+    smallMost: MAX_EVENT_BYTES * 2, messageMs: lim.wsMessageMs, evictOldest: true });
   // ONE SHARED BUDGET DOES NOT DECIDE WHO IS REFUSED (kanban #3145, #1489 r1120b-refute-10 of #3044): junk frames made distinct (a counter in
   // `content`: a fresh id, so never in refusedSigs) over 300 free sockets kept the one bucket empty, and every honest EVENT - a seat's signed
   // 30762 round result, a player's profile - was answered 'rate-limited' for as long as the flood lasted. Now the shared bucket is spent
