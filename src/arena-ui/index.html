@@ -5093,7 +5093,12 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         const secs = (ms) => (ms / 1000).toFixed(2).replace(/\.?0+$/, (m) => (m.startsWith('.') ? '' : m)) + ' s';
         let submittedAt = null;
         try { if (window.ARENA_MADE_ENTRY) window.ARENA_MADE_ENTRY(ARENACLIENT.toHex(ARENACLIENT.entryId(entry))); } catch { /* the pick still goes */ }   // kanban #2035
-        const sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, handedOut: window.ARENA_HANDED_OUT, onSubmitted: (x) => {
+        // THE SUBMITTED NOTE ENDS ON EVERY EXIT (kanban #3778, feedback #505: "Order submitted in 1.54 s · placing …" stayed into the next
+        // window after the lock was refused - the note had no hide timer and the refused path never touched it): a throw or a refusal after it
+        // replaces it with "Order not placed", hidden after 6 s like the placed note
+        const tookEnd = () => { if (submittedAt !== null) tookNote('Order not placed', true); };
+        let sent;
+        try { sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, handedOut: window.ARENA_HANDED_OUT, onSubmitted: (x) => {
           early = x.entryId;
           // AN ORDER STILL PLACING AFTER 10 s KEEPS ITS LOG TOO (playtest 2026-10-24 21:26Z: "It's stuck at placing" - 0f975760's entry at six
           // seats, no lock at any, and no log kept: only a placed order kept one): the slow tx row and its Copy log, without waiting for the end
@@ -5105,7 +5110,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           submittedAt = performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0);   // from the press (market.order), else from here
           if (window.ARENA_NOTE_ORDER_TIME) window.ARENA_NOTE_ORDER_TIME(named.roundIdHex + ':' + (Number(chosen.orderIndex) || 0), 'submittedMs', submittedAt);
           tookNote('Order submitted in ' + secs(submittedAt) + ' · placing …', false);
-        } });
+        } }); } catch (e) { tookEnd(); throw e; }
         console.log('[arena] pick ' + chosen.pick + ' in ' + named.roundIdHex.slice(0, 16) + ': ' + JSON.stringify(sent.entries.map((x) => x.status))
           + (sent.ok ? ' - placed in ' + Math.round(performance.now() - t0) + ' ms' : ''));
         // THE HANDOUT'S WORD, NOW (a market order sent beside it): fewer seats than needed hold the stake - the order is refused
@@ -5115,6 +5120,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           if (early) { try { window.sessionStorage.setItem('arena.market.picks', JSON.stringify(readPicks().filter((x) => x.entryIdHex !== early))); } catch { /* this page only */ } }
           window.ARENA_ORDER_BUSY_UNTIL = 0;
           if (early && window.ARENA_KEEP_SLOW_TX) window.ARENA_KEEP_SLOW_TX(early, performance.now() - (window.ARENA_ORDER_PRESSED_AT || t0));   // a refused order's log, kept
+          tookEnd();
           window.ARENA_JOIN_REFUSED = 'the seats refused the pick: ' + sent.why; return;
         }
         window.ARENA_PICKED = { round: named.roundIdHex, entryIdHex: sent.entryId, pick: chosen.pick, state: sent.ok ? 'placed' : 'submitted' };
