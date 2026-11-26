@@ -9,12 +9,16 @@
 // ROUTED VOLUME (gateway-volume.js): `incoming(from)` streams the federation's LNv2 incoming contracts after a stream index; each one is
 // credited to the gateway whose module key (its routing_info's module_public_key) funded it, in the epoch of the probe that first
 // saw it. The first probe only takes the index (history before the watch is not credited to any epoch). Outgoing is not counted.
-import { checkGatewayClaim, pegInOutpointsOf } from '../../arena-protocol/src/gateway-claim.js';
+import { checkGatewayClaim, pegInOutpointsOf, checkGatewayLnProof, gatewayLnProofRequired, GATEWAY_LN_PROOF_FROM } from '../../arena-protocol/src/gateway-claim.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { seatGateways, GATEWAY_EPOCH_BLOCKS, GATEWAY_SEATS, GATEWAY_MINIMUMS } from '../../arena-protocol/src/gateway-seats.js';
 import { pegInPressure } from '../../arena-protocol/src/capacity.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { nodeBondOf } from '../../arena-protocol/src/census.js';
 import { answersUpTo } from './peer-read.js';   // kanban #2650
+
+// the Lightning key behind a compact signature (LND signmessage): 64 bytes r||s, its recovery bit, the 32-byte digest -> 33-byte key
+const recoverLn = (sig64, bit, digest) => secp256k1.recoverPublicKey(Uint8Array.from([bit, ...sig64]), digest, { prehash: false });
 
 // `endpointOf(entry)`: where that node answers now - its newest signed address announcement before its advert's endpoint (kanban
 // #577, measured 2026-10-22: the three installer guardians of 89ce310e restarted on an update, their quick tunnels took new names,
@@ -32,7 +36,10 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   seatsFor = async () => GATEWAY_SEATS,
   // THE FEDERATION'S RESERVE AND CAP from its record (§23A.3a part 2): async (fid) -> { reserveSats, exposureCapSats } | null; with them,
   // under peg-in pressure the proved peg-in ranks before volume
-  pressureFor = async () => null }) {
+  pressureFor = async () => null,
+  // THE LIGHTNING-KEY PROOF (kanban #3739): `recover` for its check, and the cut-over heights per network (gateway-claim.js)
+  // `proofNetwork()`: the network whose cut-over applies, read at each judgement (the seat's chain; `network` when not given)
+  recover = recoverLn, lnProofFrom = GATEWAY_LN_PROOF_FROM, proofNetwork = () => network }) {
   const epochs = new Map();          // epoch -> Map(node hex -> { probes, up, claim, modulePk })
   const volumes = new Map();         // epoch -> Map(gateway module key -> msat)
   let cursor = null;
@@ -41,7 +48,16 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   // its availability and routed volume, and take the second seat with it (both seats one gateway). Like a peg-in outpoint (#559/#543), a
   // gateway (its normalized URL, its module key) is held by the first node this guardian saw name it, for as long as that node still names
   // it; a later claim naming it is probed as down and credited no volume. Kept with the rest of the state, so a restart keeps the holder
+  // THE GATEWAY GOES TO THE CLAIM THAT PROVES IT (kanban #3739, owner ruling 2026-11-25): first-come left the gateway to whichever
+  // claim this guardian read first - the federation record's guardian order - so a guardian listed before the operator took its seat.
+  // A claim carrying a good Lightning-key proof (gateway-claim.js: the gateway's Lightning key signed this node, this federation, this
+  // URL - and the gateway's routing_info answers that Lightning key) takes the gateway from a holder that proves nothing; a holder that
+  // proves it keeps it. Before the cut-over (GATEWAY_LN_PROOF_FROM) claims without a proof keep the first-come rule between them; from
+  // it they count for nothing
   const owners = new Map();          // 'url:<normalized>' | 'pk:<module key>' -> node hex
+  const provedCache = new WeakMap();
+  const lnProved = (c) => { if (!c || typeof c !== 'object') return false; if (!provedCache.has(c)) provedCache.set(c, checkGatewayLnProof(c, recover).ok); return provedCache.get(c); };
+  const proofRequired = (e) => { let n = network; try { n = proofNetwork() || network; } catch { n = network; } return gatewayLnProofRequired(n, e * epochBlocks, lnProofFrom); };
   const seatedBy = new Map();        // epoch -> [node hex] this guardian ranked into the seats
   // a seat's advert names its endpoint as wss://... (the guardian socket's address); its HTTP doors are the same address over https
   // (measured 2026-10-19 21:1xZ: fetch refused every wss:// claim URL - "unknown scheme" - so no claim stood and no gateway was seated)
@@ -94,12 +110,20 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     } catch { /* none kept */ }
   }
   const gatewayKeyOf = (u) => { try { const x = new URL(String(u)); return `url:${x.protocol}//${x.host.toLowerCase()}${x.pathname.replace(/\/+$/, '').toLowerCase()}`; } catch { return `url:${String(u).toLowerCase()}`; } };
-  // whether `key` is held by another node that still names it (its newest row, this epoch's or the one before)
-  const heldByOther = (key, node, epoch) => {
+  // whether `key` is held by another node that still names it (its newest row, this epoch's or the one before); a claimant that proves
+  // the gateway (`proves`) is not kept out by a holder that does not (kanban #3739)
+  const heldByOther = (key, node, epoch, proves = false) => {
     const o = owners.get(key);
     if (!o || o === node) return false;
     const r = (epochs.get(epoch) || new Map()).get(o) || (epochs.get(epoch - 1) || new Map()).get(o);
-    return !!(r && r.claim && (gatewayKeyOf(r.claim.gatewayUrl) === key || (r.modulePk && `pk:${r.modulePk}` === key)));
+    if (!(r && r.claim && (gatewayKeyOf(r.claim.gatewayUrl) === key || (r.modulePk && `pk:${r.modulePk}` === key)))) return false;
+    return !(proves && !lnProved(r.claim));
+  };
+  // a key taken from a holder that proves nothing: that holder's row of this epoch loses the module key it was credited with
+  const take = (key, node, rows) => {
+    const o = owners.get(key);
+    if (o && o !== node) { const r = rows.get(o); if (r && r.modulePk && (key === `pk:${r.modulePk}` || key === gatewayKeyOf(r.claim.gatewayUrl))) delete r.modulePk; }
+    owners.set(key, node);
   };
   async function probeOnce() {
     const fid = await federationId();
@@ -117,6 +141,10 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     const all = (await entries()) || [];
     const seatedList = (await seated(fid)) || [];
     const said = { atMs: Date.now(), epoch, seated: seatedList.length, census: all.length, withEndpoint: 0, claims: 0 };
+    const required = proofRequired(epoch);
+    // every claim read first, then judged - those that prove their gateway before those that do not (kanban #3739): the record's
+    // guardian order decides only between claims alike
+    const read = [];
     for (const node of seatedList) {
       const e = all.find((x) => toHex(x.pubkey) === node);
       const ep = e ? endpointOf(e) : null;
@@ -129,19 +157,30 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
         if (r.status === 200) { const c = await r.json(); if (checkGatewayClaim(c, verify).ok && c.node === node && c.federationId === fid) claim = c; }
       } catch { claim = null; }
       if (!claim) continue;                 // no claim: this node does not stand
+      const proves = lnProved(claim);
+      // FROM THE CUT-OVER, A CLAIM THAT DOES NOT PROVE ITS GATEWAY COUNTS FOR NOTHING (kanban #3739)
+      if (required && !proves) { rows.delete(node); continue; }
+      read.push({ node, claim, proves });
+    }
+    for (const { node, claim, proves } of [...read.filter((x) => x.proves), ...read.filter((x) => !x.proves)]) {
       said.claims++;
       const row = rows.get(node) || { probes: 0, up: 0, claim };
       row.probes++; row.claim = claim;
       // ANOTHER NODE'S GATEWAY (kanban #2422): counted as down, no module key - no availability, no volume
       const urlKey = gatewayKeyOf(claim.gatewayUrl);
-      if (heldByOther(urlKey, node, epoch)) { delete row.modulePk; rows.set(node, row); continue; }
-      owners.set(urlKey, node);
+      if (heldByOther(urlKey, node, epoch, proves)) { delete row.modulePk; rows.set(node, row); continue; }
+      take(urlKey, node, rows);
       try {
         const r = await fetcher(`${claim.gatewayUrl}routing_info`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(fid), signal: AbortSignal.timeout(timeoutMs) });
         const body = r.status === 200 ? (await r.text()).trim() : 'null';
-        if (body && body !== 'null') { row.up++; try { const k = JSON.parse(body).module_public_key; if (/^0[23][0-9a-f]{64}$/.test(k || '')) {
-          if (heldByOther(`pk:${k}`, node, epoch)) { row.up--; delete row.modulePk; } else { row.modulePk = k; owners.set(`pk:${k}`, node); }
-        } } catch { /* no key */ } }
+        let info = null; try { info = JSON.parse(body); } catch { info = null; }
+        // THE GATEWAY ANSWERS THE CLAIM'S LIGHTNING KEY (kanban #3739): a gateway whose routing_info names another Lightning key is not
+        // the claim's - down this probe; a claim that proves its gateway needs the gateway to name its key
+        const ln = info && typeof info === 'object' && /^0[23][0-9a-f]{64}$/.test(String(info.lightning_public_key || '').toLowerCase()) ? String(info.lightning_public_key).toLowerCase() : null;
+        const sameLn = ln ? ln === claim.lightningPubkey : !proves;
+        if (body && body !== 'null' && sameLn) { row.up++; try { const k = info.module_public_key; if (/^0[23][0-9a-f]{64}$/.test(k || '')) {
+          if (heldByOther(`pk:${k}`, node, epoch, proves)) { row.up--; delete row.modulePk; } else { row.modulePk = k; take(`pk:${k}`, node, rows); }
+        } } catch { /* no key */ } } else if (body && body !== 'null') delete row.modulePk;
       } catch { /* down this probe */ }
       rows.set(node, row);
     }
@@ -186,8 +225,16 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     // ONE EPOCH RANKED: its probes' candidates, by gateway-seats.js, the epoch before's holders (`inc`) stepping back
     const rank = async (e, inc) => {
       // only claims for the federation ranked (kanban #2290)
-      const rows = new Map([...(epochs.get(e) || new Map())].filter(([, r]) => r && r.claim && r.claim.federationId === fid));
-      const candidates = [...rows].map(([node, r]) => {
+      const rows = new Map([...(epochs.get(e) || new Map())].filter(([, r]) => r && r.claim && r.claim.federationId === fid
+        // from the cut-over, only claims that prove their gateway are ranked (kanban #3739)
+        && (!proofRequired(e) || lnProved(r.claim))));
+      // A GATEWAY A PROVING CLAIM NAMES (its URL, its module key) is that claim's in the epoch ranked: another row naming it without a
+      // proof is not registered and is credited no volume, whatever it was probed as before the proving claim came (kanban #3739)
+      const provenKeys = new Set();
+      for (const [, r] of rows) if (lnProved(r.claim)) { provenKeys.add(gatewayKeyOf(r.claim.gatewayUrl)); if (r.modulePk) provenKeys.add(`pk:${r.modulePk}`); }
+      const borrowed = (r) => !lnProved(r.claim) && (provenKeys.has(gatewayKeyOf(r.claim.gatewayUrl)) || (r.modulePk && provenKeys.has(`pk:${r.modulePk}`)));
+      const candidates = [...rows].map(([node, r0]) => {
+        const r = borrowed(r0) ? { ...r0, up: 0, modulePk: undefined } : r0;
         const x = all.find((y) => toHex(y.pubkey) === node);
         return { node: Uint8Array.from(Buffer.from(node, 'hex')), operatorId: (x && x.advert && x.advert.operatorId) || node, seatedGuardian: seatedNow.has(node),
           registered: r.up > 0, volumeSats: r.modulePk ? ((volumes.get(e) || new Map()).get(r.modulePk) || 0n) / 1000n : 0n, capacitySats: BigInt(r.claim.capacitySats), inboundSats: BigInt(r.claim.inboundSats || 0), outboundSats: BigInt(r.claim.outboundSats || 0), outsideInboundSats: BigInt(r.claim.outsideInboundSats || 0), pegInSats: BigInt(r.claim.pegInSats),

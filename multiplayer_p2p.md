@@ -5781,6 +5781,28 @@ all of these hold:
 
 An **epoch** is 144 blocks, about a day.
 
+**The Lightning-key proof: the gateway is the node's that proves it** *(2026-11-25, kanban #3739; owner ruling: "Lightning-key proof,
+with a grace period")*. A claim's gateway URL and Lightning key are the node's own word, so a seated guardian could sign a claim naming
+another operator's gateway; with "held by the first node a guardian saw name it" (#2422) the guardian read first - the federation record's
+guardian order - took that operator's seat, its routed volume and its fee share.
+- **The field.** A claim carries `lightningProof`: the signature of the gateway's **Lightning node key** (the claim's `lightningPubkey`)
+  on the message `ARENA/v1/GATEWAY_LN_PROOF:<node key hex>:<federation id hex>:<gateway URL>`, in LND's `signmessage` format
+  (sha256d of `"Lightning Signed Message:" + message`, compact recoverable ECDSA, zbase32). The node's custody agent asks its own LND
+  (`POST /v1/signmessage`, admin macaroon) each time it signs the claim. The field is under the claim's node-key signature (after the
+  peg-in outpoints; a claim without it hashes as before).
+- **The check.** A guardian counts the proof when the key it recovers is the claim's `lightningPubkey`, for this node, this federation
+  and this URL - a proof copied into another node's claim fails. The gateway's `routing_info` must answer the same Lightning key
+  (`lightning_public_key`): a gateway that answers another key is not the claim's and is probed as down; a proving claim whose gateway
+  answers no key is probed as down too.
+- **A gateway two claims name** (its URL, normalized, or the module key its `routing_info` answers) goes to the claim that proves it:
+  a proving claim takes it from a holder that proves nothing, whatever the order the guardian reads them in, and the other claim is
+  probed as down and credited no volume (also for the probes of that epoch before the proving claim came). Two claims that both prove
+  it (the operator's LND signed for both): the first-come rule of #2422 between them.
+- **The grace period.** Until the cut-over, claims without a proof keep the first-come rule between them (#2422). From the cut-over a
+  claim without a good proof counts for nothing: it is not probed and not ranked. The cut-over is one block height per network, the
+  first block of a gateway epoch (`GATEWAY_LN_PROOF_FROM` in `gateway-claim.js`): **testnet4 169,488** (epoch 1177, about 30 days after
+  the release of 2026-11-25 - *to be confirmed by the owner*); mainnet and regtest from their first block.
+
 **The channel ring** *(2026-10-18; the installer's LND had no inbound liquidity, so its gateway could take no deposit)*:
 once a federation is founded, its custody nodes, in node-key order, each open one public channel of 150,000 sat (testnet4) to the
 next. Every gateway then has one channel out and one in, made by the federation's own nodes, with nothing run by anyone else.

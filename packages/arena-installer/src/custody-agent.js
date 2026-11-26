@@ -18,7 +18,7 @@ import { onchainAction, resumeOpen } from './onchain-action.js';
 import { advertFor, buildAdvertUpdate, buildSend, EMERGENCY_IN_ADVERT } from './bond.js';
 import { emergencyOf } from './seed.js';
 import { joinFederation, testGateway, depositAddress } from './gateway.js';
-import { lndChannels, testLnd, lndFunds, lndPeers, lndConnect, lndOpenTo, lndClose } from './lnd.js';
+import { lndChannels, testLnd, lndFunds, lndPeers, lndConnect, lndOpenTo, lndClose, lndSignMessage } from './lnd.js';
 
 /** THE RING CHANNEL each custody node opens to the next node of its federation (sat), and what the deposit sets aside for it with fees. */
 export const RING_SATS = 150000;
@@ -35,7 +35,7 @@ export const LIGHTNING_HUBS = Object.freeze({
   testnet4: Object.freeze(['02bf834901a65ed21af3c45c9c02e03213f56034e9b2a514ece11e9b9e7b4c4859@boxy5rnx32ovj2qa2l2sw6p5nns3t2u2zephqe6x3fkbqbfoamdu6xad.onion:9735']),
   mainnet: Object.freeze([]),
 });
-import { signGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
+import { signGatewayClaim, gatewayLnProofMessage } from '../../arena-protocol/src/gateway-claim.js';
 import { LIQUIDITY_TERMS } from '../../arena-protocol/src/liquidity.js';
 import { writeFileSync } from 'node:fs';
 import { guardianSetupOf } from './state.js';
@@ -54,7 +54,7 @@ export function guardianOfEntry(dir) {
   return { invite, federationId, guardianKey };
 }
 
-export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast, seen: txSeen }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd, hubs = LIGHTNING_HUBS.testnet4,
+export function createCustodyAgent({ state, release, chainKit = { coinsOf, broadcast, seen: txSeen }, gw = { joinFederation, testGateway, depositAddress }, channels = lndChannels, lndInfo = testLnd, lnSign = lndSignMessage, hubs = LIGHTNING_HUBS.testnet4,
   lnd = { funds: lndFunds, peers: lndPeers, connect: lndConnect, openTo: lndOpenTo, close: lndClose }, ringMembers = null, log = () => {}, nowMs = () => Date.now(),
   restartGateway = async () => (await import('./node-services.js')).control('restart', 'gateway', { home: state.home }),
   followTunnel = async () => (await import('./node-services.js')).followTunnelNow({ home: state.home }),
@@ -214,7 +214,13 @@ export function createCustodyAgent({ state, release, chainKit = { coinsOf, broad
         const outsideIn = ch.ok ? ch.open.filter((x) => x.public && x.active && !inside.has(x.peer)).reduce((a, x) => a + (x.remoteSats || 0), 0) : 0;
         const { schnorr } = await import('@noble/curves/secp256k1.js');
         const nodeSecret = nodeSecretOf();
-        const claim = signGatewayClaim({ node: Buffer.from(schnorr.getPublicKey(nodeSecret)).toString('hex'), federationId: g.federationId, gatewayUrl: s.gateway.publicUrl,
+        const nodeHex = Buffer.from(schnorr.getPublicKey(nodeSecret)).toString('hex');
+        // THE LIGHTNING-KEY PROOF (spec §23A.9, kanban #3739): this node's LND signs (node key, federation, gateway URL) with its node key -
+        // the proof that this gateway is this node's; without it a guardian counts the claim only until the cut-over
+        let proof = null;
+        try { const p = await lnSign(s.lightning, { message: gatewayLnProofMessage(nodeHex, g.federationId, s.gateway.publicUrl) }); if (p && p.ok) proof = p.signature; else log(`gateway claim without its Lightning-key proof: ${(p && p.why) || 'LND did not sign'}`); }
+        catch (e) { log(`gateway claim without its Lightning-key proof: ${e.message}`); }
+        const claim = signGatewayClaim({ node: nodeHex, federationId: g.federationId, gatewayUrl: s.gateway.publicUrl, ...(proof ? { lightningProof: proof } : {}),
           lightningPubkey: s.lightning.pubkey, capacitySats: ch.ok ? ch.publicCapacitySats : 0, pegInSats: c.pegIn.sats, atMs: nowMs(),
           inboundSats: ch.ok ? ch.inboundSats || 0 : 0, outboundSats: ch.ok ? ch.outboundSats || 0 : 0, outsideInboundSats: outsideIn, lightningAddr: await lightningAddrOf(s) }, (h) => schnorr.sign(h, nodeSecret));
         writeFileSync(claimFile, JSON.stringify(claim, null, 2) + '\n');

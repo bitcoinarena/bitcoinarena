@@ -6,11 +6,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
+import { checkGatewayClaim, checkGatewayLnProof, gatewayLnProofMessage, lightningMessageDigest, zbase32Encode } from '../../arena-protocol/src/gateway-claim.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { schnorr } from '@noble/curves/secp256k1.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { createCustodyAgent, guardianOfEntry } from '../src/custody-agent.js';
 import { emergencyOf } from '../src/seed.js';
 import { nodeState } from '../src/state.js';
@@ -18,6 +18,13 @@ import { readAdvertUpdate, checkAgainstBond } from '../../arena-protocol/src/adv
 import { inviteForGuardians } from '../../arena-node/src/invite.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+
+// THIS NODE'S LND (kanban #3739): its node key signs the claim's Lightning-key proof (SignMessage: compact, zbase32), as LND answers it
+const LN_SECRET = new Uint8Array(32).fill(44), LNPK = toHex(secp256k1.getPublicKey(LN_SECRET, true));
+const lnSigned = []; let lnDown = false;
+const lnSign = async (cfg, { message }) => { if (lnDown) return { ok: false, why: 'LND is not answering' }; lnSigned.push(message);
+  const r = secp256k1.sign(lightningMessageDigest(message), LN_SECRET, { prehash: false, format: 'recovered' }); return { ok: true, signature: zbase32Encode(Uint8Array.from([31 + r[0], ...r.slice(1)])) }; };
+const recoverLn = (sig64, bit, d) => secp256k1.recoverPublicKey(Uint8Array.from([bit, ...sig64]), d, { prehash: false });
 
 test('the custody agent: waits for the founding, then guardian_of, the gateway\'s federation, the peg-in - each once', async () => {
   const home = mkdtempSync(join(tmpdir(), 'custody-'));
@@ -45,10 +52,10 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   let lndOnchain = 0; const lndCalls = []; const connected = new Set();
   const ring = [{ node: '00'.repeat(32), lightningPubkey: '02' + '11'.repeat(32), lightningAddr: '198.51.100.1:9735' },
     { node: 'ff'.repeat(32), lightningPubkey: '03' + '22'.repeat(32), lightningAddr: '' }];
-  const agent = createCustodyAgent({ state, release: home, chainKit, gw, nowMs: () => clock, hubs: [`${hub}@hubhubhub.onion:9735`],
+  const agent = createCustodyAgent({ state, release: home, chainKit, gw, nowMs: () => clock, hubs: [`${hub}@hubhubhub.onion:9735`], lnSign,
     channels: async () => ({ ok: true, open, pending: [], publicCapacitySats: 250000, inboundSats: 0, outboundSats: 250000 }),
-    lndInfo: async () => ({ ok: true, uris: ['02' + '99'.repeat(32) + '@203.0.113.9:9735'] }),
-    ringMembers: async () => [...ring, { node: toHex(schnorr.getPublicKey(nodeSecret)), lightningPubkey: '02' + '99'.repeat(32), lightningAddr: '203.0.113.9:9735' }],
+    lndInfo: async () => ({ ok: true, uris: [LNPK + '@203.0.113.9:9735'] }),
+    ringMembers: async () => [...ring, { node: toHex(schnorr.getPublicKey(nodeSecret)), lightningPubkey: LNPK, lightningAddr: '203.0.113.9:9735' }],
     lnd: { funds: async () => ({ ok: true, address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx', onchainSats: lndOnchain }),
       peers: async () => ({ ok: true, peers: [...connected] }),
       connect: async (_c, o) => { lndCalls.push(['connect', o.pubkey, o.host]); connected.add(o.pubkey); return { ok: true }; },
@@ -82,12 +89,16 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   assert.equal(pegTx.outputs[0].value, 50000n);
   assert.equal(toHex(pegTx.outputs[0].script), '0014751e76e8199196d454941c45d1b3a323f1433bd6');
   assert.match((await agent.tick()).idle, /custody is set up/, 'no public gateway address and no tested LND: no claim');
-  state.save({ gateway: { ...state.read().gateway, publicUrl: 'https://node.example.com/gateway/' }, lightning: { pubkey: '02' + '99'.repeat(32) } });
+  state.save({ gateway: { ...state.read().gateway, publicUrl: 'https://node.example.com/gateway/' }, lightning: { pubkey: LNPK } });
   assert.equal((await agent.tick()).did, 'gateway-claim');
   const claim = JSON.parse(readFileSync(join(home, 'gateway-claim.json'), 'utf8'));
   assert.equal(checkGatewayClaim(claim, (s, m, k) => schnorr.verify(s, m, k)).ok, true, 'signed by the node key');
   assert.deepEqual([claim.node, claim.federationId, claim.gatewayUrl, claim.capacitySats, claim.pegInSats], [toHex(schnorr.getPublicKey(nodeSecret)), fid, 'https://node.example.com/gateway/', '250000', '50000']);
   assert.deepEqual([claim.inboundSats, claim.outboundSats, claim.outsideInboundSats, claim.lightningAddr], ['0', '250000', '40000', '203.0.113.9:9735'], 'inbound and outbound apart, the inbound from outside the federation, and where LND takes peers');
+  // THE LIGHTNING-KEY PROOF (kanban #3739): its LND signed (this node, this federation, this gateway URL), and it checks against its key
+  assert.deepEqual(lnSigned, [gatewayLnProofMessage(toHex(schnorr.getPublicKey(nodeSecret)), fid, 'https://node.example.com/gateway/')]);
+  assert.equal(claim.lightningPubkey, LNPK);
+  assert.deepEqual(checkGatewayLnProof(claim, recoverLn), { ok: true });
   // THE OUTSIDE CHANNEL first: to the hub (an onion address, dialled over Tor), funded into LND's wallet once
   coins = [{ txid: '7c'.repeat(32), vout: 1, sats: 400000 }];
   assert.equal((await agent.tick()).did, 'outside-fund');
@@ -125,7 +136,11 @@ test('the custody agent: waits for the founding, then guardian_of, the gateway\'
   assert.equal((await agent.tick()).did, 'ring-channel');
   assert.deepEqual(lndCalls.slice(-2), [['connect', '02' + '33'.repeat(32), '192.0.2.9:9735'], ['open', '02' + '33'.repeat(32), 150000]], 'the same coins, now to the newcomer');
   clock += 3_600_000;
+  lnDown = true;   // an LND that does not sign: the claim is still renewed, without the proof (it counts until the cut-over)
   assert.equal((await agent.tick()).did, 'gateway-claim');
+  const renewed = JSON.parse(readFileSync(join(home, 'gateway-claim.json'), 'utf8'));
+  assert.equal(renewed.lightningProof, undefined);
+  assert.equal(checkGatewayClaim(renewed, (s, m, k) => schnorr.verify(s, m, k)).ok, true);
   assert.equal(sent.length, 5, 'each payment once');
   state.save({ roles: ['verify'] });
   assert.match((await agent.tick()).idle, /no custody role/);

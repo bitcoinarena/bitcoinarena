@@ -29,7 +29,8 @@ import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import https from 'node:https';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { signGatewayClaim, checkGatewayClaim } from '../../arena-protocol/src/gateway-claim.js';
+import { signGatewayClaim, checkGatewayClaim, gatewayLnProofMessage, checkGatewayLnProof } from '../../arena-protocol/src/gateway-claim.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 
 const arg = (k, d = null) => { const i = process.argv.indexOf(`--${k}`); return i > 0 ? process.argv[i + 1] : d; };
 const need = (k) => { const v = arg(k); if (!v) { console.error(`--${k} is required`); process.exit(2); } return v; };
@@ -41,6 +42,10 @@ const ca = readFileSync(`${lnd}/tls.cert`);
 const get = (path) => new Promise((ok, no) => https.get({ host, port: Number(port), path, ca, headers: { 'Grpc-Metadata-macaroon': mac } }, (r) => {
   let b = ''; r.on('data', (d) => (b += d)); r.on('end', () => { try { ok(JSON.parse(b)); } catch (e) { no(e); } });
 }).on('error', no));
+const post = (path, body) => new Promise((ok, no) => { const data = JSON.stringify(body);
+  const q = https.request({ host, port: Number(port), path, method: 'POST', ca, headers: { 'Grpc-Metadata-macaroon': mac, 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } }, (r) => {
+    let b = ''; r.on('data', (d) => (b += d)); r.on('end', () => { try { ok(JSON.parse(b)); } catch (e) { no(e); } }); });
+  q.on('error', no); q.end(data); });
 
 const secret = Uint8Array.from(Buffer.from(readFileSync(need('key'), 'utf8').trim(), 'hex'));
 const node = Buffer.from(schnorr.getPublicKey(secret)).toString('hex');
@@ -100,15 +105,22 @@ if (arg('peg-in-pending')) {
     pegIns.push({ txid, vout: Number(vout), sats: Math.round(Number(u.value) * 1e8), confirmations, finality });
   }
 }
+// THE LIGHTNING-KEY PROOF (spec §23A.9, kanban #3739): this LND signs (node key, federation, gateway URL) with its node key
+let lightningProof = null;
+try { const r = await post('/v1/signmessage', { msg: Buffer.from(gatewayLnProofMessage(node, federationId, gatewayUrl), 'utf8').toString('base64') }); lightningProof = r && r.signature ? String(r.signature) : null; }
+catch { lightningProof = null; }
+if (!lightningProof) console.error('LND did not sign the Lightning-key proof: the claim counts only until the cut-over (GATEWAY_LN_PROOF_FROM)');
 const sum = (list, k) => list.reduce((a, c) => a + Number(c[k] || 0), 0);
 const active = channels.filter((c) => c.active);
 const outsideIn = sum(active.filter((c) => !inside.has(c.remote_pubkey)), 'remote_balance');
 const claim = signGatewayClaim({ node, federationId, gatewayUrl, lightningPubkey: info.identity_pubkey, capacitySats: sum(channels, 'capacity'),
   pegInSats, atMs: Date.now(), inboundSats: sum(active, 'remote_balance'), outboundSats: sum(active, 'local_balance'),
   lightningAddr: arg('lightning-addr', ''), outsideInboundSats: outsideIn,
-  ...(pegInOutpoints.length ? { pegInOutpoints } : {}) }, (h) => schnorr.sign(h, secret));
+  ...(pegInOutpoints.length ? { pegInOutpoints } : {}), ...(lightningProof ? { lightningProof } : {}) }, (h) => schnorr.sign(h, secret));
 const ok = checkGatewayClaim(claim, (s, m, k) => schnorr.verify(s, m, k));
 if (!ok.ok) { console.error(`the claim does not check: ${ok.why}`); process.exit(1); }
+if (lightningProof && !checkGatewayLnProof(claim, (sig, bit, d) => secp256k1.recoverPublicKey(Uint8Array.from([bit, ...sig]), d, { prehash: false })).ok)
+  console.error('the Lightning-key proof does not check against this LND\'s key: the claim counts only until the cut-over');
 writeFileSync(`${out}.tmp`, JSON.stringify(pegIns.length ? { ...claim, pending: { pegIns } } : claim, null, 2) + '\n');
 renameSync(`${out}.tmp`, out);
 console.log(`${new Date().toISOString()} gateway claim for ${node.slice(0, 16)}: ${active.length} active public channel(s), inbound ${claim.inboundSats} sat `

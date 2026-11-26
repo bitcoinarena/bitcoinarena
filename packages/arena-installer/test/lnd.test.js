@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'n
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { createHash } from 'node:crypto';
-import { LND_FILES, installLnd, configureLnd, lndArgs, bip32Master, lndMasterKey, createLndWallet, testLnd } from '../src/lnd.js';
+import { LND_FILES, installLnd, configureLnd, lndArgs, bip32Master, lndMasterKey, createLndWallet, testLnd, lndSignMessage } from '../src/lnd.js';
 
 test('BIP32 master (test vector 1, testnet form) and the LND wallet key of a seed: its own, the same every time', () => {
   assert.equal(bip32Master(Buffer.from('000102030405060708090a0b0c0d0e0f', 'hex')),
@@ -86,4 +86,14 @@ test('channels for a gateway seat: LND\'s deposit address and balances, a public
   assert.deepEqual([o.ok, o.fundingTxid], [true, '22' + '11'.repeat(31)], 'the funding txid as Bitcoin shows it');
   assert.deepEqual(asked[0].body.addr, { pubkey: '02' + 'ab'.repeat(32), host: 'node.example.com:9735' });
   assert.deepEqual([asked[1].body.local_funding_amount, asked[1].body.private, asked[1].body.node_pubkey], ['200000', false, Buffer.from('02' + 'ab'.repeat(32), 'hex').toString('base64')]);
+});
+
+test('the gateway claim\'s Lightning-key proof: SignMessage with LND\'s own node key, the message as base64; a refusal said (kanban #3739)', async () => {
+  const cfg = { restUrl: 'https://127.0.0.1:10080', tlsCertPem: 'CERT', macaroonHex: 'aabb' };
+  let asked = null;
+  const r = await lndSignMessage(cfg, { message: 'ARENA/v1/GATEWAY_LN_PROOF:ab:cd:https://gw.example/gateway/' }, { rest: async (o) => { asked = o; return { status: 200, json: { signature: 'd9ybndrf' } }; } });
+  assert.deepEqual(r, { ok: true, signature: 'd9ybndrf' });
+  assert.deepEqual([asked.method, asked.path, Buffer.from(asked.body.msg, 'base64').toString('utf8'), asked.macaroonHex], ['POST', '/v1/signmessage', 'ARENA/v1/GATEWAY_LN_PROOF:ab:cd:https://gw.example/gateway/', 'aabb']);
+  const no = await lndSignMessage(cfg, { message: 'x' }, { rest: async () => ({ status: 403, json: { message: 'permission denied' } }) });
+  assert.deepEqual(no, { ok: false, why: 'permission denied' });
 });

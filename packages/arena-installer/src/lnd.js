@@ -243,6 +243,13 @@ export async function lndSignWithAddr(cfg, { address, message }, { rest = lndRes
   const r = await rest({ ...c, method: 'POST', path: '/v2/wallet/address/signmessage', body: { addr: address, msg: Buffer.from(message).toString('base64') } });
   return r.status === 200 && r.json && r.json.signature ? { ok: true, signature: r.json.signature } : { ok: false, why: errOf(r) };
 }
+/** `message` signed by LND's own node key (SignMessage: "Lightning Signed Message:" + message, sha256d, compact ECDSA, zbase32) - the
+ *  gateway claim's Lightning-key proof (kanban #3739). Answers { ok, signature, why }. */
+export async function lndSignMessage(cfg, { message }, { rest = lndRest } = {}) {
+  let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
+  const r = await rest({ ...c, method: 'POST', path: '/v1/signmessage', body: { msg: Buffer.from(String(message), 'utf8').toString('base64') } });
+  return r.status === 200 && r.json && typeof r.json.signature === 'string' && r.json.signature ? { ok: true, signature: r.json.signature } : { ok: false, why: errOf(r) };
+}
 /** A public channel of `sats` to a peer LND is connected to. Answers { ok, fundingTxid, why }. */
 export async function lndOpenTo(cfg, { pubkey, sats }, { rest = lndRest } = {}) {
   let c; try { c = credsOf(cfg); } catch (e) { return { ok: false, why: e.message }; }
