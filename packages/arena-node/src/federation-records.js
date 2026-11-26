@@ -596,6 +596,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const keys = await keysFor(federationIdHex);
     const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps, keys);
     if (!first.ok) return first;
+    // ONLY A GUARDIAN OF THE FEDERATION READS ITS RESERVE FOR A SIGNATURE (kanban #3594): the guardian set does not depend on the reserve,
+    // so a seat that does not guard it says so before it dials any guardian - a stranger's GET /federation-record never makes it read one
+    if (!first.guardians.some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) return { ok: false, why: 'this node does not guard that federation' };
     const res = await reserveFor(federationIdHex, first.guardians, reserveNamed, b.height);
     if (!res.ok) return res;
     const built = bodyFor(b, fromHex(federationIdHex), [], res.reserveSats, eps, keys);
@@ -913,6 +916,9 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const keys = await keysFor(federationIdHex);
     const first = bodyFor(b, fromHex(federationIdHex), [], 0n, eps, keys);
     if (!first.ok) return first;
+    // ONLY A GUARDIAN OF THE FEDERATION READS ITS RESERVE FOR A SIGNATURE (kanban #3594): the guardian set does not depend on the reserve,
+    // so a seat that does not guard it says so before it dials any guardian - a stranger's GET /federation-record never makes it read one
+    if (!first.guardians.some((g) => toHex(g.nodePubkey) === toHex(round.pubkey))) return { ok: false, why: 'this node does not guard that federation' };
     const res = await reserveFor(federationIdHex, first.guardians, reserveNamed, b.height);
     if (!res.ok) return res;
     // the plain body, never the CLOSED one: the leave statements are over its id (kanban #1665)
