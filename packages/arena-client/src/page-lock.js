@@ -546,6 +546,7 @@ const isAlreadySpent = (e) => /already spent/i.test(String((e && e.message) || e
 export function freshWallet(client, store, reopen, onStep = () => {}) {
   if (!client || typeof client !== 'object' || !store || typeof store.stale !== 'function') return client;
   let inner = client, st = store, reopening = null, forced = false;
+  const madeBy = new Map();   // kanban #3781: operation -> the client that made the receive
   const again = (why) => {
     if (!reopening) {
       reopening = (async () => {
@@ -563,6 +564,23 @@ export function freshWallet(client, store, reopen, onStep = () => {}) {
       if (p === FRESH_INNER) return inner;
       const v = inner[p];
       if (typeof v !== 'function') return v;
+      // A RECEIVE IS AWAITED ON THE CLIENT THAT MADE IT (kanban #3781, feedback #511: the second faucet top-up was paid, the wallet was opened again
+      // from storage by a balance read between the invoice and its wait, and the wait went to the new client - "Operation not found", nothing
+      // claimed). The operation lives in the state machines of the client that made it; that client is kept for its wait.
+      if (p === 'receive') {
+        const made = inner;
+        return async (...a) => {
+          const r = await made.receive(...a);
+          try { const op = JSON.parse(r).operation; if (op) { madeBy.set(String(op), made); if (madeBy.size > 256) madeBy.delete(madeBy.keys().next().value); } } catch { /* no operation named: waited on the current client */ }
+          return r;
+        };
+      }
+      if (p === 'awaitReceive') {
+        return async (op, ...a) => {
+          // kept after the wait too: a page's resume and the offer's own watch may both wait on one operation
+          return (madeBy.get(String(op)) || inner).awaitReceive(op, ...a);
+        };
+      }
       if (typeof p !== 'string' || !(FRESH_SPENDS.has(p) || REFUSED_BEHIND.has(p))) return v.bind(inner);
       const made = inner;
       return async (...a) => {

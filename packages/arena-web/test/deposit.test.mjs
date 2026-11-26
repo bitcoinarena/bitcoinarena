@@ -179,3 +179,19 @@ test('#2947 Custom: more than the federation can take is refused with its room',
   assert.equal(m.state.amount, 'This federation takes no deposit now: it is full.');
   m.componentWillUnmount();
 });
+
+test('#3781 the faucet\'s "paid" never stands over an end the invoice\'s wait already said (feedback #511)', async () => {
+  let watcher = null, answer;
+  const offer = { choices: [{ key: 'a', msat: 1000n }], claimed: new Promise(() => {}), close() {}, restMsat: null, watch: (w) => { watcher = w; },
+    invoice: async (m) => ({ invoice: 'lntb3u1x', amountMsat: m, gateway: '' }) };
+  const faucet = { sats: 300, invoiceMsat: 300000n, ask: () => new Promise((r) => { answer = r; }) };
+  const m = new DepositModal({ offer, qrSvg: () => '', onDone() {}, faucetNow: true, faucet });
+  m.setState = (u, cb) => { m.state = { ...m.state, ...(typeof u === 'function' ? u(m.state) : u) }; if (cb) cb(); };
+  m.componentDidMount();
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  watcher({ invoice: 'lntb3u1x', amountMsat: 300000n }, 'Failure: Operation not found');
+  answer();
+  for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+  console.log(`  MEASURED #3781: status after the faucet answered: ${m.state.status.words}`);
+  assert.match(m.state.status.words, /did not go through/);
+});
