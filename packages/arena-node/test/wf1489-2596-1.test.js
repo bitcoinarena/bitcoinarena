@@ -21,7 +21,8 @@ import { runId } from '../src/verdict.js';
 import { buildObjectionBundle } from '../tools/objection-bundle.mjs';
 import { checkObjectionAt } from '../tools/check-objection.mjs';
 import { splitSignedResult, decodePlayerResult } from '../../arena-protocol/src/result.js';
-import { signedBatchOf } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
+// kanban #3758: the marks name the input head the client names now (the batch reaching the mark's tick), not GENESIS - a GENESIS mark commits to no batch, and since #3567 a close over it holds for ever
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
@@ -50,27 +51,29 @@ async function scene({ honest = false } = {}) {
     const K = Math.floor(WINNER.ticks / 2);
     // T2: the same first half, then a second half never sent anywhere (the truck held still)
     const t2 = honest ? ticks : ticks.map((x, t) => (t < K ? x : x.map(() => 0)));
-    const batch = (rows) => signedBatchOf({ roundId: w.rid, entryId: p.eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: rows, liquidations: [], loads: bedFrom(0) },
-      (id) => ed25519.sign(id, p.session));
+    // the run as the client sends it: the first half, then the rest chained on it; B holds the first only
+    const b1 = { roundId: w.rid, entryId: p.eid, previousHash: GENESIS_HASH, firstTick: 0, ticks: ticks.slice(0, K), liquidations: [], loads: bedFrom(0) };
+    const b2 = { roundId: w.rid, entryId: p.eid, previousHash: batchId(b1), firstTick: K, ticks: ticks.slice(K), liquidations: [], loads: [] };
+    const batch = (b) => signedBatchOf(b, (id) => ed25519.sign(id, p.session));
     // TWO LIVE MARKS: one at K over the first half (every seat holds it), and the final one over the honest bed and T2
     const st = init(seedWordForEntry(p.entry, w.randomness || RANDOMNESS));
     submitLoad(st, ...bedFrom(0)[0].slice(1));
     const hashOf = () => Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16)));
     for (let t = 0; t < K; t++) step(st, ...t2[t]);
     const markK = { roundId: w.rid, entryId: p.eid, tick: K, stateHash: hashOf(),
-      inputChainHash: GENESIS_HASH, previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(p.session) };
+      inputChainHash: batchId(b1), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(p.session) };
     for (let t = K; t < WINNER.ticks; t++) step(st, ...t2[t]);
     const mark = { roundId: w.rid, entryId: p.eid, tick: WINNER.ticks, stateHash: hashOf(),
-      inputChainHash: GENESIS_HASH, previousHash: checkpointId(markK), sessionPubkey: ed25519.getPublicKey(p.session) };
+      inputChainHash: batchId(b2), previousHash: checkpointId(markK), sessionPubkey: ed25519.getPublicKey(p.session) };
     const signedOf = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), p.session));
     const answers = [];
     for (const d of [A, C]) {
-      const took = await say(d.port, batch(ticks));
+      const took = Number(await say(d.port, batch(b1))) + Number(await say(d.port, batch(b2)));
       const rk = await say(d.port, signedOf(markK));
       const rc = await say(d.port, signedOf(mark));
       answers.push([String(took), rk instanceof Uint8Array ? `${rk.length} bytes` : String(rk).slice(0, 160), rc instanceof Uint8Array ? `${rc.length} bytes` : String(rc).slice(0, 160)]);
     }
-    const tookB = String(await say(B.port, batch(ticks.slice(0, K))));
+    const tookB = String(await say(B.port, batch(b1)));
     const rkB = await say(B.port, signedOf(markK));
     answers.push([tookB, rkB instanceof Uint8Array ? `${rkB.length} bytes` : String(rkB).slice(0, 160)]);
     const receipted = answers.every((a) => a.slice(1).every((x) => x === `${SIGNED_RECEIPT_BYTES} bytes`));

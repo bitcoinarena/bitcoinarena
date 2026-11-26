@@ -21,7 +21,8 @@ import { buildObjectionBundle } from '../tools/objection-bundle.mjs';
 import { checkObjectionAt } from '../tools/check-objection.mjs';
 import { splitSignedResult, decodePlayerResult } from '../../arena-protocol/src/result.js';
 import { decodeTranscript, encodeTranscript } from '../../arena-protocol/src/transcript.js';
-import { signedBatchOf } from '../../arena-protocol/src/batch.js';
+import { signedBatchOf, batchId } from '../../arena-protocol/src/batch.js';
+// kanban #3758: the marks name the input head the client names now (the batch reaching the mark's tick), not GENESIS - a GENESIS mark commits to no batch, and since #3567 a close over it holds for ever
 import { encodeCheckpoint, checkpointId, joinSigned, NO_PREVIOUS } from '../../arena-protocol/src/checkpoint.js';
 import { SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { seedWordForEntry } from '../../arena-protocol/src/seed.js';
@@ -49,10 +50,10 @@ test('wf1489 #2596-2: a stranger cannot object an honest live run away with its 
     const hashOf = () => Uint8Array.from(stateHash(st).match(/../g).map((x) => parseInt(x, 16)));
     for (let t = 0; t < K; t++) step(st, ...ticks[t]);
     const markK = { roundId: w.rid, entryId: p.eid, tick: K, stateHash: hashOf(),
-      inputChainHash: GENESIS_HASH, previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(p.session) };
+      inputChainHash: batchId(input), previousHash: NO_PREVIOUS, sessionPubkey: ed25519.getPublicKey(p.session) };
     for (let t = K; t < WINNER.ticks; t++) step(st, ...ticks[t]);
     const markEnd = { roundId: w.rid, entryId: p.eid, tick: WINNER.ticks, stateHash: hashOf(),
-      inputChainHash: GENESIS_HASH, previousHash: checkpointId(markK), sessionPubkey: ed25519.getPublicKey(p.session) };
+      inputChainHash: batchId(input), previousHash: checkpointId(markK), sessionPubkey: ed25519.getPublicKey(p.session) };
     const signedOf = (m) => joinSigned(encodeCheckpoint(m), ed25519.sign(checkpointId(m), p.session));
     const answers = [];
     for (const d of [w.a, w.b]) {
