@@ -1012,11 +1012,14 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
     let built; try { built = await txidOfPlan(port, rec.plan); } catch (e) { return refuse(`this seat cannot rebuild that plan's transaction: ${e.message}`, 503); }
     if (built !== String(rec.txid).toLowerCase()) return refuse('the record names another transaction than its plan makes');
     const st = async (outpoint) => { try { return await port.status(outpoint); } catch (e) { return { error: e.message }; } };
-    // THE PLAN'S INPUTS ARE SPENT in the federation (its first one, read here): the transaction went in. Not its output 0 - by the time
-    // a SENT arrives the gateway may have paid and spent the contract already
-    const first = await st(outpointOf(rec.plan.refunds[0].outpoint));
-    if (first.error) return refuse(`this seat cannot read the federation: ${first.error}`, 503);
-    if (first.stored) return refuse(`the plan's inputs are unspent in the federation: not ${rec.state}`, 409);
+    // THE PLAN'S INPUTS ARE SPENT in the federation (every one of them, kanban #3746 - the first alone let one guardian put a made-up
+    // outpoint first and the federation's real, unspent reserves after it, and every seat with no share of the key read them spent): the
+    // transaction went in. Not its output 0 - by the time a SENT arrives the gateway may have paid and spent the contract already
+    for (const x of rec.plan.refunds) {
+      const s = await st(outpointOf(x && x.outpoint));
+      if (s.error) return refuse(`this seat cannot read the federation: ${s.error}`, 503);
+      if (s.stored) return refuse(`the plan's inputs are unspent in the federation: not ${rec.state}`, 409);
+    }
     if (rec.state === PAYOUT.REFUNDED) {
       if (!/^[0-9a-f]{64}$/.test(String(rec.refundTxid || ''))) return refuse('a refunded record names its refund');
       let back; try { back = await txidOfPlan(port, rec.plan, 'refund', { txid: rec.txid }); } catch (e) { return refuse(`this seat cannot rebuild the refund: ${e.message}`, 503); }
