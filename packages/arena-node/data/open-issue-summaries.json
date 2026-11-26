@@ -2958,5 +2958,53 @@
  "3782": {
   "text": "Other: a background collect can add funds with no history while the order stays open",
   "kind": "bug"
+ },
+ "3783": {
+  "text": "BTC Up/Down game: a shown refund can leave the balance unchanged",
+  "kind": "bug"
+ },
+ "3784": {
+  "text": "Other: an uncollected-deposit banner names nothing and cannot be dismissed",
+  "kind": "bug"
+ },
+ "3785": {
+  "text": "Lightning payouts: withdraw can omit another healthy federation's balance without saying so",
+  "kind": "bug"
+ },
+ "3786": {
+  "text": "Federation: a successful move can leave the old split on screen, and the move dialog can disagree",
+  "kind": "bug"
+ },
+ "3787": {
+  "text": "BTC Up/Down game: the price to beat can go blank in the middle of a live window",
+  "kind": "bug"
+ },
+ "3788": {
+  "text": "Federation: deposit capacity and the federations tooltip can disagree",
+  "kind": "bug"
+ },
+ "3789": {
+  "text": "Settlement: Rock Paper Scissors can leave a player waiting while the lobby already lists live rounds",
+  "kind": "bug"
+ },
+ "3790": {
+  "text": "Lightning payouts: a collect dialog can claim another tab is open and stay stuck",
+  "kind": "bug"
+ },
+ "3791": {
+  "text": "BTC Up/Down game: an explorer refund can be missing from the wallet and from rescan",
+  "kind": "bug"
+ },
+ "3792": {
+  "text": "BTC Up/Down game: a limit order can book a different size than asked, and a refund label can disagree",
+  "kind": "bug"
+ },
+ "3793": {
+  "text": "Lightning payouts: lobby price, a cut-off join hint, garbled withdraw text, and swinging node counts",
+  "kind": "bug"
+ },
+ "3794": {
+  "text": "Rock Paper Scissors game: a late pick can leave the placing notice up, and presence can contradict the stage",
+  "kind": "bug"
  }
 }
