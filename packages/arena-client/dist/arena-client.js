@@ -1555,6 +1555,17 @@ const STAKE_LOCK_FRESHNESS_BLOCKS = 12;
  */
 const SCORE_SCALE = 100000;
 
+/**
+ * 2026.0.34 - A RUN WHOSE MARKS NAME GENESIS IS DECIDED (RULED 2026-11-26, kanban #3762 option (a)). Since #3567 a close replays a run only
+ * through the inputs its last carried mark commits to; a mark naming GENESIS commits to none, so no seat signed and the round never settled
+ * (an old cached client, or a modified one on purpose). From 34 such a run is what its marks commit to - a run that never started: FORFEIT,
+ * score 0 (§15), signed over the canonical transcript like every other close. It changes what seats sign, so rounds below 34 keep today's
+ * close byte for byte. (34 joins SUPPORTED_PROTOCOL_VERSIONS with #3612/#3680.)
+ */
+const GENESIS_RUN_VERSION = 34;
+/** Whether a round of protocol version `v` decides a run with no committed inputs FORFEIT 0 at the close (kanban #3762). */
+const decidesGenesisRun = (v) => Number.isInteger(v) && v >= GENESIS_RUN_VERSION;
+
 // ---- arena-protocol/src/checkpoint.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -25970,6 +25981,32 @@ function ghostBinds(ghost, transcript, entry) {
   };
 }
 
+// ---- arena-protocol/src/play-owner.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// A /play SOCKET SHOWN TO BE THE PLAYER'S (kanban #3742, ruled 2026-11-25). Every player-signed byte a /play socket carries -
+// the first mark, the marks after it, the signed batches - is public (GET /entry-void, /checkpoints, /batch-signatures), so a
+// socket that sent them has shown nothing about who it is. What a stranger cannot replay is a signature made for this one socket:
+// the seat draws a nonce for the socket (`nonce` -> `nonce <hex>`), and the entry's session key - the key its marks and batches are
+// already signed with - signs the digest below (`player <entry hex> <signature hex>` -> `player <entry hex>`). The seat's own key is
+// in the digest, so a signature shown to one seat is no use at another.
+
+
+
+const PLAY_OWNER_NONCE_BYTES = 32;
+
+const isOwnerKey32 = (b) => b instanceof Uint8Array && b.length === 32;
+
+/** The digest the entry's session key signs to bind one /play socket at one seat to the entry. */
+function playOwnerDigest({ seatPubkey, nonce, entryId }) {
+  if (!isOwnerKey32(seatPubkey)) throw new Error('a play-owner digest names the seat by its 32-byte key');
+  if (!(nonce instanceof Uint8Array) || nonce.length !== PLAY_OWNER_NONCE_BYTES) throw new Error(`a play-owner nonce is ${PLAY_OWNER_NONCE_BYTES} bytes`);
+  if (!isOwnerKey32(entryId)) throw new Error('a play-owner digest names a 32-byte entry id');
+  const msg = new Uint8Array(32 + PLAY_OWNER_NONCE_BYTES + 32);
+  msg.set(seatPubkey, 0); msg.set(nonce, 32); msg.set(entryId, 32 + PLAY_OWNER_NONCE_BYTES);
+  return taggedHash(TAG.playSocketOwner, msg);
+}
+
 // ---- arena-client/src/bond.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -28022,6 +28059,7 @@ async function fetchDonationSet({ round, nodes, fetcher = (u) => fetch(u), verif
 
 
 
+
 // ONE NODE'S GET /receipts ANSWER, AT MOST (kanban #2554): the seat's own cap on a peer body (#1550)
 const RECEIPTS_MAX_BYTES = 16 * 1024 * 1024;
 // EVERY PEER READ OF A RESUME IS BOUNDED TOO (kanban #2720, #1489 r5-play-1): a mark list (GET /checkpoints), a transcript and its batch
@@ -28253,6 +28291,8 @@ const CLOSED = 'closed: ';
 // an open socket had its batch held and asked again for the rest of the run - no resume ran, the socket never closed - and the
 // peers never got it. Only this client's own close handler and no-socket paths say CLOSED; a node's text that starts with it is
 // that node's refusal and reaches the callers as one.
+/** How long a peer seat's answer to a socket-binding step is waited for (kanban #3799). */
+const BIND_WITHIN_MS = 5000;
 const nodeSaid = (text) => (text.startsWith(CLOSED) ? `error ${text}` : text);
 
 /**
@@ -28774,6 +28814,43 @@ class Client {
     return { lock: this.lockHanded, feeLock: this.feeLockHanded };
   }
 
+  /**
+   * A /play SOCKET SHOWN TO BE THE PLAYER'S (kanban #3799, follow-up of #3742): a seat keeps a Void learned on a socket as the player's
+   * only when the entry's session key signed that socket's nonce (playOwnerDigest over the seat's key, the nonce and the entry id) - every
+   * other copy of the same public bytes is 'play-unbound' and waits for the full reach. So once the client knows its entry, each socket asks
+   * `nonce`, signs it with the session key and sends `player <entry> <signature>`, once per socket and entry. A seat on an older build
+   * answers 'error unknown text message' to both, which changes nothing; a failure is never fatal to the run.
+   */
+  /**
+   * One binding frame on the home socket, answered in order like send() - but not through send(): the binding is no publish, so it takes
+   * no place in what paces and watches the publishes (one batch in flight, backpressure.test.js), and it is two short frames per socket.
+   */
+  #sayOn(sock, message) {
+    if (!sock || sock !== this.sock || sock.readyState !== 1) return Promise.resolve('error there is no socket');
+    return new Promise((r) => { this.said.push(r); sock.send(message); });
+  }
+
+  #bindSocket(sock, say) {
+    const w = this.where;
+    if (!w || !sock) return null;
+    if (!this.boundSockets) this.boundSockets = new WeakMap();
+    const eh = toHex(w.entryId);
+    if (this.boundSockets.get(sock) === eh) return null;
+    this.boundSockets.set(sock, eh);
+    return (async () => {
+      try {
+        const a = String(await say('nonce'));
+        const m = /^nonce ([0-9a-f]{64}) ([0-9a-f]{64})$/.exec(a.trim());
+        if (!m) return false;
+        const sig = await this.sign(playOwnerDigest({ seatPubkey: fromHex(m[2]), nonce: fromHex(m[1]), entryId: w.entryId }));
+        const r = String(await say(`player ${eh} ${toHex(sig)}`));
+        const ok = r.trim() === `player ${eh}`;
+        if (!ok && this.boundSockets.get(sock) === eh) this.boundSockets.delete(sock);
+        return ok;
+      } catch { if (this.boundSockets.get(sock) === eh) this.boundSockets.delete(sock); return false; }
+    })();
+  }
+
   /** A socket to another committee node, for checkpoints only. */
   peerLink(base) {
     const had = this.peerLinks.get(base);
@@ -28787,7 +28864,7 @@ class Client {
         const waiting = link.said.shift();
         if (waiting) waiting(typeof e.data === 'string' ? nodeSaid(e.data) : new Uint8Array(e.data));
       });
-      sock.addEventListener('open', () => { link.sock = sock; link.opening = null; resolve(link); });
+      sock.addEventListener('open', () => { link.sock = sock; link.opening = null; resolve(link); this.#bindSocket(sock, (m) => this.sendPeer(base, m, BIND_WITHIN_MS)); });
       sock.addEventListener('error', () => { link.opening = null; resolve(link); });
       sock.addEventListener('close', () => {
         const waiting = link.said; link.said = [];
@@ -29129,6 +29206,7 @@ class Client {
         this.sock = sock;
         if (!this.ended) this.state = 'ready';
         resolve(this);
+        this.#bindSocket(sock, (m) => this.#sayOn(sock, m));   // kanban #3799: show the seat this socket is the player's
       });
 
       // A DROPPED SOCKET IS NOT AN ERROR, it is the normal thing that happens
@@ -30292,6 +30370,9 @@ class Client {
     this.nodeFault = null;
     this.homeFault = null;
     this.where = { roundId, entryId };
+    // kanban #3799: every socket already open is bound to this entry too (a socket opened before the round was set)
+    if (this.sock) this.#bindSocket(this.sock, (m) => this.#sayOn(this.sock, m));
+    for (const [base, link] of this.peerLinks) if (link && link.sock) this.#bindSocket(link.sock, (m) => this.sendPeer(base, m, BIND_WITHIN_MS));
     // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK: the round's tick it joined at, so its run ends with the round's.
     // An entry at tick 0 starts where it always did.
     const joinTick = this.joinedEntry && Number.isInteger(this.joinedEntry.joinTick) ? this.joinedEntry.joinTick : 0;
@@ -33045,6 +33126,10 @@ function drawnForRole(contract, role) {
   return Math.min(slots + 2, 2 * t - 1);
 }
 
+/** Whether a round's draw counts only node-signed census entries (kanban #3743): protocol 2026.0.34 or later. */
+const SIGNED_DRAW_VERSION = 34;
+const drawsSignedOnly = (contract) => { const v = Number(contract && contract.protocolVersion); return Number.isInteger(v) && v >= SIGNED_DRAW_VERSION; };
+
 function selectCommittee({ entries, contract, role, exclude, committeeSeed, count }) {
   // EVERY NUMBER THAT DECIDES THE COMMITTEE COMES OFF THE CONTRACT.
   //
@@ -33124,6 +33209,10 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
     // the role, and for game/verify the round's game hosted (census.js eligibleFor)
     // ONE DRAW FOR BOTH ROLES (2026.0.2): a v2 round's node serves both, so it is eligible for both
     if (!drawEligible(e, contract, role) || out.has(keyOf(e))) continue;
+    // ONLY THE NODE'S OWN BONDS DRAW IT (kanban #3743, RULED 2026-11-26 on the PR #95 question, protocol 34): a stranger's bond to a node's
+    // key (census nodeSigned false) set the key's ticket from the stranger's outpoint and added its sats to the key's weight, so a stranger
+    // could grind whether a node is drawn. From 34 an entry its node did not sign is no part of the draw; below 34 the draw is as before
+    if (drawsSignedOnly(contract) && e.nodeSigned === false) continue;
     const had = byKey.get(keyOf(e));
     const signed = e.nodeSigned !== false ? e : null;
     if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats, signed }); continue; }
