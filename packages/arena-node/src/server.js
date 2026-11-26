@@ -117,6 +117,7 @@ import { revealStands, headToHeadCommit } from '../../arena-protocol/src/head-to
 import { certifiesLockSet, LOCK_SET_WINDOW_MS, LOCK_SET_MAX_ENTRIES, lockSetViewsAllSeen, certifiedSeats } from '../../arena-protocol/src/lock-set.js';   // kanban #2561, #3257
 import { LockSetBook } from './lock-set-book.js';
 import { toHex, fromHex, sha256, taggedHash } from '../../arena-protocol/src/hash.js';
+import { playOwnerDigest, PLAY_OWNER_NONCE_BYTES } from '../../arena-protocol/src/play-owner.js';
 import { advertInTransaction, nodeBondOf } from '../../arena-protocol/src/census.js';
 
 /**
@@ -17123,6 +17124,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // the entries this socket has published a taken batch for, and a watch refused for want of a slot (kanban #2796)
     const ownerOf = new Set();
     let parked = null;
+    // THE ENTRIES THIS SOCKET IS SHOWN TO BE THE PLAYER OF (kanban #3742, ruled 2026-11-25): every player-signed byte a socket can send
+    // is public, so only a signature over a nonce this seat drew for this socket (`nonce`, then `player <entry> <signature>`, the entry's
+    // session key over playOwnerDigest) shows the sender holds the entry's session key. A Void learned on the player's catch-up is
+    // kept as 'player' (signed without the M3.3-34 reach) only on such a socket; a replay of the same public bytes on any other is not.
+    const playerOf = new Set();
+    let playNonce = null;
     // A FRAME OVER THE CAP IS AN ERROR EVENT, not a message, and an
     // unhandled one takes the process down - measured: sending
     // MAX_FRAME_BYTES + 1 threw `RangeError: Max payload size exceeded` out
@@ -17209,6 +17216,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             sock.send(`watching ${fresh.length}`);
             for (const frame of fresh) sock.send(frame.bytes);
             return undefined;
+          }
+          if (t === 'nonce') {
+            playNonce = new Uint8Array(randomBytes(PLAY_OWNER_NONCE_BYTES));
+            return sock.send(`nonce ${toHex(playNonce)} ${toHex(round.pubkey)}`);
+          }
+          if (t.startsWith('player ')) {
+            const [, eh, sh] = t.trim().split(/\s+/);
+            const nonce = playNonce;
+            playNonce = null;                                     // one signature per nonce, right or wrong
+            if (!nonce) return sock.send('error ask for a nonce on this socket first (`nonce`)');
+            if (!/^[0-9a-f]{64}$/.test(eh || '') || !/^[0-9a-f]{128}$/.test(sh || '')) return sock.send('error that is `player <entry id hex> <signature hex>`');
+            const held = round.entry(fromHex(eh));
+            if (!held) return sock.send('error no such entry');
+            let ok = false;
+            try { ok = verifyEd25519(fromHex(sh), playOwnerDigest({ seatPubkey: round.pubkey, nonce, entryId: fromHex(eh) }), decodeEntryContract(held).sessionPubkey); } catch { ok = false; }
+            if (!ok) return sock.send('error that signature does not verify under the entry\'s session key');
+            playerOf.add(eh);
+            return sock.send(`player ${eh}`);
           }
           if (t.startsWith('close ')) {
             const id = Buffer.from(t.slice(6).trim(), 'hex');
@@ -17423,7 +17448,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             return sock.send('error FORFEIT: ' + TWO_FIRST_MARKS);
           }
           if (found) {
-            const v = voidHere(firstMark.c, firstMark.bytes, found.late, found.receipts, 'player');
+            // 'player' only on a socket the entry's session key bound to itself (kanban #3742): the same public bytes from anyone
+            // else are a hand-over like POST /first-mark's, and M3.3-34's reach rule holds them
+            const v = voidHere(firstMark.c, firstMark.bytes, found.late, found.receipts, playerOf.has(toHex(firstMark.c.entryId)) ? 'player' : 'play-unbound');
             if (v) return sock.send('error ENTRY_VOID: ' + v.why);
           }
         }

@@ -80,6 +80,14 @@ export async function sevenSignerNodes(custody, { endIn = null } = {}) {
     signerNodes, locks, c, rid, up, randomness: beacon ? beacon.hash : RANDOMNESS,
     async down(...is) { for (const i of is) { await signerNodes[i].close(); up.delete(i); } },
     async back(...is) { for (const i of is) { signerNodes[i] = await mk(i, ports[i]); up.add(i); } wire(); },
+    // BACK WITH ONLY THE GIVEN PEER LISTS (kanban #3742): the named signer nodes return reaching `reach` (bases), and no other
+    // signer node's links are touched - a cut made before stays cut.
+    async backReaching(reach, ...is) {
+      for (const i of is) {
+        signerNodes[i] = await mk(i, ports[i]); up.add(i);
+        const d = signerNodes[i]; d.verifier.peers = reach; d.stakeSecrets.peers = reach; d.dkg.peers = reach;
+      }
+    },
     // A PARTITION BETWEEN SIGNER NODES THAT ARE UP: each named signer node's peers point where
     // nothing listens - its forwards and receipts are lost - until heal().
     cut(...is) {
@@ -170,7 +178,7 @@ export async function joinWithTwoFirstMarks(w, custody) {
   const m1 = { roundId: w.rid, entryId: eid, tick: 60, stateHash: hashAt(60), inputChainHash: batchId(b1), previousHash: NO_PREVIOUS, sessionPubkey: entry.sessionPubkey };
   const b2 = { roundId: w.rid, entryId: eid, previousHash: batchId(b1), firstTick: 60, ticks: Array.from({ length: PAST - 60 }, (_, t) => wordsAt(60 + t)), liquidations: [] };
   const m2 = { roundId: w.rid, entryId: eid, tick: PAST, stateHash: hashAt(PAST), inputChainHash: batchId(b2), previousHash: checkpointId(m1), sessionPubkey: entry.sessionPubkey };
-  return { eid, outpoint, paymentHash: toHex(sha256(preimage)), first: firstAt(60), other: firstAt(30),
+  return { eid, session, outpoint, paymentHash: toHex(sha256(preimage)), first: firstAt(60), other: firstAt(30),
     past: [signedBatchOf(b2, (id) => ed25519.sign(id, session)), sign(m2)], late: firstAt(PAST) };
 }
 
