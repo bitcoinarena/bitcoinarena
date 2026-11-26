@@ -6,14 +6,17 @@
 // refund_pk 03545b94… = gateway lnd-testnet4-b's module_public_key). So a guardian counts, per gateway, the msat of the incoming
 // contracts it funded - Lightning paid into the federation through it. Outgoing contracts have no such stream and are not counted.
 // The call waits while there is nothing after `from`: an answer that does not come within `timeoutMs` means "nothing newer".
+import { dialWs, cut, GUARDIAN_BATCH_MOST } from './ws-dial.js';
 export const INCOMING_BATCH = 1024;   // the module's MAX_INCOMING_CONTRACTS_BATCH
+// kanban #3724: dialed with a cap (a batch of 1024 contracts), not the global WebSocket that has none
+const BatchSocket = function BatchSocket(url) { return dialWs(url, { maxPayload: GUARDIAN_BATCH_MOST }); };
 
 function rpc(url, method, params, { timeoutMs, WS }) {
   return new Promise((ok) => {
     let ws;
     try { ws = new WS(url); } catch (e) { ok({ error: e.message }); return; }
-    const t = setTimeout(() => { try { ws.terminate ? ws.terminate() : ws.close(); } catch { /* gone */ } ok({ timeout: true }); }, timeoutMs);
-    const done = (x) => { clearTimeout(t); try { ws.close(); } catch { /* gone */ } ok(x); };
+    const t = setTimeout(() => { cut(ws); ok({ timeout: true }); }, timeoutMs);
+    const done = (x) => { clearTimeout(t); cut(ws); ok(x); };
     ws.onopen = () => ws.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: [{ auth: null, params }] }));
     ws.onmessage = (m) => { try { done(JSON.parse(typeof m.data === 'string' ? m.data : String(m.data))); } catch (e) { done({ error: e.message }); } };
     ws.onerror = (e) => done({ error: (e && e.message) || 'websocket error' });
@@ -21,7 +24,7 @@ function rpc(url, method, params, { timeoutMs, WS }) {
 }
 
 /** The LNv2 module's instance id in the federation's client config. */
-export async function lnv2ModuleId(url, { timeoutMs = 8000, WS = globalThis.WebSocket } = {}) {
+export async function lnv2ModuleId(url, { timeoutMs = 8000, WS = BatchSocket } = {}) {
   const r = await rpc(url, 'client_config', null, { timeoutMs, WS });
   const mods = (r.result && r.result.modules) || {};
   const hit = Object.entries(mods).find(([, m]) => m && m.kind === 'lnv2');
@@ -32,7 +35,7 @@ export async function lnv2ModuleId(url, { timeoutMs = 8000, WS = globalThis.WebS
  * The incoming contracts after stream index `from`: { ok, contracts: [{ amountMsat (BigInt), refundPk }], next } - `next` the index
  * to ask from next time (unchanged when nothing is newer).
  */
-export async function incomingSince({ url, moduleId, from = 0, timeoutMs = 5000, WS = globalThis.WebSocket }) {
+export async function incomingSince({ url, moduleId, from = 0, timeoutMs = 5000, WS = BatchSocket }) {
   const contracts = [];
   let at = from;
   for (;;) {
@@ -57,7 +60,7 @@ export async function incomingSince({ url, moduleId, from = 0, timeoutMs = 5000,
  * outputs (each deposit it took, while unspent). A gateway's claimed peg-in outpoint found here went into this federation. Null when
  * the guardian's API does not answer.
  */
-export async function federationCoins({ url, timeoutMs = 8000, WS = globalThis.WebSocket }) {
+export async function federationCoins({ url, timeoutMs = 8000, WS = BatchSocket }) {
   const cc = await rpc(url, 'client_config', null, { timeoutMs, WS });
   const mods = Object.entries((cc.result && cc.result.modules) || {});
   const coins = new Map();

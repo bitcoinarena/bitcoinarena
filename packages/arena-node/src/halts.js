@@ -30,6 +30,7 @@
 import { signHaltObservation, decodeHaltObservation, encodeHaltObservation, haltProof, haltObservationId, haltQuorum } from '../../arena-protocol/src/halt-proof.js';
 import { faultsOf } from '../../arena-protocol/src/federation-record.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { GuardianSocket, cut } from './ws-dial.js';   // kanban #3724
 
 /** The k-th highest of `values` (whole numbers), or null with fewer than k. */
 export function kthHighest(values, k) {
@@ -234,10 +235,10 @@ export async function wsGuardianCall(endpoint, method, { auth = null, params = n
     if (i > 0 && url.replace(/\/+$/, '') === pair.slice(0, i).replace(/\/+$/, '')) { url = pair.slice(i + 1); break; }
   }
   if (!/^wss?:\/\//.test(url)) throw new Error(`no guardian endpoint to ask: ${endpoint}`);
-  const WS = WebSocketImpl || (await import('ws')).default;
+  const WS = WebSocketImpl || GuardianSocket;   // kanban #3724: the guardian cap, not the 'ws' default of 100 MiB
   return new Promise((resolve, reject) => {
     const ws = new WS(url);
-    const done = (f, v) => { clearTimeout(t); try { ws.close(); } catch { /* closed */ } f(v); };
+    const done = (f, v) => { clearTimeout(t); cut(ws); f(v); };
     const t = setTimeout(() => done(reject, new Error('no answer in time')), timeoutMs);
     ws.on('error', (e) => done(reject, e));
     ws.on('open', () => ws.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: [{ auth, params }] })));
