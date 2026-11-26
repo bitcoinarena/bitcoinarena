@@ -64,6 +64,7 @@ import {
   encodePlayerResult,
 } from '../../arena-protocol/src/result.js';
 import { decodeRoundContract, encodeRoundContract } from '../../arena-protocol/src/contracts.js';
+import { decidesGenesisRun } from '../../arena-protocol/src/constants.js';   // kanban #3762
 import { matchProofId } from '../../arena-protocol/src/match.js';
 import { decodeLobbyName, lobbyNameId } from '../../arena-protocol/src/lobby-name.js';
 import { headToHeadResults, headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
@@ -1766,6 +1767,13 @@ export class Verifier {
     const prefix = { ticks: full.ticks.filter((t) => t.tick < last),
       liquidations: full.liquidations.filter((l) => l[0] < last), loads: full.loads.filter((l) => l[0] < last),
       samples: (full.samples || []).filter((l) => l[0] < last), tapes: (full.tapes || []).filter((l) => l[0] < last) };
+    // MARKS THAT COMMIT TO NO INPUT DECIDE A RUN THAT NEVER STARTED (kanban #3762, RULED 2026-11-26 (a), protocol 34): every carried mark
+    // named GENESIS, so the cut leaves no tick and the replay answered "no ticks" - no seat signed, nothing else decided the run, and the
+    // round never settled. From 34 it is FORFEIT, score 0 (§15), over the same canonical transcript at every seat; below 34 as before
+    if (!prefix.ticks.length) {
+      let v = null; try { v = decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract)).protocolVersion; } catch { v = null; }
+      if (decidesGenesisRun(v)) return { ok: true, outcome: 'FORFEIT', score: 0, coreHash: this.#coreOf(roundIdBytes)?.hash };
+    }
     return this.pool.submit({ core: this.#coreOf(roundIdBytes), key: `${hex(roundIdBytes)}:${hex(entryId)}:stopped`, objected: false,
       transcript: prefix, entry, options });
   }

@@ -1203,3 +1203,14 @@ export const STAKE_LOCK_FRESHNESS_BLOCKS = 12;
  * min_score" - so min_score is in the same unit: the spec's reference value of 1 point is 100000.
  */
 export const SCORE_SCALE = 100000;
+
+/**
+ * 2026.0.34 - A RUN WHOSE MARKS NAME GENESIS IS DECIDED (RULED 2026-11-26, kanban #3762 option (a)). Since #3567 a close replays a run only
+ * through the inputs its last carried mark commits to; a mark naming GENESIS commits to none, so no seat signed and the round never settled
+ * (an old cached client, or a modified one on purpose). From 34 such a run is what its marks commit to - a run that never started: FORFEIT,
+ * score 0 (§15), signed over the canonical transcript like every other close. It changes what seats sign, so rounds below 34 keep today's
+ * close byte for byte. (34 joins SUPPORTED_PROTOCOL_VERSIONS with #3612/#3680.)
+ */
+export const GENESIS_RUN_VERSION = 34;
+/** Whether a round of protocol version `v` decides a run with no committed inputs FORFEIT 0 at the close (kanban #3762). */
+export const decidesGenesisRun = (v) => Number.isInteger(v) && v >= GENESIS_RUN_VERSION;
