@@ -66,7 +66,8 @@ export class MovePanel extends React.Component {
       this.set({ busy: false, status: { words: `Moved ${satOf(r.movedMsat)} from federation ${short(from)} to federation ${short(to)}${r.feeMsat ? ` (fee ${satOf(r.feeMsat)})` : ''}.`, kind: 'ok' } });
       if (this.props.onMoved) this.props.onMoved(r);
       this.read(from);
-    } else this.set({ busy: false, status: { words: `Nothing was moved: ${(r && r.why) || 'the move stopped'}`, kind: 'bad' } });
+    // kanban #3777: a failed payment still holding sats is not "nothing moved" - the why names them; the balance is read again
+    } else { this.set({ busy: false, status: { words: `${r && r.heldMsat > 0n ? 'The move failed' : 'Nothing was moved'}: ${(r && r.why) || 'the move stopped'}`, kind: 'bad' } }); if (r && r.heldMsat > 0n) this.read(from); }
   }
   render() {
     const { feds } = this.props;

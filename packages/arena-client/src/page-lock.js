@@ -4561,8 +4561,10 @@ function moveLegAhead(storage, federationId, made, msat, row, phrase16 = null) {
     ...(phrase16 ? { phrase16: String(phrase16).toLowerCase() } : {}) });
 }
 // `rows`: the history's two kinds - a join's swap, or the player's own Move (movePlayerWallet)
+const MOVE_REFUND_WAIT_MS = 30000;
+const satText = (msat) => { const m = BigInt(msat); return `${m / 1000n}${m % 1000n ? '.' + String(m % 1000n).padStart(3, '0').replace(/0+$/, '') : ''} sat`; };
 export async function swapForRound({ from, to, amountMsat, gateways = [], storage = null, fromFederationId = null, toFederationId = null, onState = () => {},
-  rows = ['swapped-out', 'swapped-in'], phrase16 = null }) {
+  rows = ['swapped-out', 'swapped-in'], phrase16 = null, refundWaitMs = MOVE_REFUND_WAIT_MS, refundPollMs = 1000 }) {
   const amount = BigInt(amountMsat);
   const hex = (b) => (b instanceof Uint8Array ? toHex(b) : String(b || '')).toLowerCase();
   const inRow = { kind: rows[1], from: hex(fromFederationId) };
@@ -4602,9 +4604,25 @@ export async function swapForRound({ from, to, amountMsat, gateways = [], storag
   // THE RECEIVE ENDED Expired / Failure: its entry goes; Claimed ends below, with its row; anything else keeps it for the next page's resume
   if (final && final !== 'Claimed') depositEnded(storage, toFederationId, made.operation, final, null);
   if (!(said.state === 'Success' && final === 'Claimed')) {
-    const why = said.state === 'Success' ? `the receive in the round's federation ended ${final}` : `the payment from the other federation ended ${said.state}${said.state === 'Refunded' ? ` - the money is back there (${tried.length} gateway pair${tried.length === 1 ? '' : 's'} tried)` : ''}`;
-    onState({ state: 'stopped', why, tried });
-    return { ok: false, state: 'stopped', why, tried };
+    let why = said.state === 'Success' ? `the receive in the round's federation ended ${final}` : `the payment from the other federation ended ${said.state}${said.state === 'Refunded' ? ` - the money is back there (${tried.length} gateway pair${tried.length === 1 ? '' : 's'} tried)` : ''}`;
+    // A FAILED PAYMENT'S HELD SATS, SAID (kanban #3777, feedback #502: "Nothing was moved ... ended Failure" while the balance had fallen 13 sat):
+    // LNv2's Failure is a funding transaction the federation rejected (`said.why`, e.g. a note already spent): its notes left the balance at once
+    // and come back only through the mint client's refund - later, or for a note spent elsewhere never. Waited for a bounded time, then said.
+    let heldMsat = 0n;
+    if (said.state === 'Failure') {
+      const until = Date.now() + refundWaitMs;
+      for (;;) {
+        try { heldMsat = before - BigInt(await from.balanceMsat()); } catch { /* read again */ }
+        if (heldMsat <= 0n || Date.now() >= until) break;
+        await new Promise((r) => setTimeout(r, refundPollMs));
+      }
+      if (heldMsat < 0n) heldMsat = 0n;
+      if (said.why) why += ` (the federation: ${String(said.why).slice(0, 200)})`;
+      why += heldMsat > 0n ? ` - ${satText(heldMsat)} of that wallet are still held by the failed payment; its refund was not seen yet (they come back when the federation refunds the notes)`
+        : ' - the money is back there';
+    }
+    onState({ state: 'stopped', why, tried, heldMsat });
+    return { ok: false, state: 'stopped', why, tried, heldMsat };
   }
   const feeMsat = before - BigInt(await from.balanceMsat()) - amount;
   if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: rows[0], msat: String(amount), feeMsat: String(feeMsat), to: hex(toFederationId) });
