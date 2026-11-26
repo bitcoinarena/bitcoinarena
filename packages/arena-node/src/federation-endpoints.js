@@ -14,6 +14,7 @@
 // neither keeps the advert's endpoint (federation-records.js) - which is what every record carried before.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { GuardianSocket, cut } from './ws-dial.js';   // kanban #3724
 import { readInvite, inviteForGuardians } from './invite.js';
 
 /** peer key hex -> API URL, from a client configuration (client.json, or the `client_config` answer; flat or under `global`). */
@@ -46,10 +47,10 @@ export function configInvite(federationIdHex, config) {
 /** The stock `client_config` over the guardian API's WebSocket. */
 export async function wsClientConfig(url, { timeoutMs = 10000, WebSocketImpl = null } = {}) {
   if (!/^wss?:\/\//.test(String(url))) throw new Error(`no guardian API to ask: ${url}`);
-  const WS = WebSocketImpl || (await import('ws')).default;
+  const WS = WebSocketImpl || GuardianSocket;   // kanban #3724: the guardian cap, not the 'ws' default of 100 MiB
   return new Promise((resolve, reject) => {
     const ws = new WS(url);
-    const done = (f, v) => { clearTimeout(t); try { ws.close(); } catch { /* closed */ } f(v); };
+    const done = (f, v) => { clearTimeout(t); cut(ws); f(v); };
     const t = setTimeout(() => done(reject, new Error('no answer in time')), timeoutMs);
     ws.on('error', (e) => done(reject, e));
     ws.on('open', () => ws.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'client_config', params: [{ auth: null, params: null }] })));
