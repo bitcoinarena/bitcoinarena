@@ -1136,6 +1136,9 @@ const TAG = {
   // collide with a checkpoint's or a batch's over the same bytes: 0.10 says a
   // ghost is never an input, and a shared tag would be one way to forget it.
   ghost: 'ARENA/v1/Ghost',
+  // A /play SOCKET SHOWN TO BE THE PLAYER'S (kanban #3742): the entry's session key signs the seat's key, a nonce the seat drew for
+  // that one socket, and the entry id. Its own tag, so no checkpoint, batch or other message signed by the same key is ever this.
+  playSocketOwner: 'ARENA/v1/PlaySocketOwner',
   playerSubSeed: 'ARENA/v1/PlayerSubSeed',
   // The census entries a contract's root is checked against, and the height
   // they were taken at. Its own tag: a proof binds to the INPUTS, and a
@@ -10032,7 +10035,10 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
             + `round runs ${protocolVersionName(contract.protocolVersion)}` });
           continue;
         }
-        eligible.push(e); continue;
+        // NODE-SIGNED (kanban #3348): whether the body that decides this entry is one its node signed - a stranger's own bond to a node's key
+        // under another operator id carries an unsigned body, and the emergency doors take no emergency key from it
+        eligible.push({ ...e, nodeSigned: signedOwn.has(e.decidedBy ? `${Array.from(e.decidedBy.txid).join(',')}:${e.decidedBy.vout}` : `${Array.from(raw.txid).join(',')}:${raw.vout}`) });
+        continue;
       }
       const roles = u.advert.roles || [];
       const versions = u.advert.protocolVersions || [];
@@ -10053,7 +10059,7 @@ function deriveCensus(views, { contract, candidates, resolve, verifyAdvert, bond
       }
       // the update's games replace the bond's first advertisement's (a hosted-games change is an update)
       eligible.push({ ...e, advert: sumsBonds(contract) ? ownMaturity(u.advert, e.advert) : u.advert, advertId: u.advertId, roles, hostedGames: u.advert.hostedGames,
-        updatedBy: { txid: u.txid, height: u.height, position: u.position } });
+        updatedBy: { txid: u.txid, height: u.height, position: u.position }, nodeSigned: true });   // an update is checked against the node key
     }
   }
 
@@ -33119,15 +33125,23 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
     // ONE DRAW FOR BOTH ROLES (2026.0.2): a v2 round's node serves both, so it is eligible for both
     if (!drawEligible(e, contract, role) || out.has(keyOf(e))) continue;
     const had = byKey.get(keyOf(e));
-    if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
+    const signed = e.nodeSigned !== false ? e : null;
+    if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats, signed }); continue; }
     had.bondSats += e.bondSats;
     if (compareEntries(e, had.entry) < 0) had.entry = e;
+    if (signed && (!had.signed || compareEntries(signed, had.signed) < 0)) had.signed = signed;
   }
+  // THE DRAWN ENTRY SPEAKS FOR ITS NODE ONLY IF ITS NODE SIGNED IT (kanban #3743, audit census-a8-2-1, a gap in #3348/#3364): a stranger's own
+  // bond to a node's key under another operator id stands in the census with the stranger's unsigned body (census.js `nodeSigned` false), and
+  // ground to sort first it was the key's drawn entry - every seat dialed the stranger's endpoint for the drawn node. The ticket and the order
+  // are still the key's lowest outpoint's, so who is drawn does not change; what is handed back for the key is its lowest entry whose body the
+  // node signed (an entry without the mark counts as signed, as before), and the unsigned one only when the key has no other.
   // FEWER NODE KEYS THAN SEATS: each key once, as each entry was once before - never a key twice to fill a seat. The
   // census minimum above is what refuses a census too small to hold a round (roster.test pins the smaller honest answer).
 
-  const scored = [...byKey.values()].filter(({ bondSats }) => bondSats >= bondMin).map(({ entry, bondSats }) => ({
+  const scored = [...byKey.values()].filter(({ bondSats }) => bondSats >= bondMin).map(({ entry, bondSats, signed }) => ({
     entry,
+    signed,
     ticket: ticketFor(committeeSeed, entry, drawRoleOf(contract, role)),
     weight: weightOf(bondSats, bondMin),
   }));
@@ -33143,7 +33157,7 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
   });
 
   // `count` is the reserve draw (drawCommittee, §5A.7): the same order, more of it
-  return scored.slice(0, Number.isInteger(count) ? count : slots).map((s) => s.entry);
+  return scored.slice(0, Number.isInteger(count) ? count : slots).map((s) => s.signed || s.entry);
 }
 
 /** THE DRAW (§5A.7): the role's `drawnForRole` lowest scores, in score order - of whom at most `slots` are seated. */
