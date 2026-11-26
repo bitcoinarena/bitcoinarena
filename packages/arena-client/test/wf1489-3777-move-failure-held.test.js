@@ -14,6 +14,8 @@ function pair({ refundAfter }) {
   from.balanceMsat = async () => { from.reads++; if (from.failed && from.reads >= refundAfter) from.balance = 3113000n; return String(from.balance); };
   from.withdraw = async () => { from.balance -= 13000n; from.failed = true; from.reads = 0; return JSON.stringify({ state: 'Failure', why: 'invalid input: 2-The note is already spent' }); };
   const to = { balanceMsat: async () => '0', receive: async (m) => JSON.stringify({ invoice: `lnbcrt-${m}`, operation: 'op1' }), awaitReceive: async () => 'Claimed' };
+  // 2.0: a swap goes only through gateways at or under each federation's fee cap (§23A.9, kanban #1324) - one listed at the reference fee
+  for (const w of [from, to]) { w.gateways = async () => JSON.stringify(['https://gw-a.test']); w.gatewayFees = async () => JSON.stringify({ send: { ppm: 1000, baseMsat: 1000 }, receive: { ppm: 1000, baseMsat: 0 } }); }
   return { from, to };
 }
 
