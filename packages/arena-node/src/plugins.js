@@ -148,11 +148,24 @@ export function runTicksOf(core, config) {
   // kanban #3556: an ask that failed is remembered for that core and config, as runTicksFits' (#2807) - never asked again on the seat's thread
   const memo = RUN_TICKS_FAILED.get(core) || RUN_TICKS_FAILED.set(core, new Map()).get(core);
   const k = configKey(config);
-  if (k !== null && memo.has(k)) throw new Error(memo.get(k));
+  if (k !== null && memo.has(k)) throw new Error(recall(memo, k));
   try { return s.call('runTicks', { config }); }
-  catch (e) { if (k !== null && memo.size < 1024) memo.set(k, String(e && e.message || e).slice(0, 400)); throw e; }
+  catch (e) { if (k !== null) remember(memo, k, String(e && e.message || e).slice(0, 400)); throw e; }
 }
 const RUN_TICKS_FAILED = new WeakMap();   // core -> config -> the refusal of a runTicks ask that failed (kanban #3556)
+/**
+ * A FAILURE MEMO HOLDS THE LAST MEMO_CAP ASKS THAT FAILED, NOT THE FIRST (kanban #3754): it stopped taking entries at 1024, so a
+ * core that failed fast on 1024 lengths left every later failure unremembered, and round.open's runLengthFits, right after
+ * runLengthFitsAsync, asked a spinning length again on the seat's thread (ASK_MS + its end wait, ~4 s per POST /round). The newest
+ * failure now always goes in and the one least recently asked goes out, so the answer runLengthFitsAsync just left is still there.
+ */
+const MEMO_CAP = 1024;
+function remember(memo, k, v) {
+  memo.delete(k);
+  memo.set(k, v);
+  while (memo.size > MEMO_CAP) memo.delete(memo.keys().next().value);
+}
+function recall(memo, k) { const v = memo.get(k); memo.delete(k); memo.set(k, v); return v; }
 const configKey = (config) => { try { return JSON.stringify(config === undefined ? null : config, (k, x) => (typeof x === 'bigint' ? `${x}n` : ArrayBuffer.isView(x) ? Array.from(x) : x)); } catch { return null; } };
 
 /**
@@ -177,10 +190,10 @@ export function runLengthFits(core, config, blockTicks) {
   }
   // kanban #2807: an ask that did not answer is remembered for that core and length - never asked again on the seat's thread
   const memo = FITS_FAILED.get(core) || FITS_FAILED.set(core, new Map()).get(core);
-  if (memo.has(blockTicks)) return memo.get(blockTicks);
+  if (memo.has(blockTicks)) return recall(memo, blockTicks);
   let fits;
   try { fits = s.call('runTicksFits', { ticks: blockTicks }); }
-  catch (e) { const r = { ok: false, why: `${core.name}'s runTicksFits did not answer: ${String(e && e.message || e).slice(0, 200)}` }; if (memo.size < 1024) memo.set(blockTicks, r); return r; }
+  catch (e) { const r = { ok: false, why: `${core.name}'s runTicksFits did not answer: ${String(e && e.message || e).slice(0, 200)}` }; remember(memo, blockTicks, r); return r; }
   return fits ? { ok: true }
     : { ok: false, why: `that round says a run is ${blockTicks} ticks, and ${core.name} runs 1 to ${runTicksOf(core, config)}` };
 }
@@ -201,14 +214,14 @@ export async function runLengthFitsAsync(core, config, blockTicks) {
       const k = configKey(config);
       if (k === null || memo.has(k)) return;
       try { await s.callAsync('runTicks', { config }); }
-      catch (e) { if (memo.size < 1024) memo.set(k, String(e && e.message || e).slice(0, 400)); }
+      catch (e) { remember(memo, k, String(e && e.message || e).slice(0, 400)); }
     };
     if (s.meta.runTicksFits) {
       const memo = FITS_FAILED.get(core) || FITS_FAILED.set(core, new Map()).get(core);
       if (!memo.has(blockTicks)) {
         let fits = true;
         try { fits = await s.callAsync('runTicksFits', { ticks: blockTicks }); }
-        catch (e) { fits = true; if (memo.size < 1024) memo.set(blockTicks, { ok: false, why: `${core.name}'s runTicksFits did not answer: ${String(e && e.message || e).slice(0, 200)}` }); }
+        catch (e) { fits = true; remember(memo, blockTicks, { ok: false, why: `${core.name}'s runTicksFits did not answer: ${String(e && e.message || e).slice(0, 200)}` }); }
         if (!fits) await warmRunTicks();
       }
     } else await warmRunTicks();
