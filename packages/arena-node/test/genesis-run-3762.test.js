@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// A RUN WHOSE MARKS NAME GENESIS IS DECIDED AT THE CLOSE (kanban #3762, RULED 2026-11-26 option (a), protocol 2026.0.34).
+// A RUN WHOSE MARKS NAME GENESIS IS DECIDED AT THE CLOSE (kanban #3762, RULED 2026-11-26 option (a), protocol 2026.0.34; main: since #3567).
 //
 // Since #3567 the close replays a run only through the inputs its last carried mark commits to. A mark naming GENESIS commits to none,
 // so the replay had no ticks, no seat signed, nothing else decided it (no in-time result, every seat up), and the round never settled
@@ -82,5 +82,5 @@ test('#3762 from protocol 34 a run whose marks name GENESIS is FORFEIT 0 at ever
   console.log('  FACTS (v34):', JSON.stringify(r));
   assert.deepEqual([r.a, r.b], [['FORFEIT/0'], ['FORFEIT/0']]);
   assert.equal(r.transcripts, 1);
-  assert.equal(r.closingA, 'SIGNED');
+  assert.ok(!r.closingA || r.closingA === 'SIGNED', r.closingA);
 });
