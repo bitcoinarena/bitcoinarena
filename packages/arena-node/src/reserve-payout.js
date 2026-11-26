@@ -990,6 +990,18 @@ export function createReservePayouts({ db, me, curve, random, passed, guardians,
       if (!to) return refuse('this seat has no port into the destination federation: the claim is kept pending', 503);
       let s; try { s = await to.status({ txid: fromHex(rec.claimTxid), outIdx: 0n }); } catch (e) { return refuse(`this seat cannot read the destination: ${e.message}`, 503); }
       if (!s || !s.stored) return refuse('the destination holds no such claim output: not CLAIMED', 409);
+      // AND THAT OUTPUT IS THE MOVE'S CLAIM (kanban #3726): any contract the destination holds at output 0 passed the read above - a
+      // guardian named a player's stake lock, every seat closed the move on it and the real incoming contract was never claimed. The
+      // claim is rebuilt here from the plan's own incoming contract (its seed, the destination's reserve key, the claim nonce): its txid
+      // and payout must be the record's
+      let c; try { c = await to.claimIncoming({ contractHex: rec.plan.contractHex, seed: moveSeedFor(rec.plan), payoutPk: fromHex(rec.plan.toKey), nonce: nonceOf(rec.plan.proposal, attemptOf(rec.plan), 'claim'), waitS: 5 }); }
+      catch (e) { return refuse(`this seat cannot rebuild the move's claim: ${e.message}`, 503); }
+      if (!c || !c.funded) return refuse('the destination does not answer the move\'s incoming contract as funded: the claim is kept pending', 503);
+      if (!c.commitment || String(c.commitment.claim_pk).toLowerCase() !== String(rec.plan.toKey).toLowerCase()
+        || String(c.commitment.payment_hash).toLowerCase() !== String(rec.plan.paymentHash).toLowerCase()) return refuse('the move\'s incoming contract is not the plan\'s', 409);
+      const claimTx = String(c.txid || c.message || '').toLowerCase();
+      if (claimTx !== String(rec.claimTxid).toLowerCase()) return refuse('the record names another transaction than the move\'s claim: not CLAIMED', 409);
+      if (!c.payout || String(c.payout.msat) !== String(msat)) return refuse('the record names another amount than the move\'s claim pays', 409);
       return { ok: true };
     }
     if (!/^[0-9a-f]{64}$/.test(String(rec.txid || ''))) return refuse(`a ${rec.state} record names its transaction`);
