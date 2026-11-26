@@ -33,6 +33,7 @@
 import { Worker, MessageChannel, receiveMessageOnPort } from 'node:worker_threads';
 import { C, ANSWERED, EXITED } from './core-supervisor.js';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { coreTree, coreRelPath, coreBytesHashHex } from './core-hash.js';
 import { instrumentCore, coreBudget } from './core-depth.js';
@@ -211,6 +212,22 @@ async function waiting(ctrl, g) {
   }
 }
 
+/** kanban #3732: THE CORE PROCESS A CORE'S THREAD RUNS IN is its files' own (core-supervisor.js): this key, the sha256 of its entry and
+ *  every file by path, worked out once per file set. Two loads of the same files share a process; another core never does. */
+const groups = new WeakMap();
+function groupOf(files, entry) {
+  let byEntry = groups.get(files);
+  if (!byEntry) { byEntry = new Map(); groups.set(files, byEntry); }
+  let g = byEntry.get(entry);
+  if (!g) {
+    const h = createHash('sha256').update(String(entry)).update('\0');
+    for (const [rel, text] of [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) h.update(String(rel)).update('\0').update(String(text)).update('\0');
+    g = h.digest('hex');
+    byEntry.set(entry, g);
+  }
+  return g;
+}
+
 function spawnThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, arrayBudget, liveCap, heap, rssBackstop, answerMax = ANSWER_MAX, until = null, lingerAs = null, loadUntil = null }) {
   // `lingerAs`: the label an ended, not yet gone thread is kept under for lingeringCores (the plugin trial's, kanban #1880) - never
   // the core's own name, which stays the seat's (kanban #1694)
@@ -232,7 +249,7 @@ function spawnThread({ files, entry }, { callMs, stepMs, askMs, loadMs, name, ar
   // THE TRIGGER sits BACKSTOP_MARGIN below the backstop: sampled every 2 ms, and the core keeps allocating until its isolate
   // stops, so the line it must never cross is the backstop itself, not the trigger
   const triggerMb = Math.max(1, Math.round(rssBackstop / 1048576) - BACKSTOP_MARGIN_MB);
-  sup.worker.postMessage({ type: 'spawn', id, files: [...files], entry, name, port: port2, ctrl: ctrl.buffer, arrayBudget, liveCap,
+  sup.worker.postMessage({ type: 'spawn', id, group: groupOf(files, entry), files: [...files], entry, name, port: port2, ctrl: ctrl.buffer, arrayBudget, liveCap,
     answerMax, heap: { ...heap }, triggerMb }, [port2]);
   let ended = null;
   let lastEnd = null;
