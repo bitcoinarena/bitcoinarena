@@ -530,9 +530,18 @@ export function createOpr(o = {}) {
     }
     q('UPDATE attempts SET near_rep = ?, presses_n = ? WHERE id = ?').run(rep, n, a.id);
   }
+  // one page telemetry value as stored (kanban #3736): a finite number, a boolean, null, or a word of at most 40 chars - nothing else is kept
+  const telOne = (v) => (v === null || typeof v === 'boolean' || (typeof v === 'number' && Number.isFinite(v)) ? v : typeof v === 'string' ? v.slice(0, 40) : undefined);
   const clientText = (c0) => { const c = JC(JSON.stringify(c0 && typeof c0 === 'object' ? c0 : {}), {}); const s = JSON.stringify(c); if (s.length <= 2000) return s;
-    const { t, ...rest } = c; const tt = t && typeof t === 'object' ? { src: t.src, jit: t.jit, taps: t.taps, blur: t.blur, hidden: t.hidden, hiddenMs: t.hiddenMs, first: t.first, wd: t.wd, auto: Array.isArray(t.auto) ? t.auto.slice(0, 6) : undefined, dc: t.dc, dpr: t.dpr } : undefined;
-    const s2 = JSON.stringify({ ...rest, ua: String(rest.ua || '').slice(0, 160), t: tt }); return s2.length <= 2000 ? s2 : JSON.stringify({ t: tt }); };
+    // EVERY FIELD OF t IS CUT TOO (kanban #3736, audit opr a8-1-1): the rebuild kept t.src, t.jit, t.dc and t.auto whole, so a free key's junk
+    // submit stored up to the 256 KB body limit as page telemetry, counted by no budget. Each t field is now what the page sends - a number, a
+    // boolean or a short word (src: its four counts) - and the text is never longer than 2,000 chars
+    const { t, ...rest } = c;
+    const tt = t && typeof t === 'object' ? { src: t.src && typeof t.src === 'object' && !Array.isArray(t.src) ? { touch: telOne(t.src.touch), mouse: telOne(t.src.mouse), pen: telOne(t.src.pen), key: telOne(t.src.key) } : telOne(t.src),
+      jit: telOne(t.jit), taps: telOne(t.taps), blur: telOne(t.blur), hidden: telOne(t.hidden), hiddenMs: telOne(t.hiddenMs), first: telOne(t.first), wd: telOne(t.wd),
+      auto: Array.isArray(t.auto) ? t.auto.slice(0, 6).map(telOne) : undefined, dc: telOne(t.dc), dpr: telOne(t.dpr) } : undefined;
+    const s2 = JSON.stringify({ ...rest, ua: String(rest.ua || '').slice(0, 160), t: tt }); if (s2.length <= 2000) return s2;
+    const s3 = JSON.stringify({ t: tt }); return s3.length <= 2000 ? s3 : '{}'; };
   function submit(player, body = {}, { ip = null } = {}) {
     const t = now();
     const a = q('SELECT * FROM attempts WHERE id = ?').get(String(body.attempt || ''));
