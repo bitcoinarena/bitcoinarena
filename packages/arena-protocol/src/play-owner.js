@@ -11,13 +11,13 @@ import { TAG } from './constants.js';
 
 export const PLAY_OWNER_NONCE_BYTES = 32;
 
-const is32 = (b) => b instanceof Uint8Array && b.length === 32;
+const isOwnerKey32 = (b) => b instanceof Uint8Array && b.length === 32;
 
 /** The digest the entry's session key signs to bind one /play socket at one seat to the entry. */
 export function playOwnerDigest({ seatPubkey, nonce, entryId }) {
-  if (!is32(seatPubkey)) throw new Error('a play-owner digest names the seat by its 32-byte key');
+  if (!isOwnerKey32(seatPubkey)) throw new Error('a play-owner digest names the seat by its 32-byte key');
   if (!(nonce instanceof Uint8Array) || nonce.length !== PLAY_OWNER_NONCE_BYTES) throw new Error(`a play-owner nonce is ${PLAY_OWNER_NONCE_BYTES} bytes`);
-  if (!is32(entryId)) throw new Error('a play-owner digest names a 32-byte entry id');
+  if (!isOwnerKey32(entryId)) throw new Error('a play-owner digest names a 32-byte entry id');
   const msg = new Uint8Array(32 + PLAY_OWNER_NONCE_BYTES + 32);
   msg.set(seatPubkey, 0); msg.set(nonce, 32); msg.set(entryId, 32 + PLAY_OWNER_NONCE_BYTES);
   return taggedHash(TAG.playSocketOwner, msg);
