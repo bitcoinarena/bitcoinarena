@@ -56,8 +56,53 @@ export async function live(base, path, fetchImpl = fetch) {
     const r = await fetchImpl(base + path, { signal: AbortSignal.timeout(ASK_MS), cache: 'no-store' });
     const ms = Date.now() - t0;
     if (!r.ok) { let why = ''; try { why = JSON.parse(await boundedText(r, 4096)).why || ''; } catch { /* not JSON */ } return { ok: false, status: r.status, why, ms }; }
-    return { ok: true, ms, body: JSON.parse(await boundedText(r, LIVE_BYTES)) };
+    const body = JSON.parse(await boundedText(r, LIVE_BYTES));
+    // a door answers a JSON object: `null`, a number or a string is that node's bad answer, not one that stops the read (#3323)
+    if (body === null || typeof body !== 'object') return { ok: false, status: r.status, why: 'the answer is not a JSON object', ms };
+    return { ok: true, ms, body };
   } catch (e) { return { ok: false, status: 0, why: e.name === 'TimeoutError' ? 'no answer in 10 s' : e.message, ms: Date.now() - t0 }; }
+}
+
+// ONE NODE'S ANSWER IN THE SHAPE THE CARDS READ (kanban #3752, gap in #3323): a census node's own doors carry no signature and no quorum, and
+// the cards read their fields by shape - { channels: 1 } from GET /liquidity-claim threw in paintLiquidity, { settlements: "x" } from GET
+// /dashboard.json in keepable, and either stopped the whole read and the explorer's /api/health copy. Each door's answer is reshaped once,
+// when it is read: a list that is not a list is an empty one (its entries objects only), an object that is not an object is null, a time or
+// count that is not a number is null, a text that is not a text is null. A body that is not an object is that node's bad answer.
+const isObj = (x) => x !== null && typeof x === 'object' && !Array.isArray(x);
+const objs = (x) => (Array.isArray(x) ? x.filter(isObj) : []);
+const objOr = (x) => (isObj(x) ? x : null);
+const numOr = (x) => (x != null && x !== '' && Number.isFinite(Number(x)) ? Number(x) : null);
+const textOr = (x) => (typeof x === 'string' ? x : typeof x === 'number' && Number.isFinite(x) ? String(x) : null);
+const keyOrObj = (x) => (typeof x === 'string' || isObj(x));
+const NODE_DOORS = {
+  // protocols: the numbers it lists, none (undefined: the views read it as protocol 0) when it lists none
+  '/owner/version': (b) => { const m = objOr(b.machine), ps = Array.isArray(b.protocols) ? b.protocols.map(Number).filter(Number.isFinite) : [];
+    return { ...b, version: textOr(b.version), commit: textOr(b.commit), protocols: ps.length ? ps : undefined,
+      machine: m && typeof m.id === 'string' && m.id ? { ...m, name: textOr(m.name), os: textOr(m.os), cores: numOr(m.cores),
+        load: Array.isArray(m.load) ? m.load.map(Number).filter(Number.isFinite) : [] } : null }; },
+  '/owner/bond': (b) => { const bond = objOr(b.bond), lock = objOr(b.lock);
+    return { ...b, bond: bond ? { ...bond, sats: numOr(bond.sats) } : null, lock: lock && numOr(lock.blocksLeft) != null ? { ...lock, blocksLeft: numOr(lock.blocksLeft) } : null }; },
+  '/dashboard.json': (b) => { const hosts = objOr(b.hosts), lnd = hosts && objOr(hosts.lnd);
+    return { ...b, settlements: objs(b.settlements), totals: objOr(b.totals), byGame: objs(b.byGame),
+      hosts: hosts ? { ...hosts, lnd: lnd ? { ...lnd, alias: textOr(lnd.alias), pubkey: textOr(lnd.pubkey), activeChannels: numOr(lnd.activeChannels),
+        localMsat: numOr(lnd.localMsat), remoteMsat: numOr(lnd.remoteMsat), forwards30d: numOr(lnd.forwards30d) } : null } : null }; },
+  '/liquidity-claim': (b) => ({ ...b, lightningPubkey: textOr(b.lightningPubkey), freeSats: numOr(b.freeSats), atMs: numOr(b.atMs), channels: objs(b.channels), funds: Array.isArray(b.funds) ? b.funds : [] }),
+  '/gateway-claim': (b) => ({ ...b, lightningPubkey: textOr(b.lightningPubkey) }),
+  '/founding': (b) => { const ready = objOr(b.ready), cohort = ready && objOr(ready.cohort), trigger = objOr(b.trigger);
+    return { ...b, id: textOr(b.id), codes: objs(b.codes), seated: Array.isArray(b.seated) ? b.seated.filter(keyOrObj) : [], alternates: Array.isArray(b.alternates) ? b.alternates.filter(keyOrObj) : [],
+      windowEnd: numOr(b.windowEnd), trigger: trigger ? { ...trigger, height: numOr(trigger.height) } : null,
+      ready: ready ? { ...ready, cohort: cohort ? { ...cohort, height: numOr(cohort.height) || 0 } : null } : null }; },
+  '/founding?members=1': (b) => { const m = objOr(b.members);
+    return { ...b, members: m ? { ...m, nodes: objs(m.nodes), needed: numOr(m.needed), height: numOr(m.height) } : null }; },
+  '/uptime': (b) => ({ ...b, sinceMs: numOr(b.sinceMs), windows: Array.isArray(b.windows) ? objs(b.windows).map((w) => ({ ...w, key: textOr(w.key), share: numOr(w.share) })) : null }),
+  '/liquidity-seating': (b) => ({ ...b, providers: objs(b.providers).filter((p) => typeof p.node === 'string') }),
+};
+/** One census node's answer at `path`, its fields in the shape the cards read (kanban #3752); a body that is not an object is a bad answer. */
+export function nodeAnswer(path, a) {
+  if (!a || !a.ok) return a;
+  if (!isObj(a.body)) return { ok: false, status: a.status, why: 'the answer is not a JSON object', ms: a.ms };
+  const shape = NODE_DOORS[String(path).replace(/\?(?!members=1$).*$/, '')];
+  return shape ? { ...a, body: shape(a.body) } : a;
 }
 
 /** The name an answer is kept under: its door, without GET /served's window (from/to change with every read). */
@@ -81,22 +126,24 @@ export function keepable(answers, spare = new Set()) {
   const out = {};
   for (const [k, a] of Object.entries(answers)) {
     if (spare.has(k)) { out[k] = { ok: false, status: 0, why: 'another seat answered more', ms: a.ms, atMs: a.atMs }; continue; }
-    if (a.ok && a.body && /\/dashboard\.json$/.test(k)) {
-      const d = a.body, last = Math.max(0, ...(d.settlements || []).map((x) => Number(x.madeMs) || 0));
+    // what a node answered is read by its shape here as in the read (kanban #3752): keepable runs outside read()'s catch, and one node's
+    // list that is not a list would stop the copy being stored
+    if (a.ok && isObj(a.body) && /\/dashboard\.json$/.test(k)) {
+      const d = a.body, last = Math.max(0, ...objs(d.settlements).map((x) => Number(x.madeMs) || 0));
       out[k] = { ...a, body: { node: d.node, totals: d.totals, byGame: d.byGame, hosts: d.hosts, settlements: last ? [{ madeMs: last }] : [] } };
-    } else if (a.ok && a.body && k.endsWith(NOW_ROUNDS)) {
+    } else if (a.ok && isObj(a.body) && k.endsWith(NOW_ROUNDS)) {
       // a seat's rounds for the lobby's window (kanban #758): only the rounds that are open or start within the hour, each with whether it is
       // seated and its drawn game committee by the keys' first 16 characters (what roundSeating compares the answering nodes with)
       // (the keys once, in `keys`, each round naming them by place: 100 kB a seat measured with every key in every round, 10:59Z)
       const at = Number(a.atMs) || Number(a.body.nowMs) || Date.now(), keys = [], place = new Map();
       const ix = (x) => { const h = String(x).toLowerCase().slice(0, 16); if (!place.has(h)) { place.set(h, keys.length); keys.push(h); } return place.get(h); };
-      out[k] = { ...a, body: { nowMs: a.body.nowMs, keys, rounds: (a.body.rounds || []).filter((r) => inNow(r, at)).map((r) => ({ id: String(r.id).slice(0, 16), game: { id: String(r.game && r.game.id).slice(0, 16), name: r.game && r.game.name },
+      out[k] = { ...a, body: { nowMs: a.body.nowMs, keys, rounds: objs(a.body.rounds).filter((r) => inNow(r, at)).map((r) => ({ id: String(r.id).slice(0, 16), game: { id: String(r.game && r.game.id).slice(0, 16), name: r.game && r.game.name },
         entryOpen: !!r.entryOpen, played: r.played, startTimeMs: r.startTimeMs, entryCloseMs: r.entryCloseMs, committeeTimeMs: r.committeeTimeMs, federation: String(r.federation || '').slice(0, 16),
-        committee: r.committee ? { seated: r.committee.seated || null, drawnCount: r.committee.drawnCount || null,
+        committee: isObj(r.committee) ? { seated: r.committee.seated || null, drawnCount: r.committee.drawnCount || null,
           ...(isSeated(r.committee) ? {} : { drawnAt: drawnGame(r).map(ix) }) } : null })) } };
-    } else if (a.ok && a.body && /\/rounds\?/.test(k)) {
+    } else if (a.ok && isObj(a.body) && /\/rounds\?/.test(k)) {
       // a seat's rounds (kanban #692, 346 kB at ?next=1): each round's app, committee time, federation and whether its committee is drawn
-      out[k] = { ...a, body: { rounds: (a.body.rounds || []).map((r) => ({ game: { id: r.game && r.game.id }, committeeTimeMs: r.committeeTimeMs, federation: r.federation,
+      out[k] = { ...a, body: { rounds: objs(a.body.rounds).map((r) => ({ game: { id: r.game && r.game.id }, committeeTimeMs: r.committeeTimeMs, federation: r.federation,
         committee: { drawn: !!(r.committee && r.committee.drawn), why: r.committee && !r.committee.drawn ? r.committee.why || null : null } })) } };
     } else out[k] = a;
   }
@@ -677,14 +724,16 @@ export function makeHealth({ H, $, window = {} }) {
       // preview UI 246: asking every door of every node, the unreachable ones' 10 s each held the page at "reading" past 60 s)
       // painted as each one answers: a node that does not answer holds its slot for 10 s, and the rows of those that do are not held with it
       paintNodes(nodes, tip);
-      await Promise.all(nodes.map(async (n) => { n.version = await ask(n.base, '/owner/version'); paintNodes(nodes, tip); }));
+      await Promise.all(nodes.map(async (n) => { n.version = nodeAnswer('/owner/version', await ask(n.base, '/owner/version')); paintNodes(nodes, tip); }));
       paintNetwork({ tip, nodes, seats, roles, feds, reserves });
       paintNodes(nodes, tip);
       say('reading each node … (' + nodes.filter((n) => n.version.ok).length + ' of ' + nodes.length + ' answered)');
       await Promise.all(nodes.filter((n) => n.version.ok).map(async (n) => {
         // and its uptime (kanban #756, GET /uptime): 24 h, 7 days, 30 days, all time - the 24 h marked when below inclusion
         const [b, d, lc, gc, fd, up] = await Promise.all([ask(n.base, '/owner/bond'), ask(n.base, '/dashboard.json'), ask(n.base, '/liquidity-claim'), ask(n.base, '/gateway-claim'), ask(n.base, '/founding'), ask(n.base, '/uptime')]);
-        Object.assign(n, { bond: b, dash: d, liq: lc, gw: gc, found: fd, uptime: up });
+        // each in the shape the cards read (kanban #3752): one node's odd field is that node's, it does not stop the read
+        Object.assign(n, { bond: nodeAnswer('/owner/bond', b), dash: nodeAnswer('/dashboard.json', d), liq: nodeAnswer('/liquidity-claim', lc), gw: nodeAnswer('/gateway-claim', gc),
+          found: nodeAnswer('/founding', fd), uptime: nodeAnswer('/uptime', up) });
       }));
       [feds, reserves, funding] = await Promise.all([fedsP, reservesP, fundingP]);
       READ_AT = how.atMs || Date.now();
@@ -740,7 +789,7 @@ export function makeHealth({ H, $, window = {} }) {
 
   function paintNetwork({ tip, nodes, seats, roles, feds, reserves, funding }) {
     const up = nodes.filter((n) => n.version && n.version.ok).length;
-    const protos = new Map(); for (const n of nodes) if (n.version && n.version.ok) { const p = Math.max(...(n.version.body.protocols || [0])); protos.set(p, (protos.get(p) || 0) + 1); }
+    const protos = new Map(); for (const n of nodes) if (n.version && n.version.ok) { const ps = n.version.body.protocols, p = Math.max(0, ...(Array.isArray(ps) ? ps.map(Number).filter(Number.isFinite) : [])); protos.set(p, (protos.get(p) || 0) + 1); }
     // every census node's bond: its own answer, else the census's (a node that does not answer still has a bond)
     const bonds = nodes.reduce((s, n) => s + (n.bond && n.bond.ok && n.bond.body.bond ? Number(n.bond.body.bond.sats) : Number(n.bondSats || 0)), 0);
     const facts = [
@@ -753,7 +802,7 @@ export function makeHealth({ H, $, window = {} }) {
       ['Protocol reserves', reserves ? satMsat(reserves.body.totalMsat) + ' sat' : '-', ''],
       ['Seats in daily.json', seats.length, ''],
       // THE NEWEST SETTLEMENT any node's dashboard shows, and how long ago: rounds that stopped settling show here first
-      ...(() => { const last = Math.max(0, ...nodes.flatMap((n) => (n.dash && n.dash.ok ? n.dash.body.settlements || [] : []).map((x) => Number(x.madeMs) || 0)));
+      ...(() => { const last = Math.max(0, ...nodes.flatMap((n) => (n.dash && n.dash.ok && Array.isArray(n.dash.body.settlements) ? n.dash.body.settlements : []).map((x) => Number(x.madeMs) || 0)));
         if (!last) return [['Last settlement', '-', 'muted']];
         const h = (Date.now() - last) / 3600000;
         return [['Last settlement (any node)', h < 1 ? Math.round(h * 60) + ' min ago' : Math.round(h) + ' h ago', h > 26 ? 'warn' : 'ok']]; })(),
@@ -809,7 +858,7 @@ export function makeHealth({ H, $, window = {} }) {
   async function membersOf(nodes) {
     const fb = (n) => (n.found && n.found.ok ? n.found.body : null);
     const seats = nodes.filter((n) => fb(n) && fb(n).ready && fb(n).ready.cohort).sort((a, b) => fb(b).ready.cohort.height - fb(a).ready.cohort.height);
-    for (const n of seats) { const a = await ask(n.base, '/founding?members=1'); if (a.ok && a.body && a.body.members) return a.body.members; }
+    for (const n of seats) { const a = nodeAnswer('/founding?members=1', await ask(n.base, '/founding?members=1')); if (a.ok && a.body && a.body.members) return a.body.members; }
     return null;
   }
   function paintFounding(nodes, feds, mem) {
@@ -979,7 +1028,7 @@ export function makeHealth({ H, $, window = {} }) {
     const used = new Map();
     if (epoch != null) for (const f of feds) {
       found: for (const e of [epoch, epoch - 1]) for (const n of nodes.filter((x) => (x.guardianOf || []).includes(f.federation))) {
-        const s = await ask(n.base, `/liquidity-seating?federation=${f.federation}&epoch=${e}`);
+        const s = nodeAnswer('/liquidity-seating', await ask(n.base, `/liquidity-seating?federation=${f.federation}&epoch=${e}`));
         if (s.ok) { for (const p of s.body.providers || []) weights.set(f.federation.slice(0, 8) + ':' + p.node, p.weight); used.set(f.federation, e); break found; }
       }
     }
