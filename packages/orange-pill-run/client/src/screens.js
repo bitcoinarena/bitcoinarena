@@ -50,6 +50,15 @@ export function xLine(me, sats = PRIZE_SATS) {
   // kanban #3534: an X account that does not follow @bitcoinarena_io (or was not asked yet) keeps the field, for Check again, with the follow link
   return { ok, text, parts, link: !me.x || needsFollow(me), follow: needsFollow(me), ln: !hasLn };
 }
+/**
+ * THE SHORT FORM OF THE BOUNTY BOX (kanban #3796, owner 2026-11-26: "Wenn beide gecheckt sind und der Entry valide, nur noch die Kurzfassung ... Es ist
+ * zu voll"): one line once the X account is checked (follows) and the Lightning address is saved - not a draw, the day's best run wins. null otherwise.
+ */
+export function bountyShort(me, sats = PRIZE_SATS) {
+  const x = xLine(me, sats);
+  if (!x || !x.ok) return null;
+  return { text: "✓ You're eligible for today's " + fmtSats(sats) + " sat prize", who: (me.x.username ? "@" + me.x.username : "X linked") + " · ⚡ " + me.lnAddress };
+}
 /** FOLLOWING @bitcoinarena_io IS REQUIRED (kanban #3534, owner 2026-11-23): the account, the link, and whether /me says this player still has to. */
 export const X_HOUSE = "bitcoinarena_io";
 export const FOLLOW_URL = "https://x.com/bitcoinarena_io";   // one export per line: client/build.mjs names the first only

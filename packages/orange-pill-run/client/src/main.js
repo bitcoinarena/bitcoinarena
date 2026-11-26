@@ -13,7 +13,7 @@ import { resultOf, validateLog } from "../../src/sim/replay.js";
 import { fit, drawWorld, view, usd } from "./render.js";
 import { makeApi } from "./api.js";
 import { createEntry, entryOf } from "./entry.js";
-import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, X_HOUSE, FOLLOW_URL, PRIZE_SATS } from "./screens.js";
+import { introModel, resultModel, entryLine, myBest, boardRows, fmtSats, fmtTime, lnFieldModel, usedOf, isFree, xFieldModel, xSaveAnswer, xHandleOf, needsFollow, bountyShort, X_HOUSE, FOLLOW_URL, PRIZE_SATS } from "./screens.js";
 import { RULES, RULES_TITLE, hintText } from "./rules.js";
 import { makeAudio, snapWorld, worldEvents } from "./audio.js";
 import { makeClock, snapMovers, drawBetween } from "./frameloop.js";
@@ -425,6 +425,18 @@ function paintBounty(on, st) {
   // the service's rule (#3720, owner 2026-11-25; was #3281: only before the first run): an X account saved before the round ends counts in it
   $("rBExtra").textContent = !me.x ? " An X handle saved before the round ends counts for today's round." : "";
   const hasX = !!me.x, hasLn = !!me.lnAddress;
+  // kanban #3796 (owner 2026-11-26): X checked + Lightning saved + this run counts -> one short line and Change; the full box again on Change
+  const short = !BB.open && !XF.r.dirty && !LN.r.dirty && !(XF.r.msg && XF.r.msg.kind === "bad") && !(LN.r.msg && LN.r.msg.kind === "bad")
+    && document.activeElement !== $("rXfIn") && document.activeElement !== $("rLnIn") ? bountyShort(me, sats) : null;
+  box.classList.toggle("short", !!short); $("rBHead").parentElement.hidden = !!short; $("rBNote").hidden = !!short;
+  if (short) {
+    XF.r.msg = null; LN.r.msg = null; $("rNot").hidden = false;
+    const t = $("rNotText"); t.textContent = ""; const a = document.createElement("span"); a.className = "st-ok"; a.textContent = short.text;
+    const b = document.createElement("span"); b.className = "bwho"; b.textContent = short.who; t.append(a, " · ", b);
+    const ch = $("rBChange"); ch.hidden = false; ch.textContent = "Change"; paintXf("r", false); paintLn("r", false);
+    HOOKS.bounty = { on: true, short: true, status: t.textContent, xField: false, lnField: false, change: "Change" };
+    return;
+  }
   const xOn = !hasX || !!(st && st.link) || BB.open || XF.r.dirty || !!XF.r.msg || document.activeElement === $("rXfIn");
   // an X account with an open X field says its reason under the field (follow / Check again): the status line does not say it twice (phone)
   if (st && st.link && xOn) st = { ...st, parts: st.parts.filter((x) => x.ok || !/^X /.test(x.text)) };
@@ -432,7 +444,7 @@ function paintBounty(on, st) {
   const lnOn = !hasLn || BB.open || LN.r.dirty || !!LN.r.msg || document.activeElement === $("rLnIn");
   const ch = $("rBChange"); ch.hidden = !((hasX && !xOn) || (hasLn && !lnOn) || BB.open); ch.textContent = BB.open ? "Done" : "Change";
   paintXf("r", xOn); paintLn("r", lnOn);
-  HOOKS.bounty = { on: true, head: $("rBHead").textContent, note: $("rBNote").textContent, status: stOn ? $("rNotText").textContent : "", xField: !$("rXf").hidden, lnField: !$("rLn").hidden, change: ch.hidden ? null : ch.textContent };
+  HOOKS.bounty = { on: true, short: false, head: $("rBHead").textContent, note: $("rBNote").textContent, status: stOn ? $("rNotText").textContent : "", xField: !$("rXf").hidden, lnField: !$("rLn").hidden, change: ch.hidden ? null : ch.textContent };
 }
 $("rBChange").addEventListener("click", () => {
   BB.open = !BB.open;
