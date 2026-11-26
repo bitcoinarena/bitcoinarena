@@ -34,6 +34,15 @@ export function dialWs(url, { maxPayload = GUARDIAN_ANSWER_MOST, handshakeTimeou
   return new WebSocket(url, opts);
 }
 
+// A SEAT'S /play ANSWER TO A FRAME THIS SEAT HANDS IT (kanban #3749, the door #3690 capped for offerReceiptTo at 64 KiB): a mark is answered
+// with its signed receipt (a few hundred bytes) or one 'error ...' line, a receipt with 'held' or a refusal line.
+/** The most of one /play answer a seat reads when it dials a peer's /play (kanban #3749; #3690's OFFER_ANSWER_MOST). */
+export const PLAY_ANSWER_MOST = 64 * 1024;
+/** How long a /play dial's opening handshake may take (the relay's own answer timer bounds the rest). */
+export const PLAY_OPEN_MS = 5000;
+/** `new PlaySocket(url)`: dialWs with the /play cap, for the callers that take a WebSocket class. */
+export function PlaySocket(url) { return dialWs(url, { maxPayload: PLAY_ANSWER_MOST, handshakeTimeout: PLAY_OPEN_MS }); }
+
 /** `new GuardianSocket(url)`: dialWs with the guardian cap, for the callers that take a WebSocket class (`new WS(url)`). */
 export function GuardianSocket(url) { return dialWs(url, { maxPayload: GUARDIAN_ANSWER_MOST }); }
 
