@@ -263,8 +263,18 @@ export class Forfeit {
     // formed at once with six signatures while the only proof sat on the signer node that
     // was down. Never signing at all took 2 of 2's outage refund away: there the
     // forfeit ask is how the signer node that was down learns the Void at all.
-    if (voided && voided.learned === 'forfeit-ask' && !(pulled && pulled.reached === pulled.peers))
-      return refuse('this signer node learned the ENTRY_VOID only from a forfeit ask, and its proof pull reached '
+    // AND EVERY VOID IT WAS HANDED, NOT ONLY ONE NAMED A FORFEIT ASK (kanban #3742, audit entry r2-1): the label came from
+    // the caller's own `ask` field on POST /first-mark, and nothing there says who the caller is - the forfeit ask's push and
+    // a stranger's copy of the same public bytes without `ask` were one body, and the second was kept as 'forward' and skipped
+    // this rule; on path 2 seats 5 and 6 then signed and the refund formed at once with the proof on seat 4, down. Only a Void
+    // this seat decided from what it holds itself - 'own' (it held the first mark) or 'player' (its own pull of the peers on the
+    // player's catch-up) - is signed without the full reach; any other ('forward', 'forfeit-ask', a label of a later code) waits
+    // for every other signer node. A genuine outage caught up with every seat up still refunds at once (the pull reaches all).
+    // AND 'player' ONLY FROM THE PLAYER (kanban #3742, ruled 2026-11-25): a stranger replaying the public first mark over /play
+    // was kept as 'player' too; now that label needs a socket the entry's session key bound to itself (server.js `player`), and
+    // the replay is kept as 'play-unbound', which waits here like any other hand-over.
+    if (voided && voided.learned !== 'own' && voided.learned !== 'player' && !(pulled && pulled.reached === pulled.peers))
+      return refuse('this signer node was handed the ENTRY_VOID (a forward or a forfeit ask), and its proof pull reached '
         + `${pulled ? `${pulled.reached} of ${pulled.peers}` : 'none'} of the other signer nodes: it signs no refund of the lock - `
         + 'a signer node it cannot reach may hold the proof of two first marks; the lock returns to the player at its expiry');
     // AN ATTESTED ROUND (§0A.7a): no run and no result. A stake comes back by this forfeit once THIS
