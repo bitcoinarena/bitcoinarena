@@ -2934,5 +2934,29 @@
  "3762": {
   "text": "Settlement: a paid round can stay unsettled when a run names the origin",
   "kind": "bug"
+ },
+ "3777": {
+  "text": "Federation: a failed move can still cost funds and leave balances inconsistent",
+  "kind": "bug"
+ },
+ "3778": {
+  "text": "BTC Up/Down game: a refused order leaves the placing notice up into the next window",
+  "kind": "bug"
+ },
+ "3779": {
+  "text": "Other: the lobby can keep a finished move looking like another tab is still merging",
+  "kind": "bug"
+ },
+ "3780": {
+  "text": "Other: a relay note that cannot be read can crash-loop a zap address",
+  "kind": "bug"
+ },
+ "3781": {
+  "text": "Lightning payouts: a paid claim can stay uncredited while the balance moves",
+  "kind": "bug"
+ },
+ "3782": {
+  "text": "Other: a background collect can add funds with no history while the order stays open",
+  "kind": "bug"
  }
 }
