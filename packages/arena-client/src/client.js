@@ -827,6 +827,15 @@ export class Client {
    * `nonce`, signs it with the session key and sends `player <entry> <signature>`, once per socket and entry. A seat on an older build
    * answers 'error unknown text message' to both, which changes nothing; a failure is never fatal to the run.
    */
+  /**
+   * One binding frame on the home socket, answered in order like send() - but not through send(): the binding is no publish, so it takes
+   * no place in what paces and watches the publishes (one batch in flight, backpressure.test.js), and it is two short frames per socket.
+   */
+  #sayOn(sock, message) {
+    if (!sock || sock !== this.sock || sock.readyState !== 1) return Promise.resolve('error there is no socket');
+    return new Promise((r) => { this.said.push(r); sock.send(message); });
+  }
+
   #bindSocket(sock, say) {
     const w = this.where;
     if (!w || !sock) return null;
@@ -1203,7 +1212,7 @@ export class Client {
         this.sock = sock;
         if (!this.ended) this.state = 'ready';
         resolve(this);
-        this.#bindSocket(sock, (m) => this.send(m));   // kanban #3799: show the seat this socket is the player's
+        this.#bindSocket(sock, (m) => this.#sayOn(sock, m));   // kanban #3799: show the seat this socket is the player's
       });
 
       // A DROPPED SOCKET IS NOT AN ERROR, it is the normal thing that happens
@@ -2368,7 +2377,7 @@ export class Client {
     this.homeFault = null;
     this.where = { roundId, entryId };
     // kanban #3799: every socket already open is bound to this entry too (a socket opened before the round was set)
-    if (this.sock) this.#bindSocket(this.sock, (m) => this.send(m));
+    if (this.sock) this.#bindSocket(this.sock, (m) => this.#sayOn(this.sock, m));
     for (const [base, link] of this.peerLinks) if (link && link.sock) this.#bindSocket(link.sock, (m) => this.sendPeer(base, m, BIND_WITHIN_MS));
     // A LATE ENTRY'S FIRST TICK IS ITS JOIN TICK: the round's tick it joined at, so its run ends with the round's.
     // An entry at tick 0 starts where it always did.
