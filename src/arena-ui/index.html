@@ -3328,7 +3328,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const hb = window.ARENA_WALLET_BALANCE; const he = document.getElementById('arena-hdr-sats');
       // MERGING, AS AN ICON (2026-10-20 19:4xZ: "200 merging won't fit on all displays, display an icon instead"): the total already holds
       // it; a ⇄ beside it says part of it is still coming in from this browser's other wallets, the sentence on hover / long press
-      const mergeTip = hb && hb.merging ? Number(hb.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '';
+      const mergeTip = [hb && hb.merging ? Number(hb.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '',
+        hb && hb.moving ? Number(hb.moving).toLocaleString('en-US') + ' sat of it moving between your federations' : ''].filter(Boolean).join('; ');   // kanban #3561
       if (he) { const t = (hb ? Number(hb.sats || 0).toLocaleString('en-US') + ' sat' : '– sat') + (mergeTip ? ' \u21c4' : ''); if (he.textContent !== t) window.ArenaText.say(he, t); he.title = mergeTip; }
     }
     try { const k = lastKey(); const was = k && JSON.parse(vault().getItem(k) || 'null');
@@ -6095,7 +6096,22 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // THE SPLIT, ONLY WHEN THERE IS ONE: the sum above is every federation's; this line says where it sits (2026-10-13)
       const split = known && Array.isArray(bal.parts) && bal.parts.length > 1
         ? 'Across ' + bal.parts.length + ' federations: ' + bal.parts.map((x) => x.federation.slice(0, 8) + ' ' + sat(x.sats)).join(' · ') : '';
-      const mergingLine = known && bal.merging > 0 ? ' (' + sat(bal.merging) + ' of it still merging in from your other wallets in this browser)' : '';
+      // AND WHAT IS MOVING, AND A STUCK MERGE SAID PLAINLY WITH ITS RETRY (kanban #3561, feedback #406/#598): the total holds both; the line says which part
+      // is not spendable yet and why, and a merge that stopped names its reason and offers "Merge again" (ARENA_MERGE_NOW, forced)
+      const stuckMerges = known && bal.merging > 0 ? Object.entries(window.ARENA_MERGE_STATE || {}).filter(([, v]) => v && v.state === 'stuck') : [];
+      const comingBits = known ? [bal.merging > 0 ? sat(bal.merging) + ' of it still merging in from your other wallets in this browser' : '',
+        bal.moving > 0 ? sat(bal.moving) + ' of it moving between your federations (paid out, its arrival not claimed yet)' : ''].filter(Boolean) : [];
+      const mergingLine = (comingBits.length ? ' (' + comingBits.join('; ') + ')' : '')
+        + (stuckMerges.length ? '. The merge is stuck - ' + stuckMerges.map(([f, v]) => 'federation ' + f.slice(0, 8) + ': ' + v.why).join('; ') + '. These sats are still yours' : '');
+      { const line = document.getElementById('arena-balance-line'); let b = document.getElementById('arena-merge-retry');
+        if (line && stuckMerges.length && !b) { b = document.createElement('button'); b.type = 'button'; b.id = 'arena-merge-retry'; b.className = 'linkish'; b.textContent = 'Merge again';
+          b.onclick = async () => { b.disabled = true; b.textContent = 'Merging \u2026';
+            try { const wasm = await window.ARENA_LOCK_WASM(); await wasm.default();
+              await window.ARENA_MERGE_NOW(Object.entries(window.ARENA_MERGE_STATE || {}).filter(([, v]) => v && v.state === 'stuck').map(([f]) => f), 60000, { seed: walletSeed(), LockClient: wasm.LockClient, force: true }); }
+            catch (e) { console.log('[arena] merge again: ' + (e && e.message ? e.message : e)); }
+            finally { b.disabled = false; b.textContent = 'Merge again'; if (typeof paintMoney === 'function') paintMoney(); } };
+          line.after(b); }
+        if (b && !stuckMerges.length && !b.disabled) b.remove(); }
       // AND WHAT IS ARRIVING, WHY AND BY WHEN (kanban #617): its own sentence under the split
       const arrivingSay = known && bal.arrivingLine ? (split || mergingLine ? '. ' : '') + bal.arrivingLine.charAt(0).toUpperCase() + bal.arrivingLine.slice(1) : '';
       window.ArenaText.say(document.getElementById('arena-arriving-why'), known && bal.arrivingLine ? bal.arrivingLine.charAt(0).toUpperCase() + bal.arrivingLine.slice(1) : '');
@@ -6223,7 +6239,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       }
       // kanban #2909: a join waiting on its exchange asks the kept one again - it never sends a second one while the first is on its way
       if (resumeOnly) { if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES(); return { ok: false, resumed: keptKeys.length, ms: Date.now() - t0, why: 'resumed only' }; }
-      const spendable = (p) => BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n;
+      const spendable = (p) => BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0) - Number(p.moving || 0))) * 1000n;
       const parts = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).filter((p) => /^[0-9a-f]{64}$/.test(p.federation) && p.federation !== to);
       // NEVER OUT OF A CRITICAL FEDERATION (kanban #3542; the Lightning swap refused one before #614): its notes move to its successor by
       // succession (ARENA_EVACUATE), not into a round - the status this page verified (ARENA_FED_LOADS); the player is told why
@@ -6273,7 +6289,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         .sort((a, b) => Number(a.entryCloseMs || 0) - Number(b.entryCloseMs || 0));
       if (!rows.length) return;
       const parts = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).filter((p) => /^[0-9a-f]{64}$/.test(p.federation));
-      const spendable = (f) => { const p = parts.find((x) => x.federation === f); return p ? BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n : 0n; };
+      const spendable = (f) => { const p = parts.find((x) => x.federation === f); return p ? BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0) - Number(p.moving || 0))) * 1000n : 0n; };
       const first = rows[0], stake = BigInt((first.contract || first.raw.contract).stakeMsat);
       const need = stake + stake / 20n;
       const same = rows.filter((r) => Number(r.entryCloseMs || 0) === Number(first.entryCloseMs || 0));
@@ -6525,12 +6541,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         : window.ARENA_NEW_WALLET ? '0 sat'   // kanban #926: a wallet made a moment ago holds nothing yet, there is nothing to load
         : !noWallet && window.ARENA_STILL_LOADING && window.ARENA_STILL_LOADING('ARENA_BALANCE_TRIED') ? 'Loading \u2026' : '– sat');
       { const parts = [bal && bal.arriving ? Number(bal.arriving).toLocaleString('en-US') + ' arriving' + (bal.merging ? ' \u21c4' : '') : (bal && bal.merging ? '\u21c4' : ''),
+          bal && bal.moving ? Number(bal.moving).toLocaleString('en-US') + ' moving' : '',   // kanban #3561: "2,961 sat · 2,806 moving"
           bal && bal.pending ? Number(bal.pending).toLocaleString('en-US') + ' pending' : ''].filter(Boolean);
         // one line: " · " before it; stacked (narrow): the line under the balance, no separator
         const stacked = window.matchMedia && window.matchMedia('(max-width: 560px)').matches;
         window.ArenaText.say(document.getElementById('arena-wb-pending'), parts.length ? (stacked ? '' : ' · ') + parts.join(' · ') : ''); }
       document.getElementById('arena-wb-pending').title = [bal && bal.arrivingLine ? bal.arrivingLine : '',
-        bal && bal.merging ? Number(bal.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : ''].filter(Boolean).join('\n');
+        bal && bal.merging ? Number(bal.merging).toLocaleString('en-US') + ' sat of it merging in from your other wallets in this browser' : '',
+        bal && bal.moving ? Number(bal.moving).toLocaleString('en-US') + ' sat of it moving between your federations (paid out, its arrival not claimed yet)' : ''].filter(Boolean).join('\n');
     }
     {
       let sayTimer = null;
@@ -8302,7 +8320,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // the wallet's parts as the game counts them (#3251): per federation, what it can spend now and what is still coming in
     function oprParts() {
       const b = window.ARENA_WALLET_BALANCE, parts = b && Array.isArray(b.parts) ? b.parts : [];
-      return parts.map((p) => { const coming = Math.max(0, Number(p.merging || 0)) + Math.max(0, Number(p.arriving || 0));
+      return parts.map((p) => { const coming = Math.max(0, Number(p.merging || 0)) + Math.max(0, Number(p.arriving || 0)) + Math.max(0, Number(p.moving || 0));
         return { federation: String(p.federation || '').toLowerCase(), spend: Math.max(0, Number(p.sats || 0) - coming), coming }; });
     }
     // what the best federation's open wallet can send after the fees (withdrawableMsat), read at most every 5 s
@@ -8640,7 +8658,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     }
     function moneyFirst(rows, onlyOurs = false) {
       const parts = (window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || [];
-      const spendable = (p) => Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0);
+      const spendable = (p) => Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0) - Number(p.moving || 0);
       const most = parts.filter((p) => spendable(p) > 0).sort((x, y) => spendable(y) - spendable(x))[0];
       const dep = window.ARENA_DEPOSIT_FEDERATION && window.ARENA_DEPOSIT_FEDERATION.federation;
       const want = String((most && most.federation) || dep || '').toLowerCase();
@@ -9923,8 +9941,13 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // A REMEMBERED BALANCE THE MERGE WILL NEVER TAKE IN IS DROPPED (2026-10-22 playtest, "it's been like this for minutes"; measured in
           // Chrome on UI 306: a kept phrase with no wallet of its own in this federation in this browser, or one noted empty, kept its remembered 700 sat
           // "merging" for good): only a wallet this merge opens is counted as merging in
+          // BUT NEVER ONE A LIVE TAB OF THIS BROWSER HOLDS (kanban #3561, feedback #426: 1,205 -> 156 sat, no row): that tab plays with the phrase and keeps its
+          // remembered balance itself (ARENA_SUM_BALANCES writes it, and removes it at 0) - its wallet here may read as noted empty while that tab's holds sats
+          let lockedNow = new Set();
+          try { if (navigator.locks && navigator.locks.query) lockedNow = new Set((((await navigator.locks.query()) || {}).held || []).map((l) => String(l.name))); } catch { lockedNow = new Set(); }
           for (const x of phrases.filter((y) => y.hex !== cur)) for (const anc of [false, true]) {
             if (wanted(x, anc)) continue;
+            if (lockedNow.has('arena.phrase.' + x.hex.slice(0, 16))) continue;
             const kk = 'arena.wallet.known.' + fedHex.slice(0, 16) + '.' + x.hex.slice(0, 16) + (anc ? '.blwp' : '');
             if (L.getItem(kk) !== null) { console.log('[arena] wallet ' + x.hex.slice(0, 8) + (anc ? ' (BLWP)' : '') + ' holds nothing to merge in federation ' + fedHex.slice(0, 8) + ' in this browser: its remembered balance dropped'); L.removeItem(kk); }
           }
@@ -10225,9 +10248,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // NOTES STILL ARRIVING: a restore's re-issue, a deposit's notes, a payment's change count in the balance
           // only once issued - measured: 0 sat for more than 6 minutes after a restore of a seed holding 3000 - so what is being
           // issued is said beside it, and read again until it has landed
-          let sum = 0n, arriving = 0n; const parts = [];
+          let sum = 0n, arriving = 0n; const parts = []; const readMsat = new Map();
           for (const [fid, c] of window.ARENA_WALLETS) {
-            try { const m = BigInt(await c.balanceMsat()); const i = ARENACLIENT.issuingMsat ? await ARENACLIENT.issuingMsat(c) : 0n; sum += m; arriving += i;
+            try { const m = BigInt(await c.balanceMsat()); const i = ARENACLIENT.issuingMsat ? await ARENACLIENT.issuingMsat(c) : 0n; sum += m; arriving += i; readMsat.set(fid, m);
               parts.push({ federation: fid, sats: Number(m / 1000n), arriving: Number(i / 1000n) });
               // remembered for this phrase too: should a tab later use another phrase, this money counts in its total from the first read
               try { const ph = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').slice(0, 16);
@@ -10264,16 +10287,45 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
               const f = part.federation.slice(0, 16), extra = BigInt(part.arriving || 0) * 1000n - (keptBy.get(f) || 0n);
               if (extra > 0n) { sum += extra; part.sats += Number(extra / 1000n); }
             } }
+          // A MOVE ON ITS WAY IS STILL THE PLAYER'S (kanban #3561, feedback #406/#426/#598: "my wallet balance fell from 2,961 sats to 205 sats ... no
+          // withdrawal, move, stake or fee row"; at 13:48Z the same report's debug read 2,800 in 337ae01a): an evacuation out of a CRITICAL federation, a
+          // Move or a join's swap had paid out of one federation and its claim in the other was still pending - in neither balance. Each such leg
+          // counts in its target federation's part as `moving` from the moment its paying wallet no longer holds it, until the claim ends
+          let moving = 0n;
+          try {
+            const cur16 = ((window.sessionStorage && sessionStorage.getItem('arena.player.seed')) || '').slice(0, 16) || null;
+            const legs = ARENACLIENT.movesInFlight ? ARENACLIENT.movesInFlight(vault(), cur16) : [];
+            const outBy = new Map();
+            for (const g of legs) {
+              const fromNow = g.from && readMsat.has(g.from) ? readMsat.get(g.from) : null;
+              // still in the paying wallet (the leg written ahead of its payment, or refunded): counted there already
+              if (fromNow !== null && g.beforeMsat !== null && fromNow + g.msat > g.beforeMsat) continue;
+              // a leg of a page before this one names no balance before its payment: whether it left is not known, so it is not counted (as before)
+              if (g.beforeMsat === null) continue;
+              outBy.set(g.to, (outBy.get(g.to) || 0n) + g.msat);
+            }
+            for (const [f, m] of outBy) {
+              moving += m;
+              const part = parts.find((x) => x.federation === f || x.federation.slice(0, 16) === f.slice(0, 16));
+              if (part) { part.sats += Number(m / 1000n); part.moving = (part.moving || 0) + Number(m / 1000n); }
+              else parts.push({ federation: f, sats: Number(m / 1000n), arriving: 0, merging: 0, moving: Number(m / 1000n) });
+            }
+            sum += moving;
+            if (moving > 0n) { const said = Number(moving / 1000n); if (window.ARENA_MOVING_SAID !== said) { window.ARENA_MOVING_SAID = said; console.log('[arena] #3561 ' + said + ' sat moving between federations (paid out, the claim still pending): ' + [...outBy].map(([f, m]) => f.slice(0, 8) + ' ' + Number(m / 1000n)).join(', ')); } }
+            else window.ARENA_MOVING_SAID = 0;
+          } catch (e) { console.log('[arena] the moves on their way could not be read: ' + (e && e.message ? e.message : e)); }
           // A BALANCE ALWAYS ONCE SUMMED (the same playtest: with no held federation's wallet open the balance was never set and the bar said
           // "– sat" until some later read): nothing open is 0 sat, with how many held federations could not be read beside it
           const unread = held.filter((f) => !window.ARENA_WALLETS.has(f)).length;
           if (parts.length || seed) {
             const arrivingLine = window.ARENA_ARRIVING_LINE ? window.ARENA_ARRIVING_LINE(parts) : '';
-            window.ARENA_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.ARENA_PENDING_SATS || 0, arriving: Number(arriving / 1000n), merging: Number(merging / 1000n), parts, unread, arrivingLine,
+            window.ARENA_WALLET_BALANCE = { sats: Number(sum / 1000n), pending: window.ARENA_PENDING_SATS || 0, arriving: Number(arriving / 1000n), merging: Number(merging / 1000n), moving: Number(moving / 1000n), parts, unread, arrivingLine,
               federation: parts.length === 1 ? 'federation ' + parts[0].federation.slice(0, 16) + '\u2026' : parts.length + ' federations' };
             lastBalance(window.ARENA_WALLET_BALANCE);
             // ONCE PER CHANGE, READ AGAIN EVERY 3 S (kanban #2869, the owner's #096: 161 sat that never landed re-read the balance every 500 ms and logged it each time -
             // the 300-line console of his report held nothing else, the order's own lines were gone)
+            // a move on its way is read again every 3 s too, until its claim lands (kanban #3561)
+            if (moving > 0n && arriving === 0n && !window.ARENA_ARRIVING_AGAIN) window.ARENA_ARRIVING_AGAIN = setTimeout(() => { window.ARENA_ARRIVING_AGAIN = null; window.ARENA_SUM_BALANCES(); }, 3000);
             if (arriving > 0n) { const said = Number(arriving / 1000n); if (window.ARENA_ARRIVING_SAID !== said) { window.ARENA_ARRIVING_SAID = said; console.log('[arena] ' + said + ' sat still being issued to the player wallet'); }
               if (!window.ARENA_ARRIVING_AGAIN) window.ARENA_ARRIVING_AGAIN = setTimeout(() => { window.ARENA_ARRIVING_AGAIN = null; window.ARENA_SUM_BALANCES(); }, 3000); } else window.ARENA_ARRIVING_SAID = 0;
             { const line = parts.length > 1 ? 'balance over ' + parts.length + ' federations: ' + Number(sum / 1000n) + ' sat (' + parts.map((x) => x.federation.slice(0, 8) + ' ' + x.sats).join(', ') + ')' : '';
@@ -10983,7 +11035,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             : 'moving your sats into this game\'s federation (' + fedHex.slice(0, 8) + ') first - joining once they are there' };
         const t0 = Date.now(), sleep = (ms) => new Promise((ok) => setTimeout(ok, ms));
         const hereMsat = () => { const p = ((window.ARENA_WALLET_BALANCE && window.ARENA_WALLET_BALANCE.parts) || []).find((x) => String(x.federation).toLowerCase() === fedHex);
-          return p ? BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0))) * 1000n : 0n; };
+          return p ? BigInt(Math.max(0, Number(p.sats) - Number(p.merging || 0) - Number(p.arriving || 0) - Number(p.moving || 0))) * 1000n : 0n; };
         console.log('[arena] join ' + String(id).slice(0, 16) + ': #2909 ' + (plan.coveredBy === 'merge' ? 'waiting for the merge into ' : 'moving the stake into ') + fedHex.slice(0, 8) + ' first ('
           + plan.ownHere + ' sat there, ' + Number(needMsat / 1000n) + ' sat needed)');
         (async () => {
