@@ -9,6 +9,10 @@
 //     punctuation, quotes and brackets (a JSON array), dots, underscores, plus signs, zero-width spaces;
 //   - an invisible format character (zero-width space/joiner, word joiner, soft hyphen, BOM) inside a word does not hide it: it is read without them.
 // Only BIP39 words count, and any other word between two of them ends the run, so an ordinary sentence stays.
+// A mistyped seed word (kanban #3820, bypass of #1472): a word of 3-8 letters one edit (a letter changed, added, dropped, or two neighbours swapped)
+// from a BIP39 word joins the run in its place, so one typo no longer splits a seed into two short runs that both stay ("absnet" for "absent": at most
+// 2048 guesses and the checksum rebuild the wallet). Such words never start or end a run, never stand two in a row, and are at most one in six of
+// it (two in a 12-word seed); a run with more of them counts only its parts of true seed words.
 import { BIP39_ENGLISH } from '../../arena-client/src/bip39-wordlist.js';
 
 export const SEED_RUN = 12;
@@ -43,19 +47,54 @@ function wordsOf(text) {
 // a colon that is no list number's ("3:") after a word: a label naming what follows ("my seed: abandon ...", '"seed":"abandon ...')
 const labelled = (gap) => gap.replace(/\d\s*:/g, '').includes(':');
 
+// kanban #3820: is this non-seed word (lower case) one edit from a BIP39 word? Damerau-Levenshtein distance 1, checked only against words of length +-1.
+const BY_LEN = new Map();
+for (const w of BIP39_ENGLISH) { if (!BY_LEN.has(w.length)) BY_LEN.set(w.length, []); BY_LEN.get(w.length).push(w); }
+function oneEdit(a, b) {
+  if (a === b) return false;
+  if (a.length === b.length) {
+    let i = 0; while (a[i] === b[i]) i++;
+    if (a.slice(i + 1) === b.slice(i + 1)) return true; // one letter changed
+    return a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2); // two neighbours swapped
+  }
+  const [s, l] = a.length < b.length ? [a, b] : [b, a];
+  if (l.length - s.length !== 1) return false;
+  let i = 0; while (i < s.length && s[i] === l[i]) i++;
+  return s.slice(i) === l.slice(i + 1); // one letter added or dropped
+}
+export const isSeedTypo = (w) => {
+  const x = String(w).toLowerCase();
+  if (x.length < 3 || x.length > 8 || isSeedWord(x)) return false;
+  for (const n of [x.length - 1, x.length, x.length + 1]) for (const b of BY_LEN.get(n) || []) if (oneEdit(x, b)) return true;
+  return false;
+};
+
 /** Where the seed phrases of a text stand: [[start, end], ...] in order, from the first seed word's first letter to the last one's last. */
 export function seedRunSpans(text, least = SEED_RUN) {
   const t = String(text ?? '');
   const runs = [];
   let run = [];
+  // kanban #3820: a run ends here; typos at its end are dropped, and a run with more than one typo in six words counts only its true seed parts
+  const close = () => {
+    while (run.length && run[run.length - 1].typo) run.pop();
+    const typos = run.filter((x) => x.typo).length;
+    if (run.length >= least && typos * 6 <= run.length) runs.push(run);
+    else if (typos) {
+      let part = [];
+      for (const x of [...run, { typo: true }]) { if (!x.typo) { part.push(x); continue; } if (part.length >= least) runs.push(part); part = []; }
+    }
+  };
   for (const x of wordsOf(t)) {
     const seed = isSeedWord(x.w);
     // a gap of no letter at all joins two seed words (the words between were found as tokens, so any letter there is a word of its own)
-    if (seed && run.length && !/[A-Za-z]/.test(t.slice(run[run.length - 1].e, x.s))) { run.push(x); continue; }
-    if (run.length >= least) runs.push(run);
+    const joined = run.length && !/[A-Za-z]/.test(t.slice(run[run.length - 1].e, x.s));
+    if (seed && joined) { run.push(x); continue; }
+    // kanban #3820: a typo of a seed word stands in for it, never two in a row
+    if (!seed && joined && !run[run.length - 1].typo && isSeedTypo(x.w)) { run.push({ ...x, typo: true }); continue; }
+    close();
     run = seed ? [x] : [];
   }
-  if (run.length >= least) runs.push(run);
+  close();
   const spans = [];
   for (const r of runs) {
     // a label word in front ("seed:") is left standing - only while the rest is still a whole seed, so colons between the words hide nothing
