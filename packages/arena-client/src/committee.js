@@ -27,29 +27,12 @@ import { explorerAgrees } from './explorer-check.js';
 import { chainAnchorFor } from './directory.js';
 import { readWithOneRetry } from './reread.js';
 import { noteAdverts } from './seat-identity.js';
+import { bytesUpTo } from './reread.js';   // kanban #2740 reader, moved there for join.js fetchRound (kanban #3848)
 // A SEAT'S ANSWER IS READ UP TO A BOUND (kanban #2740, #1489 r6-census-1): GET /census, /committee and /seating were read whole (json, arrayBuffer,
 // text), bounded only by READ_MS - one seat streaming 64 MiB of whitespace made the tab hold all of it before the honest providers were asked
 // (a phone's tab froze; the join never finished). Each is read chunk by chunk up to its cap, the stream cancelled past it (that seat refused).
 const CENSUS_ANSWER_MAX = 4 * 1024 * 1024, COMMITTEE_ANSWER_MAX = 64 * 1024, SEATING_ANSWER_MAX = 256 * 1024;
-async function bytesUpTo(r, max) {
-  const said = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
-  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
-  const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
-  if (!reader) { const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`its answer is more than ${max} bytes`); return b; }
-  const parts = []; let n = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      n += value.byteLength;
-      if (n > max) throw new Error(`its answer is more than ${max} bytes`);
-      parts.push(value);
-    }
-  } catch (e) { try { await reader.cancel(); } catch { /* gone */ } throw e; }
-  const all = new Uint8Array(n); let at = 0;
-  for (const p of parts) { all.set(p, at); at += p.byteLength; }
-  return all;
-}
+// the reader itself now lives in reread.js, shared with join.js fetchRound (kanban #3848)
 // a test's stand-in answer with no stream and no arrayBuffer is read by its own json()/text()
 const jsonUpTo = async (r, max) => (r.body === undefined && typeof r.arrayBuffer !== 'function' && typeof r.json === 'function' ? r.json() : JSON.parse(new TextDecoder().decode(await bytesUpTo(r, max))));
 const textUpTo = async (r, max) => (r.body === undefined && typeof r.arrayBuffer !== 'function' && typeof r.text === 'function' ? r.text() : new TextDecoder().decode(await bytesUpTo(r, max)));

@@ -36,3 +36,25 @@ export async function readWithOneRetry(fetcher, url, opts) {
     return fetcher(url, opts);
   }
 }
+
+// A SEAT'S ANSWER READ UP TO A BOUND (kanban #2740; moved here from committee.js for kanban #3848 so join.js can use it without a
+// circular import): chunk by chunk, the stream cancelled past `max` (a Content-Length over it refused unread); over = that seat refused.
+export async function bytesUpTo(r, max) {
+  const said = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
+  const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
+  if (!reader) { const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`its answer is more than ${max} bytes`); return b; }
+  const parts = []; let n = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      n += value.byteLength;
+      if (n > max) throw new Error(`its answer is more than ${max} bytes`);
+      parts.push(value);
+    }
+  } catch (e) { try { await reader.cancel(); } catch { /* gone */ } throw e; }
+  const all = new Uint8Array(n); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return all;
+}
