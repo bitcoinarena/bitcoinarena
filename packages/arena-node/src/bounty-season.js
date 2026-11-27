@@ -66,6 +66,12 @@ export function bountyEndMsOf(text) { const ms = text ? Date.parse(String(text))
 export function receivedAfterBountyEnd(receivedMs, endMs) {
   return Number.isFinite(endMs) && Number.isFinite(Number(receivedMs)) && Number(receivedMs) > endMs;
 }
+// THE LAST SEASON (kanban #3895, the owner 2026-11-27: no Season 4): FAUCET_BOUNTY_LAST_SEASON "<season>:<ISO end>", e.g. "3:2026-11-29T23:59:59Z".
+// That season runs to that end - past its weekly boundary - and no later season begins: every approval from then on counts in its pot.
+export function lastSeasonOf(text) {
+  const m = /^\s*(\d+)\s*:\s*(\S+)\s*$/.exec(String(text || '')); if (!m) return null;
+  const endMs = Date.parse(m[2]); return Number(m[1]) >= FIRST_SEASON && Number.isFinite(endMs) ? { season: Number(m[1]), endMs } : null;
+}
 export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true, receivedMs = null } = {}) {
   const lv = String(level || '').toLowerCase();
   if (lv === 'node' && Number.isFinite(receivedMs) && receivedMs >= NODE_BOT_EXCLUDED_FROM_MS && !HUMAN_FLAGS.some((k) => !!(flags && flags[k])))   // the owner 2026-11-16 ~14:00Z: no played round needed (a node session cannot play) - a linked X only
@@ -177,7 +183,7 @@ export function cleanOpenIssues(o) {
 // store's; without it every approval counts by the current rule.
 // `pots` (kanban #2784, the owner 2026-11-15: "Season 2 pot = 120,000"): a pot per season, { 2: 120000 }; a season not named has `potSats`.
 // `drawPrizes`: the season draw's prize, its own figure beside the pot ({ 2: 50000 }), never counted in it.
-export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = null, potSats = SEASON_POT_SATS, pots = {}, drawPrizes = {}, paidOf = null } = {}) {
+export function openBountySeason(path = ':memory:', { lastSeason = null, startMs = null, s2EndMs = null, potSats = SEASON_POT_SATS, pots = {}, drawPrizes = {}, paidOf = null } = {}) {
   const potOf = (season) => (Number.isInteger(Number(pots && pots[season])) && Number(pots[season]) > 0 ? Number(pots[season]) : potSats);
   const drawPrizeOf = (season) => (Number.isInteger(Number(drawPrizes && drawPrizes[season])) && Number(drawPrizes[season]) > 0 ? Number(drawPrizes[season]) : null);
   const db = new DatabaseSync(path);
@@ -218,7 +224,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
   // name and then posted its link code from that account threw "UNIQUE constraint failed: link_names..." in redeem - the code proof never landed
   const namesOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ?');
   const firstNameOf = db.prepare('SELECT username FROM link_names WHERE platform = ? AND user_id = ? ORDER BY rowid ASC LIMIT 1');   // kanban #3056
-  const seasonNow = (nowMs) => seasonAt(nowMs, startMs, s2EndMs);
+  // kanban #3895: never past the last season
+  const seasonNow = (nowMs) => { const s = seasonAt(nowMs, startMs, s2EndMs); return lastSeason && s > lastSeason.season ? lastSeason.season : s; };
 
   /** A ONE-TIME LINK CODE for a reporter's key (signed in with it): 24 hours, used once, at most LINK_CODES_OPEN_MOST open at a time. */
   function makeCode(pubkey, { nowMs = Date.now() } = {}) {
