@@ -23918,6 +23918,117 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
     stakeShares: payouts.filter((p) => p.kind === 'qualifier').map((p) => ({ pubkey: p.pubkey, msat: p.msat })) };
 }
 
+// ---- arena-client/src/node-discovery.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE NODES, FOUND ON THE FLY (2026-10-13: "The client may not have a hard coded node list it must be found on
+// the fly"). A page starts from any node it can reach (a bootstrap, not a list), and every census it checks itself - each entry's
+// bond and advertisement proved against headers it agreed (client-committee.js) - names the network's nodes: each bond's
+// advertisement carries the node's endpoint. Those are the nodes this page talks to from then on, kept for its next start.
+
+
+/** The https root of a node's advertised endpoint (wss -> https, ws -> http), or null for none. */
+function endpointRoot(endpoint) {
+  const s = String(endpoint || '').trim();
+  if (!/^(wss?|https?):\/\//i.test(s)) return null;
+  return s.replace(/^ws(s?):/i, 'http$1:').replace(/\/+$/, '');
+}
+
+// AN ENDPOINT THE SEATS REFUSE IS NOT LEARNED BY THE PAGE EITHER (kanban #3107, #3108; wf1489 refute of #3082/#2856): a bond's advert
+// endpoint is the bond holder's choice. The seats dial one only where peerEndpointRefusal (arena-node address-book.js) takes it, but the
+// page took every one raw, kept it in localStorage (arena.nodes.*) and asked it again at every start - one bond committing
+// 'http://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=' or 'http://192.168.1.1/admin' made every player's browser send GET <that>/games
+// ... to its own machine or LAN, the query swallowing the door. The same rule here, in the page's own words: an http(s)/ws(s) origin with
+// at most one path segment, no query, fragment or user info, and never a loopback / private / link-local / ULA literal or a local-only name
+// - unless the page itself is served from a local host (a devnet), where its nodes are local too.
+const ND_LOCAL_NAME = /(^|\.)(localhost|local|internal|lan|intranet|localdomain|home\.arpa)$/;
+// ONE RULE FOR THE SEAT, THE PAGE AND PUBLIC-FETCH (kanban #3124, #3125; wf1489 refute of #3107/#3108): the seat's peerEndpointRefusal
+// (arena-node address-book.js) refused IP literals and localhost only, so a bond committing 'http://127.0.0.1.nip.io:18777/lnurlp',
+// 'http://localtest.me:18777/lnurlp' or 'http://host.docker.internal:18777/x' was dialed by every seat on its own loopback or LAN. The
+// names below lead back to an address spelled inside them (public wildcard DNS made for exactly that), and a name carrying an internal
+// IPv4 address in dots or dashes ('10-0-0-1.example', '192.168.1.1.anything') is refused too. The seat and public-fetch now call this
+// function, so the copies cannot drift. NOT *.ts.net: live seats announce their tailnet names (public-fetch refuses them on its own).
+const ND_REBIND_NAME = /(^|\.)(nip\.io|sslip\.io|xip\.io|traefik\.me|localtest\.me|lvh\.me|vcap\.me|localhost\.direct|rbndr\.us|1u\.ms|localho\.st|local\.gd)$/;   // the last four: more public rebinding names
+function ndEmbeddedInternalV4(h) {
+  const parts = h.split(/[.-]/);
+  for (let i = 0; i + 4 <= parts.length; i++) {
+    const q = parts.slice(i, i + 4);
+    if (q.every((x) => /^\d{1,3}$/.test(x) && Number(x) <= 255) && ndInternalV4(q.map(Number).join('.'))) return true;
+  }
+  return false;
+}
+function ndInternalV4(h) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!m) return false;
+  const [a, b, c] = m.slice(1, 4).map(Number);
+  return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b < 128) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b < 32)
+    || (a === 192 && b === 168) || (a === 192 && b === 0 && (c === 0 || c === 2)) || (a === 198 && (b === 18 || b === 19)) || (a === 198 && b === 51 && c === 100)
+    || (a === 203 && b === 0 && c === 113);
+}
+function ndInternalV6(h) {
+  const [head, tail] = h.includes('::') ? h.split('::') : [h, null];
+  const hs = head ? head.split(':') : [], ts = tail ? tail.split(':') : [];
+  const all = [...hs, ...(tail === null ? [] : new Array(Math.max(0, 8 - hs.length - ts.length)).fill('0')), ...ts];
+  if (all.length !== 8) return true;
+  const w = all.map((x) => parseInt(x || '0', 16));
+  if (w.some((x) => !Number.isFinite(x) || x < 0 || x > 0xffff)) return true;
+  const v4 = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+  if (w.slice(0, 5).every((x) => x === 0) && (w[5] === 0xffff || w[5] === 0)) return (w[5] === 0 && w[6] === 0 && w[7] <= 1) || ndInternalV4(v4(w[6], w[7]));
+  if (w[0] === 0x64 && w[1] === 0xff9b && w.slice(2, 6).every((x) => x === 0)) return ndInternalV4(v4(w[6], w[7]));
+  if (w[0] === 0x2002) return ndInternalV4(v4(w[1], w[2]));
+  return (w[0] & 0xfe00) === 0xfc00 || (w[0] & 0xffc0) === 0xfe80 || (w[0] & 0xffc0) === 0xfec0 || (w[0] & 0xff00) === 0xff00
+    || (w[0] === 0x100 && w[1] === 0 && w[2] === 0 && w[3] === 0) || (w[0] === 0x2001 && w[1] === 0xdb8);
+}
+/** True for a loopback / private / link-local / ULA literal, a local-only name (localhost, *.local, *.lan, a bare single label ...), a name made to
+ * resolve to the address it spells (*.nip.io, localtest.me ...) or one carrying an internal IPv4 address (kanban #3124). */
+function localHostName(hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '').replace(/\.$/, '');
+  if (!h) return true;
+  if (h.includes(':')) return ndInternalV6(h);
+  if (/^[\d.]+$|^0x/i.test(h)) return !/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || ndInternalV4(h);
+  return !h.includes('.') || ND_LOCAL_NAME.test(h) || ND_REBIND_NAME.test(h) || ndEmbeddedInternalV4(h);   // kanban #3124
+}
+/**
+ * Why the page does not ask `endpoint` as a node, or null - the seats' peerEndpointRefusal, page side (kanban #3107, #3108). `localOk`:
+ * the page itself is served from a local host (a devnet; the page passes localHostName(its own hostname) - no file here reads the page).
+ */
+function nodeEndpointRefusal(endpoint, { localOk = false } = {}) {
+  const s = String(endpoint || '');
+  let u; try { u = new URL(s); } catch { return 'not a URL'; }
+  if (!['http:', 'https:', 'ws:', 'wss:'].includes(u.protocol)) return 'not an http(s) or ws(s) endpoint';
+  if (u.username || u.password) return 'an endpoint carries no user info';
+  if (u.search || u.hash || s.includes('?') || s.includes('#')) return 'an endpoint carries no query or fragment';
+  if (u.pathname.replace(/\/+$/, '').split('/').filter(Boolean).length > 1) return 'an endpoint is an origin with at most one path segment';
+  if (!localOk && localHostName(u.hostname)) return 'an endpoint on a loopback or private address';
+  return null;
+}
+/** The node roots a page kept from an earlier start, without those it must not ask (lists kept before kanban #3107/#3108 are cleaned). */
+function keptNodes(kept, opts = {}) {
+  return (Array.isArray(kept) ? kept : []).filter((n) => typeof n === 'string' && !nodeEndpointRefusal(n, opts));
+}
+
+/** Every node a checked census names, by its advertised endpoint: one root per node key, in the order of their keys. */
+function censusEndpoints(entries, opts = {}) {
+  const byKey = new Map();
+  for (const e of entries || []) {
+    const at = e && e.advert && e.advert.endpoint;
+    if (!at || nodeEndpointRefusal(at, opts)) continue;   // kanban #3107, #3108
+    const root = endpointRoot(at);
+    if (!root || !e.pubkey) continue;
+    const k = toHex(e.pubkey);
+    if (!byKey.has(k)) byKey.set(k, root);
+  }
+  return [...byKey.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map((x) => x[1]);
+}
+
+/** `known` with every root of `found` it lacks, appended - nothing known is dropped or reordered. */
+function mergeNodes(known, found) {
+  const out = [...(known || [])];
+  const have = new Set(out.map((n) => String(n).replace(/\/+$/, '')));
+  for (const n of found || []) { const r = String(n).replace(/\/+$/, ''); if (!have.has(r)) { have.add(r); out.push(r); } }
+  return out;
+}
+
 // ---- arena-client/src/seat-identity.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -23931,12 +24042,13 @@ function bookLockSettlement({ roundId, table, entries, locks, feeLocks, fees, co
 // answers the seat's BIP-340 signature over identityProofDigest(nonce) (arena-node server.js, kanban #2982/#3253) - a box cannot sign for a
 // key it does not hold, and the fresh nonce keeps it from replaying another seat's answer. Every URL of a host that proves no key of the set
 // (no answer, a bad signature, a key the round did not draw) is that host's one seat together. A URL alone on its host is a seat by itself,
-// as before (nothing is asked of it). A seat with several URLs is asked at each, and its answers count as one vote - none when they disagree
-// (seatVoice).
+// as before - asked too once any host has several URLs, so a relayed proof meets the seat's own (kanban #3730, below). A seat with several
+// URLs is asked at each, and its answers count as one vote - none when they disagree (seatVoice).
 //
 // What this cannot stop: one box under several HOSTNAMES (evil0.example, evil1.example, ...: wildcard DNS) that answer no identity is still
 // one seat per hostname. Where the answers a door counts carry their own signatures (a lock-set certificate, a signed fee proposal) the door
 // checks those instead; where they do not, the most a door can do is keep those seats from outnumbering the round's proven ones.
+
 
 
 
@@ -23984,35 +24096,92 @@ async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, now = Dat
   } catch { return null; }
 }
 
+// A PROOF IS A KEY'S, NOT AN ADDRESS'S (kanban #3730, audit client-a8-1-1, the gap in #3574): the signed digest names only the nonce, so a
+// box that passes GET /identity?nonce= on to a round seat's public door hands back that seat's real signature, and its own path "proves" the
+// seat's key. One box under three paths relaying to three seats was three proven seats, and its unsigned settlement outvoted the honest two -
+// while the honest seats, alone on their hosts, were never asked, so nothing saw the same key proven twice. The digest stays as it is (the
+// node side's #3585 ruling: GET /identity and its digest are unchanged); what changes is where a proof is believed:
+// - once any host of the list has several URLs (proofs are asked at all), EVERY URL is asked, so a relayed key meets the seat's own URL and
+//   the two are one seat: one key, one seat, whatever the hosts;
+// - where the key's census advert names an address and one of the URLs proving the key IS that address (as named, or through the page's
+//   alt routes, window.ARENA_VIA_ALT: the live seats advertise one host and are reached at another), only that URL keeps the key - a relaying
+//   path proves nothing and stays in its host's one seat, and the seat keeps its voice (#3585's rule, page side);
+// - otherwise a key proven at several URLs is one seat whose URLs must agree (seatVoice): a relay can stall that seat's vote, not cast it.
+// A box relaying a round seat the link does not name at all still proves that key - one more voice, as one more hostname of the box would
+// be (the limit stated above). Binding the proof to the address asked is a change of the digest, the node's and the page's together.
+/** A seat URL as adverts and links are compared: scheme and host lower case, no trailing slash. */
+const seatUrlKey = (u) => {
+  try { const x = new URL(String(u)); return `${x.protocol}//${x.host.toLowerCase().replace(/\.+$/, '')}${x.pathname.replace(/\/+$/, '')}`; } catch { return seatUrlTrimmed(u); }
+};
+// THE ADDRESSES THE CHECKED CENSUSES' ADVERTS NAME (kanban #3730): committee.js notes each census this page checked (noteAdverts), and
+// seatsOf reads them unless the caller names its own
+const ADVERTS = new Map(), ADVERT_KEYS_MAX = 5000;
+/** Note the advert endpoints of a checked census's entries ([{ pubkey, advert: { endpoint } }]) for seatsOf. */
+function noteAdverts(entries) {
+  for (const e of entries || []) {
+    let k = null, root = null;
+    try { k = e && e.pubkey ? seatKeyHex(e.pubkey) : null; root = e && e.advert && e.advert.endpoint ? endpointRoot(e.advert.endpoint) : null; } catch { k = null; }
+    if (!k || !/^[0-9a-f]{64}$/.test(k) || !root) continue;
+    if (!ADVERTS.has(k)) { if (ADVERTS.size >= ADVERT_KEYS_MAX) ADVERTS.delete(ADVERTS.keys().next().value); ADVERTS.set(k, new Set()); }
+    ADVERTS.get(k).add(root);
+  }
+}
+const forgetAdverts = () => ADVERTS.clear();
+const advertLookup = (advertised) => {
+  if (advertised === undefined) return (k) => ADVERTS.get(k) || null;
+  if (!advertised) return () => null;
+  if (typeof advertised === 'function') return (k) => advertised(k);
+  const m = advertised instanceof Map ? advertised : new Map(Object.entries(advertised));
+  const byKey = new Map();
+  for (const [k, v] of m) byKey.set(seatKeyHex(k), v);
+  return (k) => byKey.get(k) || null;
+};
+// an advert's address as the page reaches it: as named, and through the page's alt routes where it has them
+const advertKeys = (roots) => {
+  const out = new Set();
+  const via = typeof globalThis.ARENA_VIA_ALT === 'function' ? globalThis.ARENA_VIA_ALT : null;
+  for (const r of roots || []) { out.add(seatUrlKey(r)); if (via) { try { out.add(seatUrlKey(via(String(r)))); } catch { /* no route */ } } }
+  return out;
+};
+
 /**
  * THE SEATS BEHIND A NODE LIST: [{ id, urls, key }] in the list's order. `keys`: the round's node keys (bytes or hex) - a host's URL is a
  * seat of its own only when it proves one of them (and no other URL proved the same key: those are one seat). `verify`: BIP-340
- * (the page's curve.verify). Without keys or verify every host is one seat.
+ * (the page's curve.verify). `advertised`: the addresses the census adverts name per key (key hex -> URLs; a Map, an object or a function;
+ * by default the adverts of the censuses this page checked, noteAdverts; null for none) - where one of a key's URLs is its advert's, the
+ * key is that URL's alone (kanban #3730). Without keys or verify every host is one seat.
  */
-async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 8000 } = {}) {
+async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 8000, advertised } = {}) {
   const want = new Set((keys || []).map(seatKeyHex).filter(Boolean));
+  const sources = distinctSources(nodes);
+  const order = new Map(sources.map((u, i) => [u, i]));
   const byHost = new Map();
-  for (const u of distinctSources(nodes)) { const h = hostOf(u); if (!byHost.has(h)) byHost.set(h, []); byHost.get(h).push(u); }
+  for (const u of sources) { const h = hostOf(u); if (!byHost.has(h)) byHost.set(h, []); byHost.get(h).push(u); }
+  // proofs are asked only where some host has several URLs - and then of every URL (kanban #3730)
+  const asking = want.size > 0 && typeof verify === 'function' && [...byHost.values()].some((us) => us.length > 1);
   const seats = [];
-  await Promise.all([...byHost.entries()].map(async ([host, urls]) => {
-    if (urls.length === 1 || !want.size || typeof verify !== 'function') { seats.push({ id: `host:${host}`, urls, key: null, at: urls[0] }); return; }
-    const proven = await Promise.all(urls.map((u) => provenKeyAt(u, { fetcher, verify, ms })));
-    const byKey = new Map(), rest = [];
-    urls.forEach((u, i) => {
-      const k = proven[i];
-      if (k && want.has(k)) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(u); } else rest.push(u);
-    });
-    for (const [k, us] of byKey) seats.push({ id: `key:${k}`, urls: us, key: k, at: us[0] });
-    if (rest.length) seats.push({ id: `host:${host}`, urls: rest, key: null, at: rest[0] });
-  }));
-  // one key proven on two hosts is one seat (a seat reached at two names)
-  const merged = new Map();
-  for (const s of seats) {
-    const m = merged.get(s.id);
-    if (m) m.urls.push(...s.urls); else merged.set(s.id, { ...s, urls: [...s.urls] });
+  if (!asking) {
+    for (const [host, urls] of byHost) seats.push({ id: `host:${host}`, urls, key: null });
+  } else {
+    const proven = await Promise.all(sources.map((u) => provenKeyAt(u, { fetcher, verify, ms })));
+    const byKey = new Map();
+    sources.forEach((u, i) => { const k = proven[i]; if (k && want.has(k)) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(u); } });
+    const advertOf = advertLookup(advertised);
+    const keyed = new Set();
+    for (const [k, us] of byKey) {
+      let roots = null;
+      try { roots = advertOf(k); } catch { roots = null; }
+      const named = roots ? advertKeys([...roots]) : null;
+      const own = named && us.length > 1 ? us.filter((u) => named.has(seatUrlKey(u))) : [];
+      const keep = own.length ? own : us;
+      seats.push({ id: `key:${k}`, urls: keep, key: k });
+      for (const u of keep) keyed.add(u);
+    }
+    for (const [host, urls] of byHost) { const rest = urls.filter((u) => !keyed.has(u)); if (rest.length) seats.push({ id: `host:${host}`, urls: rest, key: null }); }
   }
-  const order = new Map(distinctSources(nodes).map((u, i) => [u, i]));
-  return [...merged.values()].sort((a, b) => order.get(a.at) - order.get(b.at)).map(({ id, urls, key }) => ({ id, urls, key }));
+  const first = (s) => Math.min(...s.urls.map((u) => order.get(u)));
+  return seats.map((s) => ({ ...s, urls: [...s.urls].sort((x, y) => order.get(x) - order.get(y)) }))
+    .sort((x, y) => first(x) - first(y)).map(({ id, urls, key }) => ({ id, urls, key }));
 }
 
 /**
@@ -26948,8 +27117,10 @@ const distinctSeats = (nodes) => {
 // round's two. Now the URLs of one host are one seat unless each proves a distinct node key of the round (`keys`: round.nodes; `verify`: the
 // page's curve.verify) at GET /identity?nonce= (seat-identity.js seatsOf); a seat with several URLs is asked at each and counts once, and
 // not at all when they disagree. The threshold is capped by those seats, not by URLs.
-async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null } = {}) {
-  const seats = await seatsOf(nodes, { keys, verify, fetcher });
+// `advertised` (kanban #3730): the addresses the census adverts name per key (seat-identity.js; by default the ones this page checked) - a
+// key proven elsewhere is a relay, not that seat.
+async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null, advertised } = {}) {
+  const seats = await seatsOf(nodes, { keys, verify, fetcher, advertised });
   // EVERY SIGNER NODE AT ONCE (kanban #593)
   const asked = seats.flatMap((seat) => seat.urls.map((node) => ({ seat, node })));
   const answers = await Promise.all(asked.map(async ({ node }) => {
@@ -31653,117 +31824,6 @@ function acceptAncestorEndpoint({ chain, transaction, branch, position, update, 
         message: reaffirmationMessage({ networkId: ANCESTOR_NETWORK_IDS[network], bondTxid: b.tx.txid, bondVout }), key: nodePubkey },
     ],
   };
-}
-
-// ---- arena-client/src/node-discovery.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE NODES, FOUND ON THE FLY (2026-10-13: "The client may not have a hard coded node list it must be found on
-// the fly"). A page starts from any node it can reach (a bootstrap, not a list), and every census it checks itself - each entry's
-// bond and advertisement proved against headers it agreed (client-committee.js) - names the network's nodes: each bond's
-// advertisement carries the node's endpoint. Those are the nodes this page talks to from then on, kept for its next start.
-
-
-/** The https root of a node's advertised endpoint (wss -> https, ws -> http), or null for none. */
-function endpointRoot(endpoint) {
-  const s = String(endpoint || '').trim();
-  if (!/^(wss?|https?):\/\//i.test(s)) return null;
-  return s.replace(/^ws(s?):/i, 'http$1:').replace(/\/+$/, '');
-}
-
-// AN ENDPOINT THE SEATS REFUSE IS NOT LEARNED BY THE PAGE EITHER (kanban #3107, #3108; wf1489 refute of #3082/#2856): a bond's advert
-// endpoint is the bond holder's choice. The seats dial one only where peerEndpointRefusal (arena-node address-book.js) takes it, but the
-// page took every one raw, kept it in localStorage (arena.nodes.*) and asked it again at every start - one bond committing
-// 'http://127.0.0.1:18777/lnurlp/tips/cb?amount=1000&x=' or 'http://192.168.1.1/admin' made every player's browser send GET <that>/games
-// ... to its own machine or LAN, the query swallowing the door. The same rule here, in the page's own words: an http(s)/ws(s) origin with
-// at most one path segment, no query, fragment or user info, and never a loopback / private / link-local / ULA literal or a local-only name
-// - unless the page itself is served from a local host (a devnet), where its nodes are local too.
-const ND_LOCAL_NAME = /(^|\.)(localhost|local|internal|lan|intranet|localdomain|home\.arpa)$/;
-// ONE RULE FOR THE SEAT, THE PAGE AND PUBLIC-FETCH (kanban #3124, #3125; wf1489 refute of #3107/#3108): the seat's peerEndpointRefusal
-// (arena-node address-book.js) refused IP literals and localhost only, so a bond committing 'http://127.0.0.1.nip.io:18777/lnurlp',
-// 'http://localtest.me:18777/lnurlp' or 'http://host.docker.internal:18777/x' was dialed by every seat on its own loopback or LAN. The
-// names below lead back to an address spelled inside them (public wildcard DNS made for exactly that), and a name carrying an internal
-// IPv4 address in dots or dashes ('10-0-0-1.example', '192.168.1.1.anything') is refused too. The seat and public-fetch now call this
-// function, so the copies cannot drift. NOT *.ts.net: live seats announce their tailnet names (public-fetch refuses them on its own).
-const ND_REBIND_NAME = /(^|\.)(nip\.io|sslip\.io|xip\.io|traefik\.me|localtest\.me|lvh\.me|vcap\.me|localhost\.direct|rbndr\.us|1u\.ms|localho\.st|local\.gd)$/;   // the last four: more public rebinding names
-function ndEmbeddedInternalV4(h) {
-  const parts = h.split(/[.-]/);
-  for (let i = 0; i + 4 <= parts.length; i++) {
-    const q = parts.slice(i, i + 4);
-    if (q.every((x) => /^\d{1,3}$/.test(x) && Number(x) <= 255) && ndInternalV4(q.map(Number).join('.'))) return true;
-  }
-  return false;
-}
-function ndInternalV4(h) {
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (!m) return false;
-  const [a, b, c] = m.slice(1, 4).map(Number);
-  return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 100 && b >= 64 && b < 128) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b < 32)
-    || (a === 192 && b === 168) || (a === 192 && b === 0 && (c === 0 || c === 2)) || (a === 198 && (b === 18 || b === 19)) || (a === 198 && b === 51 && c === 100)
-    || (a === 203 && b === 0 && c === 113);
-}
-function ndInternalV6(h) {
-  const [head, tail] = h.includes('::') ? h.split('::') : [h, null];
-  const hs = head ? head.split(':') : [], ts = tail ? tail.split(':') : [];
-  const all = [...hs, ...(tail === null ? [] : new Array(Math.max(0, 8 - hs.length - ts.length)).fill('0')), ...ts];
-  if (all.length !== 8) return true;
-  const w = all.map((x) => parseInt(x || '0', 16));
-  if (w.some((x) => !Number.isFinite(x) || x < 0 || x > 0xffff)) return true;
-  const v4 = (hi, lo) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
-  if (w.slice(0, 5).every((x) => x === 0) && (w[5] === 0xffff || w[5] === 0)) return (w[5] === 0 && w[6] === 0 && w[7] <= 1) || ndInternalV4(v4(w[6], w[7]));
-  if (w[0] === 0x64 && w[1] === 0xff9b && w.slice(2, 6).every((x) => x === 0)) return ndInternalV4(v4(w[6], w[7]));
-  if (w[0] === 0x2002) return ndInternalV4(v4(w[1], w[2]));
-  return (w[0] & 0xfe00) === 0xfc00 || (w[0] & 0xffc0) === 0xfe80 || (w[0] & 0xffc0) === 0xfec0 || (w[0] & 0xff00) === 0xff00
-    || (w[0] === 0x100 && w[1] === 0 && w[2] === 0 && w[3] === 0) || (w[0] === 0x2001 && w[1] === 0xdb8);
-}
-/** True for a loopback / private / link-local / ULA literal, a local-only name (localhost, *.local, *.lan, a bare single label ...), a name made to
- * resolve to the address it spells (*.nip.io, localtest.me ...) or one carrying an internal IPv4 address (kanban #3124). */
-function localHostName(hostname) {
-  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '').replace(/%.*$/, '').replace(/\.$/, '');
-  if (!h) return true;
-  if (h.includes(':')) return ndInternalV6(h);
-  if (/^[\d.]+$|^0x/i.test(h)) return !/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || ndInternalV4(h);
-  return !h.includes('.') || ND_LOCAL_NAME.test(h) || ND_REBIND_NAME.test(h) || ndEmbeddedInternalV4(h);   // kanban #3124
-}
-/**
- * Why the page does not ask `endpoint` as a node, or null - the seats' peerEndpointRefusal, page side (kanban #3107, #3108). `localOk`:
- * the page itself is served from a local host (a devnet; the page passes localHostName(its own hostname) - no file here reads the page).
- */
-function nodeEndpointRefusal(endpoint, { localOk = false } = {}) {
-  const s = String(endpoint || '');
-  let u; try { u = new URL(s); } catch { return 'not a URL'; }
-  if (!['http:', 'https:', 'ws:', 'wss:'].includes(u.protocol)) return 'not an http(s) or ws(s) endpoint';
-  if (u.username || u.password) return 'an endpoint carries no user info';
-  if (u.search || u.hash || s.includes('?') || s.includes('#')) return 'an endpoint carries no query or fragment';
-  if (u.pathname.replace(/\/+$/, '').split('/').filter(Boolean).length > 1) return 'an endpoint is an origin with at most one path segment';
-  if (!localOk && localHostName(u.hostname)) return 'an endpoint on a loopback or private address';
-  return null;
-}
-/** The node roots a page kept from an earlier start, without those it must not ask (lists kept before kanban #3107/#3108 are cleaned). */
-function keptNodes(kept, opts = {}) {
-  return (Array.isArray(kept) ? kept : []).filter((n) => typeof n === 'string' && !nodeEndpointRefusal(n, opts));
-}
-
-/** Every node a checked census names, by its advertised endpoint: one root per node key, in the order of their keys. */
-function censusEndpoints(entries, opts = {}) {
-  const byKey = new Map();
-  for (const e of entries || []) {
-    const at = e && e.advert && e.advert.endpoint;
-    if (!at || nodeEndpointRefusal(at, opts)) continue;   // kanban #3107, #3108
-    const root = endpointRoot(at);
-    if (!root || !e.pubkey) continue;
-    const k = toHex(e.pubkey);
-    if (!byKey.has(k)) byKey.set(k, root);
-  }
-  return [...byKey.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map((x) => x[1]);
-}
-
-/** `known` with every root of `found` it lacks, appended - nothing known is dropped or reordered. */
-function mergeNodes(known, found) {
-  const out = [...(known || [])];
-  const have = new Set(out.map((n) => String(n).replace(/\/+$/, '')));
-  for (const n of found || []) { const r = String(n).replace(/\/+$/, ''); if (!have.has(r)) { have.add(r); out.push(r); } }
-  return out;
 }
 
 // ---- arena-client/src/directory.js
@@ -39711,6 +39771,7 @@ async function explorerAgrees({ base, points, fetcher = fetch, timeoutMs = 8000 
 
 
 
+
 // A SEAT'S ANSWER IS READ UP TO A BOUND (kanban #2740, #1489 r6-census-1): GET /census, /committee and /seating were read whole (json, arrayBuffer,
 // text), bounded only by READ_MS - one seat streaming 64 MiB of whitespace made the tab hold all of it before the honest providers were asked
 // (a phone's tab froze; the join never finished). Each is read chunk by chunk up to its cap, the stream cancelled past it (that seat refused).
@@ -40112,6 +40173,8 @@ async function clientCommittee(roundIdHex, contract, nodes, { curve, fetcher = f
   if (!got.ok) return { ...got, censusRefused };
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
   keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight), bondMin: typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null } : got.checkedCensus);
+  // (kanban #3730) the checked census's adverts name each key's own address: a seat's proof is believed there, not at a path relaying it
+  try { noteAdverts(got.checkedCensus && got.checkedCensus.entries); } catch { /* nothing noted */ }
   // A 22 CENSUS LEAVES OUT A NODE ONLY WITH PROOF, AND THE CLIENT CHECKS IT TOO (§5A.3, kanban #727, the owner 2026-10-27): the claim held
   // for the root (GET /absent), each named seating drawn here from its round's contract and census evidence, every certificate checked
   // on that draw. A wrong proof refuses the round. No claim at any node: nothing named, nothing to check - an omission without a claim

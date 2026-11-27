@@ -26,6 +26,7 @@ import { fetchRound } from './join.js';
 import { explorerAgrees } from './explorer-check.js';
 import { chainAnchorFor } from './directory.js';
 import { readWithOneRetry } from './reread.js';
+import { noteAdverts } from './seat-identity.js';
 // A SEAT'S ANSWER IS READ UP TO A BOUND (kanban #2740, #1489 r6-census-1): GET /census, /committee and /seating were read whole (json, arrayBuffer,
 // text), bounded only by READ_MS - one seat streaming 64 MiB of whitespace made the tab hold all of it before the honest providers were asked
 // (a phone's tab froze; the join never finished). Each is read chunk by chunk up to its cap, the stream cancelled past it (that seat refused).
@@ -428,6 +429,8 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   if (!got.ok) return { ...got, censusRefused };
   keptCensus.set(toHex(contract.censusRoot), evidence.entries);
   keptChecked.set(toHex(contract.censusRoot), got.checkedCensus ? { ...got.checkedCensus, height: Number(contract.censusHeight), bondMin: typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null } : got.checkedCensus);
+  // (kanban #3730) the checked census's adverts name each key's own address: a seat's proof is believed there, not at a path relaying it
+  try { noteAdverts(got.checkedCensus && got.checkedCensus.entries); } catch { /* nothing noted */ }
   // A 22 CENSUS LEAVES OUT A NODE ONLY WITH PROOF, AND THE CLIENT CHECKS IT TOO (§5A.3, kanban #727, the owner 2026-10-27): the claim held
   // for the root (GET /absent), each named seating drawn here from its round's contract and census evidence, every certificate checked
   // on that draw. A wrong proof refuses the round. No claim at any node: nothing named, nothing to check - an omission without a claim

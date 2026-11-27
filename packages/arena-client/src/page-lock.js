@@ -2825,8 +2825,10 @@ export const distinctSeats = (nodes) => {
 // round's two. Now the URLs of one host are one seat unless each proves a distinct node key of the round (`keys`: round.nodes; `verify`: the
 // page's curve.verify) at GET /identity?nonce= (seat-identity.js seatsOf); a seat with several URLs is asked at each and counts once, and
 // not at all when they disagree. The threshold is capped by those seats, not by URLs.
-export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null } = {}) {
-  const seats = await seatsOf(nodes, { keys, verify, fetcher });
+// `advertised` (kanban #3730): the addresses the census adverts name per key (seat-identity.js; by default the ones this page checked) - a
+// key proven elsewhere is a relay, not that seat.
+export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null, advertised } = {}) {
+  const seats = await seatsOf(nodes, { keys, verify, fetcher, advertised });
   // EVERY SIGNER NODE AT ONCE (kanban #593)
   const asked = seats.flatMap((seat) => seat.urls.map((node) => ({ seat, node })));
   const answers = await Promise.all(asked.map(async ({ node }) => {
