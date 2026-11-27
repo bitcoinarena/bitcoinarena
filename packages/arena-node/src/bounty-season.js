@@ -58,6 +58,14 @@ export const HUMAN_FLAGS = Object.freeze(['x']);
 // (the bot share, the bonus as usual). A report received before keeps the old rule.
 export const NODE_BOT_EXCLUDED_FROM_MS = 1794812798412;
 export const NODE_BOT_EXCLUDED_WHY = 'From 16 Nov 2026 07:06 UTC the 10,000 sat node bounty is only for humans with a linked X account: approve this node report as ordinary feedback at its level';
+// THE BUG BOUNTY ENDS (kanban #3895, the owner 2026-11-27: "Bounty endet" - Sunday 29 Nov 2026, end of day UTC): the faucet's FAUCET_BOUNTY_END. A report
+// RECEIVED after it earns no reward - it is never approved for money nor given a reward link, and nothing is paid on its own; a report received at or
+// before it stays reviewable under the rules it was sent under. No end set (null): nothing changes.
+export const BOUNTY_ENDED_WHY = 'received after the bug bounty ended: no reward (reject, duplicate and notes still work)';
+export function bountyEndMsOf(text) { const ms = text ? Date.parse(String(text)) : NaN; return Number.isFinite(ms) ? ms : null; }
+export function receivedAfterBountyEnd(receivedMs, endMs) {
+  return Number.isFinite(endMs) && Number.isFinite(Number(receivedMs)) && Number(receivedMs) > endMs;
+}
 export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true, receivedMs = null } = {}) {
   const lv = String(level || '').toLowerCase();
   if (lv === 'node' && Number.isFinite(receivedMs) && receivedMs >= NODE_BOT_EXCLUDED_FROM_MS && !HUMAN_FLAGS.some((k) => !!(flags && flags[k])))   // the owner 2026-11-16 ~14:00Z: no played round needed (a node session cannot play) - a linked X only
