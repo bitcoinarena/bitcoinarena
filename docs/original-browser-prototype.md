@@ -1,6 +1,6 @@
 # The original browser prototype
 
-This was the repository's first README. It describes the root-level browser prototype (`index.html`, `src/`), the game that became **Tick Tock, Next Block** on Bitcoin Arena. For the project as a whole see the [README](../README.md).
+This was the repository's first README. It describes the root-level browser prototype (`index.html`, `src/`), the game that became **Tick Tock, Next Block** on Bitcoin Arena. Those files are no longer in this repository; the notes below are kept as history. For the project as a whole see the [README](../README.md).
 
 A real-time 3D browser game where the **live Bitcoin price chart is the battlefield** and **real
 unconfirmed mempool transactions are your cargo**.
