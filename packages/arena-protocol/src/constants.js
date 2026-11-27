@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33, 35]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33, 35, 36]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 export const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -114,6 +114,18 @@ export const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RUL
 export const POOL_FIRST_VERSION = 35;
 /** Whether a market round of protocol version `v` is a pool once it holds a backed plain pick, orders or not (kanban #3854). */
 export const poolsFirst = (v) => Number.isInteger(v) && v >= POOL_FIRST_VERSION;
+/**
+ * 2026.0.36 - THE CENSUS MINIMUM COUNTS AT THE ROLE FLOOR (kanban #3855, audit #1489 r20-census-2, port of #3571 / PR #33; spec ruling
+ * 2026-11-27, comment 11812). Below this version meetsCensusMinimum counts node keys at the round's bond_min while selectCommittee admits
+ * only keys at the role's floor (contract.rules, §6): a creator naming bond_min at the floor in force and a role floor only their own bond
+ * reaches met census_min_nodes with honest nodes the draw never takes, and the committee was the creator's key alone. From 36 the minimum
+ * counts only keys at census.js drawFloorSats (the role's floor; the higher of the two for one draw for both roles) and eligible as the draw
+ * is (drawEligible), as 2.0 does. Gated by the round's version, not the seat's build: an old and a new seat judge a round below 36 alike
+ * (bond_min, byte for byte as before), and a seat on an older build does not speak 36. Round creators write 36 only once every seat lists it.
+ */
+export const CENSUS_ROLE_FLOOR_VERSION = 36;
+/** Whether a round counts census_min_nodes at the role floor (kanban #3855): its contract names protocol version 36 or later. */
+export const countsAtRoleFloor = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= CENSUS_ROLE_FLOOR_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census

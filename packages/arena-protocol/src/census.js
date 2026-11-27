@@ -10,7 +10,8 @@ import { reaffirmedBonds } from './reaffirm.js';
 import { protocolVersionName } from './protocol-version.js';
 import { Writer } from './encode.js';
 import { taggedHash, fromHex, toHex } from './hash.js';
-import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, BOND_SUM_VERSION, networkOf } from './constants.js';
+import { TAG, ROLES, PROTOCOL_VERSION, TYPE_CENSUS_LEAF, BOND_SUM_VERSION, networkOf, namesNoDraw, countsAtRoleFloor } from './constants.js';
+import { roleFloorSats } from './rules.js';
 import { parseTransaction, commitmentsOf, witnessRunsOf, blockMerkleRoot } from './tx.js';
 
 // ONE PARSE PER TRANSACTION (kanban #586/#587, measured 2026-10-23 17:11Z on a test host seat after a restart: 10 min at 100 % CPU,
@@ -157,14 +158,35 @@ export function eligibleFor(e, contract, role) {
   return hostsGame(e, contract && contract.gameId);
 }
 
+/**
+ * THE FLOOR THE DRAW ADMITS A KEY AT, FOR THAT ROLE (§5A.3 "bond_amount >= bond_min(role)", §6 bond_min per role): the role's own
+ * floor where the contract names its rules, its bond_min otherwise; one draw for both roles (a v2 round) takes the higher of the two.
+ * selectCommittee admits and weighs at this floor; from protocol 36 meetsCensusMinimum counts at it too (kanban #3571, #3855).
+ */
+export function drawFloorSats(contract, role) {
+  return namesNoDraw(contract)
+    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
+    : roleFloorSats(contract, role);
+}
+
+/** MAY THE DRAW TAKE THIS ENTRY FOR THAT ROLE: eligibleFor the role, and for one draw for both roles (a v2 round) eligible for both. */
+export const drawEligible = (e, contract, role) => (namesNoDraw(contract)
+  ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement')
+  : eligibleFor(e, contract, role));
+
 export function meetsCensusMinimum(entries, contract, role) {
   const { network, minimum } = censusMinimumFor(contract);
   // DISTINCT NODE KEYS AT OR ABOVE THE ROUND'S FLOOR, NOT ROWS (kanban #2850, #1489 r26-census-1): protocol 19 keeps every bond output as its own
   // row, so one key with several outputs (or a row below bond_min) met census_min_nodes alone and selectCommittee then drew a committee of one key.
   // The rows are merged by key first - summed under protocol 19, each row on its own before - and only keys at the round's bond_min count.
-  const floor = contract && typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null;
+  // AT THE ROLE'S FLOOR FROM PROTOCOL 36 (kanban #3855, port of #3571 / PR #33; spec ruling 2026-11-27): the draw admits only keys at the
+  // role's floor (selectCommittee), so a creator naming bond_min at the floor in force and a role floor only their own bonds reach met the
+  // minimum with nodes the draw never takes - a committee of the creator's keys alone. A round at 36 or later counts the keys the draw can
+  // take (drawFloorSats, drawEligible); a round below 36 keeps bond_min and eligibleFor byte for byte, so old and new seats judge it alike.
+  const atRole = countsAtRoleFloor(contract);
+  const floor = contract && typeof contract.bondMinSats === 'bigint' ? (atRole ? drawFloorSats(contract, role) : contract.bondMinSats) : null;
   const byKey = new Map();
-  for (const e of (entries || []).filter((x) => eligibleFor(x, contract, role))) {
+  for (const e of (entries || []).filter((x) => (atRole ? x && drawEligible(x, contract, role) : eligibleFor(x, contract, role)))) {
     if (!e || !(e.pubkey || (e.advert && e.advert.nodePubkey))) continue;
     const k = nodeKeyOf(e).split('|')[0], b = BigInt(e.bondSats || 0);
     byKey.set(k, sumsBonds(contract) ? (byKey.get(k) || 0n) + b : ((byKey.get(k) || 0n) > b ? byKey.get(k) : b));
