@@ -227,6 +227,9 @@ export const FINAL_SIG_EVIDENCE_PER_SIGNER = 4;
  * a walk-away (FORFEIT, stake claimed) into a refund the player chose (VOID), which §13C forbids. Such a refusal is never
  * kept (Round#putRefusedFirstMark) and never counted (verify.js #noQuorum), here or shown by a peer.
  */
+// kanban #3868: bounds of the seat-local price-check memos (Round.refusedPriceBatches, Round.priceSigsStood)
+const PRICE_MEMO_REFUSED = 1024;
+const PRICE_MEMO_SIGS = 32768;
 export const PLAYER_CAUSED_REFUSAL = /send the batches first|names inputs this node has not seen|does not follow the chain head|expected a tick after|behind this seat's clock for the run/;   // kanban #2826: a run played behind the clock
 export const playerCausedRefusal = (why) => PLAYER_CAUSED_REFUSAL.test(String(why || ''));
 
@@ -273,6 +276,12 @@ export class Round {
     // could not sign would have to answer a checkpoint with something other
     // than a receipt, and there is no such answer.
     this.identity = nodeIdentity(db);
+    // A REFUSED BATCH'S PRICES ARE NOT CHECKED AGAIN, AND A COMMITTEE SIGNATURE THAT STOOD IS NOT VERIFIED AGAIN (kanban #3868, audit
+    // r40-attest-4): the #3302 skip covers only a batch the seat holds, so a player's own signed frame of ~90 good attestations and one junk
+    // one was refused after ~600 schnorr checks on every copy (402.6 ms a 61.7 kB frame against 1.09 ms for junk). Seat-local memos only:
+    // checkBatchPrices is a pure function of the batch, the round's contract and the seat's feed setting, so the answer is the same.
+    this.refusedPriceBatches = new Map();   // batch id hex + feed flag -> why, at most PRICE_MEMO_REFUSED
+    this.priceSigsStood = new Set();        // key|msg|sig hex of a schnorr check that held, at most PRICE_MEMO_SIGS
     // the moves of rows made ACCEPTED on a history txid before #1249, put right once at open (kanban #1275)
     try { const fixed = this.repairAcceptedMoves(); if (fixed) console.log(`#1275 [settlement] ${fixed} ACCEPTED row(s) had another txid's moves: rewritten from the history`); } catch { /* a store without those tables */ }
   }
@@ -1166,11 +1175,30 @@ export class Round {
     // tagged hash of its whole encoding, attestations included) fixes its bytes - a stranger replaying a public signed batch to /play ran one
     // schnorr verify per committee signature of every attestation on each copy (90.6 ms a 53.7 KB frame against 3.2 ms for junk)
     if (!seen && ((b.attests && b.attests.length) || (requirePrices && ((b.samples && b.samples.length) || (b.tapes && b.tapes.length))))) {
+      // kanban #3868: the same refused batch (its id fixes every byte) is refused again without a signature check
+      const memoKey = `${toHex(id)}:${requirePrices ? 1 : 0}`;
+      const refused = this.refusedPriceBatches.get(memoKey);
+      if (refused !== undefined) throw new Error(refused);
       const c = decodeRoundContract(new Uint8Array(round.contract));
+      // kanban #3868: a signature that stood once stands again - a copy with one byte changed re-runs only the checks it changed
+      const stood = this.priceSigsStood;
+      const verify = (sig, msg, key) => {
+        let k;
+        try { k = `${toHex(key)}|${toHex(msg)}|${toHex(sig)}`; } catch { return false; }
+        if (stood.has(k)) return true;
+        let ok = false;
+        try { ok = schnorr.verify(sig, msg, key); } catch { ok = false; }
+        if (ok) { stood.add(k); if (stood.size > PRICE_MEMO_SIGS) stood.delete(stood.values().next().value); }
+        return ok;
+      };
       // the ROUND's version picks the scheme: from protocol 5 the median of the seats' own signed readings
       const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: (() => { try { return receiptsNeeded(c.gameVerifySlots); } catch { return c.nodes.length; } })(),
-        verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, require: requirePrices, median: mediansPrices(c) });
-      if (!prices.ok) throw new Error(prices.why);
+        verify, require: requirePrices, median: mediansPrices(c) });
+      if (!prices.ok) {
+        this.refusedPriceBatches.set(memoKey, prices.why);
+        if (this.refusedPriceBatches.size > PRICE_MEMO_REFUSED) this.refusedPriceBatches.delete(this.refusedPriceBatches.keys().next().value);
+        throw new Error(prices.why);
+      }
     }
 
     // AND IT MUST NOT BE LONGER THAN THE ROUND. `blockTicks` is a field of
