@@ -26,8 +26,9 @@ import { splitSignedRecord } from '../../arena-protocol/src/federation-record.js
 const JOINABLE = new Set([1, 2, 3]);   // FEDERATION_STATUS OPEN, DRAINING, CRITICAL: rounds or a drain still use it
 const hex = (b) => Buffer.from(b).toString('hex');
 
-/** The federations to be in, from seats' GET /federations answers: Map federation id hex -> invite. */
-export function federationsToJoin(answers) {
+/** The served records (kanban #3893c, shared with gateway-register.mjs): Map federation id hex -> decoded record, for each row whose record
+ *  is the row's federation, OPEN, DRAINING or CRITICAL, with a fed1 invite and at least its threshold of signatures - the first seat's wins. */
+export function servedRecords(answers) {
   const out = new Map();
   for (const a of answers) {
     for (const row of (a && Array.isArray(a.federations) ? a.federations : [])) {
@@ -38,11 +39,14 @@ export function federationsToJoin(answers) {
       const r = rec.record;
       if (hex(r.federationId) !== id || !JOINABLE.has(r.status) || !/^fed1/.test(r.invite)) continue;
       if (rec.signatures.length < r.threshold) continue;
-      out.set(id, r.invite);
+      out.set(id, r);
     }
   }
   return out;
 }
+
+/** The federations to be in, from seats' GET /federations answers: Map federation id hex -> invite. */
+export const federationsToJoin = (answers) => new Map([...servedRecords(answers)].map(([id, r]) => [id, r.invite]));
 
 /** Which of `wanted` (Map id -> invite) a gateway that is in `joined` (ids) must still join: [{ id, invite }]. */
 export const missingJoins = (joined, wanted) => {
