@@ -1920,6 +1920,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // previews; the faucet answers rewards only toward the origins it names (FAUCET_BOUNTY_ORIGINS)
     if (/^(testnet|testnet-stage)\.bitcoinarena\.io$|(^|\.)bitcoin-arena-site\.pages\.dev$/.test(location.hostname)) window.ARENA_BOUNTY_BUILD = true;
     window.ARENA_BOUNTY_ON = window.ARENA_BOUNTY_BUILD === true;
+    // THE BUG BOUNTY ENDS (kanban #3895, the owner 2026-11-27): 2026-11-29 23:59:59 UTC. From then the form promises no reward - no reward table, no
+    // bounty address, no "(bounty)" on the buttons - and says the bounty has ended; feedback still goes in. My feedback keeps showing a reward the team
+    // approved for a report sent before the end (ARENA_BOUNTY_ON stays), so a reward link made under the old rules can still be claimed.
+    window.ARENA_BOUNTY_END_MS = Date.parse('2026-11-29T23:59:59Z');
+    const bountyEnded = () => Date.now() > window.ARENA_BOUNTY_END_MS;
+    const bountyForm = () => window.ARENA_BOUNTY_ON === true && !bountyEnded();
+    const BOUNTY_ENDED_SAYS = 'The Bitcoin Arena bug bounty ended on 29 November 2026. Feedback is still welcome, but no longer earns sats.';
+    const BOUNTY_ENDS_SAYS = 'The bug bounty ends on 29 Nov 2026, 23:59 UTC.';
     // THE BOUNTY'S RULES, SAID WHEREVER IT IS ON (the owner 2026-11-07: "nach severity gezahlt ... nur fuer ernstgemeinte submissions ... Duplikate werden nicht gezaehlt ...
     // das dev team sich jede submission erst ansieht")
     // SHORT (the owner 2026-11-10: "viel zu viel Text. Kompakter machen")
@@ -1952,6 +1960,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const ln = el('input', { type: 'text', maxlength: '200', autocomplete: 'off', placeholder: 'Lightning address for a bounty (optional), e.g. you@walletofsatoshi.com', 'aria-label': 'Bounty Lightning address' });
       ln.className = 'fb-ln';
       try { ln.value = window.ARENA_BROWSER_STORE().getItem('arena.feedback.ln') || ''; } catch { /* this visit only */ }
+      if (!bountyForm()) { ln.value = ''; ln.hidden = true; }   // kanban #3895: no bounty address once the bounty has ended
       const lnOk = (v) => !v || /^[a-z0-9._+-]+@[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(v) || /^lnurl1[02-9ac-hj-np-z]+$/i.test(v);
       // THE ADDRESS CHECKED AS IT IS TYPED (the owner 2026-11-10: "er sagt mir nicht das test@test.de keine valid lightning addresse ist"): 0.7 s after the last key the
       // faucet asks the address's wallet (GET /feedback/lnaddress), and the line under it says whether it takes payments; Send waits while it is known not to
@@ -1971,14 +1980,15 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const me = myPubkey();
       const tick = el('label', { cls: 'badge' }, el('input', { type: 'checkbox' }), el('span', { text: ' Send my public key for the Founding Tester badge' }));
       tick.hidden = true;   // THE FOUNDING TESTER BADGE OFF FOR NOW (the owner 2026-11-10: "Remove the tester badge for now")
-      const say = el('div', { cls: 'say', role: 'status', text: window.ARENA_BOUNTY_ON
-        ? (me ? 'Signed with your key. ' + BOUNTY_RULES + ' A reward shows in My feedback.' : 'Open a wallet to be rewarded. ' + BOUNTY_RULES)
+      const say = el('div', { cls: 'say', role: 'status', text: bountyForm()
+        ? (me ? 'Signed with your key. ' + BOUNTY_RULES + ' A reward shows in My feedback. ' + BOUNTY_ENDS_SAYS : 'Open a wallet to be rewarded. ' + BOUNTY_RULES + ' ' + BOUNTY_ENDS_SAYS)
+        : window.ARENA_BOUNTY_ON ? BOUNTY_ENDED_SAYS + (me ? ' Signed with your key: My feedback shows what the team decides.' : '')
         : (me ? 'Signed with your key: My feedback shows what the team decides.' : 'It reaches the team. Open a wallet to follow it in My feedback.') });
       const off = el('button', { type: 'button', cls: 'off', text: 'Cancel' }), send = el('button', { type: 'button', cls: 'send', text: 'Send' });
       // THE REWARD TABLE IN THE FORM (kanban #1342, the owner 2026-11-08): the amounts the payout uses, read from the faucet's one table
       // (GET /feedback/rewards), with one example per level and the rule in one sentence - only in the bounty build
       const levels = el('div', { cls: 'fb-levels' });
-      if (window.ARENA_BOUNTY_ON && feedbackUrl()) {
+      if (bountyForm() && feedbackUrl()) {
         fetch(feedbackUrl() + '/rewards').then((r) => r.json()).then((j) => {
           if (!j || !Array.isArray(j.levels)) return;
           const unit = j.network === 'mainnet' ? 'sats' : 'testnet sats';
@@ -2070,6 +2080,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           if (window.ARENA_TRACK) window.ARENA_TRACK('feedback-sent');
           // ITS NUMBER (kanban #1413): "Thank you. Feedback #012 is in My feedback ..."
           say.textContent = body.event ? 'Thank you. ' + (j.label ? j.label + ' is' : 'It is') + ' in My feedback, where you see what the team decides.' : 'Thank you, it reached the team.';
+          // kanban #3895: after the end the thanks says plainly that no reward comes (the faucet says so too: noReward)
+          if (window.ARENA_BOUNTY_ON && (j.noReward === true || bountyEnded())) say.textContent += ' The bug bounty has ended, so this report earns no sats.';
           if (body.event) { say.style.cursor = 'pointer'; say.style.textDecoration = 'underline'; say.onclick = () => { d.remove(); if (window.ARENA_MY_FEEDBACK) window.ARENA_MY_FEEDBACK(); }; }
           t.value = ''; x.value = ''; shot.value = '';
           // THE INVITATION IN PLACE OF THE FORM; Close stays
@@ -2092,7 +2104,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       const at = errorsAsked.get(said); if (at && Date.now() - at < 600000) return; errorsAsked.set(said, Date.now());
       const old = document.getElementById('arena-error-feedback'); if (old) old.remove();
       const n = document.createElement('div'); n.id = 'arena-error-feedback'; n.setAttribute('role', 'status');
-      const go = document.createElement('button'); go.type = 'button'; go.className = 'go'; go.textContent = 'Something went wrong: report it' + (window.ARENA_BOUNTY_ON ? ' (bounty)' : '');
+      const go = document.createElement('button'); go.type = 'button'; go.className = 'go'; go.textContent = 'Something went wrong: report it' + (bountyForm() ? ' (bounty)' : '');
       const x = document.createElement('button'); x.type = 'button'; x.className = 'x'; x.setAttribute('aria-label', 'Close'); x.textContent = '\u00d7';
       go.onclick = () => { window.ARENA_OPEN_FEEDBACK({ type: 'bug', error: said, round: (window.ARENA_JOIN && window.ARENA_JOIN.round) || '' }); n.remove(); }; x.onclick = () => n.remove();
       n.append(go, x); document.body.appendChild(n); setTimeout(() => n.remove(), 30000);
@@ -2119,7 +2131,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (!feedbackUrl() || document.getElementById('arena-feedback')) return;
       const d = el('div', { id: 'arena-feedback', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'My feedback' });
       const list = el('div', { cls: 'say', role: 'status', text: 'Reading …' }), off = el('button', { type: 'button', cls: 'off', text: 'Close' });
-      d.append(el('div', { cls: 'card' }, el('h3', { text: 'My feedback' }), window.ARENA_BOUNTY_ON ? el('p', { text: BOUNTY_RULES }) : null, list, el('div', { cls: 'row' }, off)));
+      d.append(el('div', { cls: 'card' }, el('h3', { text: 'My feedback' }), window.ARENA_BOUNTY_ON ? el('p', { text: bountyEnded() ? BOUNTY_ENDED_SAYS + ' Rewards for reports sent before the end show here.' : BOUNTY_RULES + ' ' + BOUNTY_ENDS_SAYS }) : null, list, el('div', { cls: 'row' }, off)));
       off.onclick = () => d.remove();
       document.body.appendChild(d);
       if (!hasIdentity()) { list.textContent = 'Open a wallet first: your reports are listed under your key.'; return; }
@@ -2156,7 +2168,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       b.addEventListener('click', () => window.ARENA_OPEN_FEEDBACK({}));
       const s1 = document.getElementById('arena-feedback-send'), s2 = document.getElementById('arena-feedback-mine');
       if (s1) s1.addEventListener('click', () => window.ARENA_OPEN_FEEDBACK({}));
-      if (window.ARENA_BOUNTY_ON) { const w = document.getElementById('arena-feedback-says'); if (w) w.textContent += '. ' + BOUNTY_RULES; }
+      if (window.ARENA_BOUNTY_ON) { const w = document.getElementById('arena-feedback-says'); if (w) w.textContent += '. ' + (bountyEnded() ? BOUNTY_ENDED_SAYS : BOUNTY_RULES + ' ' + BOUNTY_ENDS_SAYS); }
       if (s2) s2.addEventListener('click', () => window.ARENA_MY_FEEDBACK());
       // ?feedback=1 (the footers of every other page, kanban #1342) opens the dialog once the page is up; ?feedback=mine opens My feedback
       try { const u = new URL(location.href), f = u.searchParams.get('feedback');
@@ -5400,7 +5412,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       // A NOTE AT THE BOTTOM OF THE SCREEN (the owner 2026-11-07: "nach einer Runde"), over a game's own screens too; closed with x, gone after 30 s
       if (document.getElementById('arena-round-feedback')) return;
       const n = document.createElement('div'); n.id = 'arena-round-feedback'; n.setAttribute('role', 'status');
-      const go = document.createElement('button'); go.type = 'button'; go.className = 'go'; go.textContent = window.ARENA_BOUNTY_ON ? 'Round over: send feedback (bounty)' : 'Round over: send feedback';
+      const go = document.createElement('button'); go.type = 'button'; go.className = 'go'; go.textContent = (window.ARENA_BOUNTY_ON && Date.now() <= Number(window.ARENA_BOUNTY_END_MS || Infinity)) ? 'Round over: send feedback (bounty)' : 'Round over: send feedback';
       const x = document.createElement('button'); x.type = 'button'; x.className = 'x'; x.setAttribute('aria-label', 'Close'); x.textContent = '\u00d7';
       go.onclick = () => { window.ARENA_OPEN_FEEDBACK({ round: rid }); n.remove(); }; x.onclick = () => n.remove();
       n.append(go, x); document.body.appendChild(n); setTimeout(() => n.remove(), 30000);
