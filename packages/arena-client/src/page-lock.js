@@ -38,6 +38,7 @@ import { decodeBolt11 } from '../../arena-protocol/src/bolt11.js';
 import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
 import { splitDonation, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
 import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
+import { readJsonUpTo } from './item-buy.js';   // kanban #3834
 
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
@@ -236,6 +237,10 @@ export const PAYOUT_GRACE_MS = 600000;
 // A SEAT THAT NEVER ANSWERS IS A SEAT THAT SAID NOTHING (measured 2026-10-27: a market bot's collect waited 13 min on one
 // seat that took the connection and never answered): the reads collect makes of every seat give up after 15 s
 const SEAT_READ_MS = 15000;
+// ONE SEAT'S ANSWER IS READ UP TO A BOUND (kanban #3834, audit #1489 r40 client-2): findLock, settlementOf, federationSettlementsOf,
+// forfeitOf and redeemSlashPayout took `r.json()` whole - one seat's gzip answer inflating to ~100 MB was held and parsed on every collect
+// pass and killed a phone's tab. Honest answers are a few KB; a longer one is that seat's refusal, inside its own try.
+const SEAT_ANSWER_BYTES_MAX = 1024 * 1024;
 // BLOCKS AS TIME (kanban #827, 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
 export const blocksAsTime = (blocks, secondsPerBlock = 600) => {
   const m = Math.max(1, Math.ceil((Number(blocks) * Number(secondsPerBlock)) / 60));
@@ -2505,7 +2510,7 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
     try {
       const r = await fetcher(`${base}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
-      const raw = await r.json();
+      const raw = await readJsonUpTo(r, SEAT_ANSWER_BYTES_MAX);   // kanban #3834
       // ONE SEAT'S MALFORMED ANSWER STAYS ITS OWN (kanban #1489, audit WF1489 CLIENT-1): `{}` or `[null]` from one seat threw for the
       // whole look, outside this try, and every honest seat's lock was dropped - no payout, stake or refund collected while it answered so.
       // A seat's answer must be a list; an item that is not a lock (an object, a txid:index outpoint, fields the lock client reads) is skipped
@@ -2660,7 +2665,7 @@ export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch, lock
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}${lock === 'fee' ? '&lock=fee' : ''}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) { refused.push(`${node}: ${r.status} ${(await r.text()).trim()}`); continue; }
-      const j = await r.json();
+      const j = await readJsonUpTo(r, SEAT_ANSWER_BYTES_MAX);   // kanban #3834
       if (!/^[0-9a-f]{128}$/.test(String(j.signature))) { refused.push(`${node}: answered no signature`); continue; }
       if (!(await verified(j))) { refused.push(`${node}: its forfeit's signature does not verify`); continue; }
       return { ok: true, signature: j.signature, contractId: j.contractId, claimPk: j.claimPk, from: node };
@@ -2793,7 +2798,7 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
-      const j = await r.json();
+      const j = await readJsonUpTo(r, SEAT_ANSWER_BYTES_MAX);   // kanban #3834
       if (j && j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) {
         // EVERY PAYOUT WELL FORMED, OR THE ANSWER IS NOT COUNTED (kanban #1489, audit WF1489 CLIENT-1): a `null` payout threw in keyOf for
         // every seat's answer, and the honest seats' agreeing settlement was lost with it
@@ -2937,7 +2942,7 @@ export async function federationSettlementsOf({ roundId, nodes, fetcher = fetch 
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) { said.push(`${node}: ${r.status}`); continue; }
-      const j = await r.json();
+      const j = await readJsonUpTo(r, SEAT_ANSWER_BYTES_MAX);   // kanban #3834
       // (kanban #1489) a null federation or payout is a malformed answer, not a throw: the next seat is asked
       if (j && j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
         && j.federations.every((f) => f && f.state === 'ACCEPTED' && f.moved && wellFormedPayouts(f.moved.payouts)
@@ -3012,7 +3017,7 @@ export async function redeemSlashPayout({ round, roundId, invite, seed, curve, L
   if (!listed) try {
     const r = await fetcher(`${String(arbiter).replace(/\/+$/, '')}/slash-payouts?round=${toHex(roundId)}`);
     if (!r.ok) return { ok: false, final: false, why: `the arbitration service answered ${r.status}` };
-    listed = await r.json();
+    listed = await readJsonUpTo(r, SEAT_ANSWER_BYTES_MAX);   // kanban #3834
   } catch (e) { return { ok: false, final: false, why: `the arbitration service did not answer: ${e.message}` }; }
   const p = (listed.payouts || []).find((x) => String(x.refundPk).toLowerCase() === mine);
   if (!p) return { ok: false, final: true, why: 'no slash payout of this round names this seed\'s key' };
