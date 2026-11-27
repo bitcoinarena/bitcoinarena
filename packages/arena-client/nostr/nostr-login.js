@@ -185,7 +185,18 @@ export async function seedFor(signer, { pool = new SimplePool(), relays = NOSTR_
   const seed = signer.method === 'nsec' ? derivedSeed(signer.secret) : random(32);
   const content = await signer.encrypt(signer.pubkey, JSON.stringify({ v: 1, game: 'bitcoin-arena', seed: hex(seed) }));
   const ev = await signer.signEvent({ kind: SEED_KIND, created_at: Math.floor(Date.now() / 1000), tags: [['d', SEED_D]], content });
-  const took = await publishWithPow(pool, up, ev, signer);   // kanban #2847: with proof of work where a relay asks for it
+  // A SIGNER'S RANDOM SEED IS TAKEN INTO USE ONLY ONCE THE GAME'S OWN RELAY KEPT IT (kanban #3878, gap in #2713): #2713 made sure the list's first
+  // relay ANSWERED the ask, not that it TOOK the new seed - with that relay answering 'rate-limited:' (its signature budget drained by a stranger)
+  // or 'blocked: the relay is full' and one public relay taking it, the page showed and funded a wallet whose only copy sat on relays that prune
+  // NIP-78 data, and the next login minted a second random seed. The game's relay is asked first and alone; only when it kept the event does it
+  // go to the others, so a refused seed is spread nowhere and no relay can later hand it out. An nsec's seed is derived - any relay will do.
+  let took;
+  if (signer.method !== 'nsec' && relays.length) {
+    took = await publishWithPow(pool, [relays[0]], ev, signer);   // kanban #2847: with proof of work where a relay asks for it
+    if (!took.includes(relays[0])) throw new Error(`your game's Nostr relay (${relays[0]}) did not keep your new wallet seed: try again in a moment (no wallet was made)`);
+    const rest = up.filter((u) => u !== relays[0]);
+    if (rest.length) took.push(...await publishWithPow(pool, rest, ev, signer));
+  } else took = await publishWithPow(pool, up, ev, signer);   // kanban #2847: with proof of work where a relay asks for it
   if (!took.length) throw new Error('no relay took your game seed: nothing was made, try again');
   return { seed, created: true, from: signer.method === 'nsec' ? 'derived' : 'random', relays: took };
 }
