@@ -14,6 +14,7 @@ import { workerData } from 'node:worker_threads';
 import { getHeapStatistics } from 'node:v8';
 import { DEPTH_LOCKDOWN, DEPTH_MODULE } from './core-depth.js';
 import { CORE_INTRINSICS } from './core-intrinsics.js';   // kanban #3358
+import { NEST_LOCKDOWN } from './core-nest.js';   // kanban #3540
 
 const { files: fileList, entry, name, port, ctrl: ctrlBuffer, arrayBudget, liveCap, answerMax } = workerData;
 const files = new Map(fileList);
@@ -377,6 +378,8 @@ const LOCKDOWN = `'use strict';
   // the script's value, handed only to this thread and kept on no global: the core never reaches it
   // kanban #2220, #2476: the core's call depth (core-depth.js), counted in its own realm
   const depth = ${DEPTH_LOCKDOWN};
+  // kanban #3540 (the owner 2026-11-25): the built-ins that recurse on the core's data count each level on the same count (core-nest.js)
+  ${NEST_LOCKDOWN}(depth);
   // AN OVERFLOW HANDED TO A REJECTION HANDLER IS STICKY TOO (kanban #2852, #1489 r26-hosting-1): String or JSON.stringify run as a promise
   // job itself (Promise.resolve(deep).then(String)), so no function of the core's was on the stack when the builtin overflowed and nothing
   // the core wrote caught it - the RangeError reached the next rejection handler as a plain ARGUMENT and the core branched on where the
