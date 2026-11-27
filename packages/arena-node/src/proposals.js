@@ -619,8 +619,18 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // OLDEST PUBLICATION FIRST (kanban #1842): a peer lists newest first, and a repeal taken before the proposal it repeals
       // read a history without it (an ordinary schedule here, a repeal at every other seat); oldest first, the earlier one is
       // held when the later one is checked (and 503s it until decided here). Bounded first, in the peer's order, as before.
-      const asked = (Array.isArray(records) ? records : []).slice(0, 256)
-        .map((r, i) => ({ r, i, at: r && Number.isFinite(Number(r.publishedAt)) ? Number(r.publishedAt) : Infinity }))
+      // ONE PROPOSER CANNOT FILL THE WINDOW (kanban #3826, audit r40 census-1): the window was the first 256 of a newest-first listing, so
+      // one bonded node publishing 256 cheap proposals after an honest one pushed it out of every seat's pull for good (never learned,
+      // its sightings never spread, FAILED everywhere). The window is still 256 records, now taken in turns per proposer key (read from
+      // the signed body, not the listing's word): each proposer's first record, then each one's second, ... - in the peer's order within
+      // a turn. Which records a seat checks is its own business; each one is still checked by add as before.
+      const listed = (Array.isArray(records) ? records : []).slice(0, 4096);
+      const proposerOf = (r) => { try { const b = fromHex(String(r.proposal)); return toHex(decodeConfigProposalBody(b.subarray(0, b.length - 64)).proposer); } catch { return ''; } };
+      const turnOf = new Map();
+      const inTurns = listed.map((r, i) => { const k = r && typeof r.proposal === 'string' ? proposerOf(r) : ''; const t = turnOf.get(k) || 0; turnOf.set(k, t + 1); return { r, i, t }; })
+        .sort((a, b) => a.t - b.t || a.i - b.i).slice(0, 256).map(({ r, i }) => ({ r, i }));
+      const asked = inTurns
+        .map(({ r, i }) => ({ r, i, at: r && Number.isFinite(Number(r.publishedAt)) ? Number(r.publishedAt) : Infinity }))
         .sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.r);
       // ONE RECORD ONCE PER LISTING (kanban #3373, audit census a6-3-1, gap in #3040): a seat listing one late record 256 times, each copy with
       // junk sightings by every census key, cost 256 x K signature checks per pull (vouch's one-check-per-key holds within one call only)
