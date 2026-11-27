@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Bitcoin Arena: bug bounty, Season 3</title>
-<meta name="description" content="Find bugs in Bitcoin Arena and earn real sats over Lightning: the Season 3 rules, and the log of Seasons 1 and 2.">
-<meta property="og:title" content="Bitcoin Arena: bug bounty, Season 3">
-<meta property="og:description" content="The rules of the Bitcoin Arena bug bounty, Season 3, and the log of Seasons 1 and 2.">
+<title>Bitcoin Arena: bug bounty, Season 3 (ends 29 Nov 2026)</title>
+<meta name="description" content="The Bitcoin Arena bug bounty ends on 29 November 2026 at 23:59 UTC. The Season 3 rules until then, and the log of every payout.">
+<meta property="og:title" content="Bitcoin Arena: bug bounty, Season 3 (ends 29 Nov 2026)">
+<meta property="og:description" content="The Bitcoin Arena bug bounty ends on 29 November 2026 at 23:59 UTC. The rules until then, and the log of every payout.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://bitcoinarena.io/bounty/">
 <meta property="og:image" content="https://testnet.bitcoinarena.io/arena-og.png">
@@ -26,6 +26,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
 }catch(e){}})();</script>
   <script defer src="https://stats.bitcoinarena.io/script.js" data-website-id="4f00ff2b-032e-4683-890c-63458e0b178e" data-domains="bitcoinarena.io,www.bitcoinarena.io"></script>
   <script>/* kanban #943: the campaign reached the stats when the script read the address; then it leaves the address, past the script's own history hook, so no second view */addEventListener('load',function(){var n=0,c=function(){if(!window.umami&&n++<50)return setTimeout(c,100);setTimeout(function(){var u=new URL(location.href),k=Array.from(u.searchParams.keys()).filter(function(x){return/^utm_/.test(x)});if(k.length){k.forEach(function(x){u.searchParams.delete(x)});History.prototype.replaceState.call(history,history.state,'',u.pathname+u.search+u.hash)}},500)};c()})</script>
+<script>/* kanban #3895: THE BUG BOUNTY ENDS (the owner 2026-11-27): 2026-11-29 23:59:59 UTC. Before it the page is the bounty as it ran; from then
+   on the same address says it has ended and shows no reward table, no node bounty, no bonus and no claim step (html.bounty-ended) */
+window.ARENA_BOUNTY_END_MS = Date.parse('2026-11-29T23:59:59Z');
+if (Date.now() > window.ARENA_BOUNTY_END_MS) document.documentElement.classList.add('bounty-ended');</script>
 <style>
   :root { --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --dim: #8b949e; --btc: #f7931a; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; padding: 32px 16px 56px; }
@@ -82,6 +86,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
   .gbadge { font-size: 12px; font-weight: 800; padding: 2px 9px; border-radius: 999px; background: linear-gradient(135deg, #f7931a, #f0388a); color: #0d1117; }
   .joins { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; } .join { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 5px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); color: var(--text); text-decoration: none; font-size: 14px; font-weight: 600; } .join:hover { border-color: var(--btc); } .join .ic { width: 26px; height: 26px; }
   table { font-size: 14px; } @media (max-width: 480px) { body { padding: 20px 14px 48px; } .hero { padding: 20px 16px; } th, td { padding: 8px; } }
+  /* kanban #3895: the end of the bug bounty (the owner 2026-11-27: it ends Sunday 29 Nov 2026, 23:59 UTC) */
+  .end-note { margin: 0 0 18px; padding: 14px 16px; border-radius: 12px; border: 1px solid rgba(247,147,26,.7); background: rgba(247,147,26,.12); color: var(--text); font-weight: 600; line-height: 1.5; }
+  .end-note p { color: var(--text); margin: 0 0 6px; } .end-note p:last-child { margin: 0; }
+  html.bounty-ended .bounty-live { display: none !important; } html:not(.bounty-ended) .bounty-over { display: none !important; }
   .pot-banner { margin: 0 0 18px; padding: 12px 14px; border-radius: 10px; font-weight: 600; line-height: 1.45; }
   .pot-banner.warn { color: #f5d77a; border: 1px solid rgba(210,153,34,.7); background: rgba(210,153,34,.14); }
   .pot-banner.full { color: #ffb4ae; border: 1px solid rgba(248,81,73,.7); background: rgba(248,81,73,.14); }
@@ -114,10 +122,19 @@ function arenaPotBanner(s) {
 <!-- ONE HEADER FOR EVERY PAGE (kanban #1457, the owner 2026-11-11: "Der Header muss überall gleich aussehen"): the start page's header, drawn by site-chrome.js -->
 <script src="https://testnet.bitcoinarena.io/site-chrome.js" data-foot="none"></script>
 <main>
+  <div class="end-note bounty-live" id="bounty-ends" role="status"><p>The Bitcoin Arena bug bounty ends on Sunday, 29 November 2026 at 23:59 UTC.</p><p>Reports sent before then are reviewed and rewarded under the current rules. After that, feedback is still welcome but no longer earns sats.</p></div>
+  <section class="hero bounty-over" id="bounty-ended">
+    <div class="tag">Bug bounty &middot; ended</div>
+    <h1>The bug bounty has ended.</h1>
+    <p class="lead">The Bitcoin Arena bug bounty ended on 29 November 2026. Thank you to everyone who tested and reported.</p>
+    <p class="when">Feedback is still welcome, but no longer earns sats. Use the Feedback function at the bottom of the game page.</p>
+    <a class="go" href="https://testnet.bitcoinarena.io/">Play a round</a>
+  </section>
+  <div class="bounty-live">
   <div id="pot-banner" role="status" hidden></div>
   <section class="hero">
-    <div class="tag">Bug bounty &middot; Season 3 &middot; 22 Nov 18:00 CET - 29 Nov 18:00 CET</div>
-    <p class="ends" id="season-ends" data-end="2026-11-29T17:00:00Z">Ends 29 Nov 2026, 17:00 UTC</p>
+    <div class="tag">Bug bounty &middot; Season 3 &middot; the last season &middot; ends 29 Nov 23:59 UTC</div>
+    <p class="ends" id="season-ends" data-end="2026-11-29T23:59:59Z">Ends 29 Nov 2026, 23:59 UTC</p>
     <h1>Find bugs. Earn sats.</h1>
     <p class="lead">Play, report, get paid over Lightning.</p>
     <p class="when">Anything that breaks, loses money or confuses you counts as a bug. Link your X account for the full level. You are paid in real sats over Lightning.</p>
@@ -126,10 +143,10 @@ function arenaPotBanner(s) {
 
 <script>/* kanban #3342: the countdown to the end of Season 3 (2026-11-29 17:00 UTC; the faucet's nextSeasonMs when it answers) */
 (function () { var el = document.getElementById('season-ends'); if (!el) return; var end = Date.parse(el.getAttribute('data-end')), t = null;
-  function draw() { var left = end - Date.now(); if (!(left > 0)) { el.textContent = 'Season 3 has ended (29 Nov 2026, 17:00 UTC).'; if (t) clearInterval(t); return; }
+  function draw() { var left = end - Date.now(); if (!(left > 0)) { el.textContent = 'The bug bounty has ended (29 Nov 2026, 23:59 UTC).'; document.documentElement.classList.add('bounty-ended'); if (t) clearInterval(t); return; }
     var m = Math.floor(left / 60000), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mi = m % 60;
-    el.textContent = 'Ends in ' + (d ? d + ' d ' + h + ' h' : h ? h + ' h ' + mi + ' min' : Math.max(1, mi) + ' min') + ' (29 Nov 2026, 17:00 UTC)'; }
-  window.arenaSeasonEnd = function (ms) { if (ms > 0) { end = ms; draw(); } };
+    el.textContent = 'Ends in ' + (d ? d + ' d ' + h + ' h' : h ? h + ' h ' + mi + ' min' : Math.max(1, mi) + ' min') + ' (29 Nov 2026, 23:59 UTC)'; }
+  window.arenaSeasonEnd = function () { /* kanban #3895: the end is the bounty's (2026-11-29 23:59:59 UTC), not the faucet's season boundary */ };
   draw(); t = setInterval(draw, 30000); })();</script>
   <ol class="steps steps3" id="how-to-report">
     <li><span class="si"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg></span><b>Play a round</b></li>
@@ -170,7 +187,7 @@ function arenaPotBanner(s) {
     <section class="card" id="budget"><h3>Season pot</h3>
       <div class="pot"><b id="pot-used">&hellip;</b> <span>/ <span id="pot-size">100,000</span> sats</span></div>
       <div class="bar"><i id="pot-bar"></i></div>
-      <p class="note">Season 3: <span class="pot-size2">100,000</span> sats for reports, bonuses and nodes, 22 Nov 17:00 UTC to 29 Nov 17:00 UTC. A season runs one week. When the pot is used up, there are no more bounties that season - nothing carries over to the next one.</p>
+      <p class="note">Season 3: <span class="pot-size2">100,000</span> sats for reports, bonuses and nodes, 22 Nov 17:00 UTC to the end of the bug bounty, 29 Nov 23:59 UTC. A season runs one week. When the pot is used up, there are no more bounties that season - nothing carries over to the next one.</p>
     </section>
     <section class="card" id="draw" hidden><h3>Draw prize <span class="draw-prize">50,000</span> sat: the top 5</h3>
       <ol class="podium" id="draw-podium"><li><b>1</b>20,000</li><li><b>2</b>12,000</li><li><b>3</b>8,000</li><li><b>4</b>6,000</li><li><b>5</b>4,000</li></ol>
@@ -180,6 +197,7 @@ function arenaPotBanner(s) {
 
   <details class="fold" id="rules"><summary>Details</summary>
     <ul class="fine">
+      <li id="bounty-end"><b>The bug bounty ends on 29 Nov 2026, 23:59 UTC.</b> Reports received until then are reviewed and rewarded under these rules. Reports received after that are still welcome, but earn no sats. There is no further season.</li>
       <li id="out-of-scope"><b>Out of scope.</b> The feedback form, this bounty page and their services (the feedback API, reward links, social account checks, the admin page) earn no bounty - only the game and the network do.</li>
       <li id="duplicates"><b>Already known? Not paid.</b> A finding we already know about is excluded: if it matches a ticket in the <a href="#open-issues">open-issues list below</a>, or we had already found it in our own code. You then get a private link to that ticket's text, so you can see it was known before your report. Otherwise the first report wins.</li>
       <li id="follow-ups">A gap in a fix or another variant: 1,000 sats.</li>
@@ -194,6 +212,7 @@ function arenaPotBanner(s) {
     </ul>
   </details>
 
+  </div>
   <details class="fold" id="open-issues"><summary><span id="oi-count">149</span> known issues</summary>
     <table><thead><tr><th>Area</th><th>Tickets</th></tr></thead><tbody id="s2-open"><tr><td colspan="2">Reading &hellip;</td></tr></tbody></table>
     <p class="note" id="s2-updated"></p>
@@ -233,7 +252,7 @@ function arenaPotBanner(s) {
     })();
   </script>
 
-  <h2 id="payouts">Season 3 payouts</h2>
+  <h2 id="payouts"><span class="bounty-live">Season 3 payouts</span><span class="bounty-over">Season 3 payouts (the last season)</span></h2>
   <table id="rows-cur"><thead><tr><th>Season</th><th>Date</th><th>For</th><th>Channel</th><th>Sats</th></tr></thead><tbody></tbody></table>
   <p id="sum-cur" style="margin-top:14px"></p>
 
@@ -314,7 +333,9 @@ document.addEventListener('click', function (e) { var a = e.target && e.target.c
   var url = location.origin + location.pathname + a.getAttribute('href'); try { navigator.clipboard.writeText(url); } catch (x) {}
   a.classList.add('copied'); a.title = 'Link copied'; setTimeout(function () { a.classList.remove('copied'); a.title = 'Copy the link to this rule'; }, 1500); });
 function openWeek1() { var id = location.hash.slice(1) === 'season-1' ? 'week-1' : location.hash.slice(1); var e = id && document.getElementById(id); if (!e) return;
-  var d = e.tagName === 'DETAILS' ? e : e.closest('details'); if (d) d.open = true; e.scrollIntoView(); }
-window.addEventListener('hashchange', openWeek1); openWeek1();</script>
+  var d = e.tagName === 'DETAILS' ? e : e.closest('details'); if (d) d.open = true; if (e.closest('.bounty-live') && document.documentElement.classList.contains('bounty-ended')) e = document.getElementById('bounty-ended'); e.scrollIntoView(); }
+window.addEventListener('hashchange', openWeek1); openWeek1();
+/* kanban #3895: the title once the bounty has ended */
+if (document.documentElement.classList.contains('bounty-ended')) document.title = 'Bitcoin Arena: the bug bounty has ended';</script>
 </body>
 </html>

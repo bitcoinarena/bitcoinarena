@@ -28,7 +28,7 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
-import { openBountySeason, cleanOpenIssues, seasonEndMs, NO_CARRY_FROM_SEASON, LEVEL_SATS, BOT_PCT } from '../src/bounty-season.js';
+import { openBountySeason, cleanOpenIssues, seasonEndMs, NO_CARRY_FROM_SEASON, LEVEL_SATS, BOT_PCT, BOUNTY_ENDED_WHY, bountyEndMsOf, receivedAfterBountyEnd } from '../src/bounty-season.js';
 import { verifiersFromEnv } from '../src/bounty-verify.js';
 import { readJsonBounded } from '../src/lnurl-read.js';   // kanban #2517
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice, reportAddress } from '../src/feedback-store.js';
@@ -117,6 +117,11 @@ const S2_VERIFY = verifiersFromEnv(env);
 const S2_START_MS = env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null;
 // WEEK 1 ENDED (kanban #2639): a report received at or after this time belongs to Week 2
 const S1_END_MS = env.FAUCET_BOUNTY_S1_END ? Date.parse(env.FAUCET_BOUNTY_S1_END) : null;
+// THE BUG BOUNTY ENDS (kanban #3895): FAUCET_BOUNTY_END (ISO time, 2026-11-29T23:59:59Z); a report received after it gets no reward, one received
+// before keeps its rules; unset: no end
+const BOUNTY_END_MS = bountyEndMsOf(env.FAUCET_BOUNTY_END);
+const endedFor = (r) => !!r && receivedAfterBountyEnd(r.receivedMs, BOUNTY_END_MS);
+const bountyOver = (nowMs = Date.now()) => Number.isFinite(BOUNTY_END_MS) && nowMs > BOUNTY_END_MS;
 const S2_STARTED = () => !Number.isFinite(S2_START_MS) || Date.now() >= S2_START_MS;
 const S2_START_DAY = Number.isFinite(S2_START_MS) ? new Date(S2_START_MS).toISOString().slice(0, 10) : null;
 const S2_LEVEL_BY_SATS = { 500: 'useful', 1000: 'low', 2000: 'medium', 5000: 'high', 10000: 'critical' };
@@ -776,6 +781,7 @@ if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
     for (const a of S2.approvals({ state: 'waiting' })) {
       const r = FEEDBACK.report(a.report);
       if (!r || r.state !== 'new') continue;
+      if (endedFor(r)) continue;   // kanban #3895: received after the bug bounty ended - never approved for money
       await S2.verify(r.pubkey, S2_VERIFY, { cause: 'season2-start' });   // kanban #2876: a node report too
       const p = S2.plan(r, { level: a.level, codeOnly: a.codeOnly, followUp: a.followUp, played: playedFor(r) });
       if (!p.ok) continue;
@@ -799,8 +805,10 @@ createServer((req, res) => {
   const writePath = new URL(req.url, 'http://x').pathname.replace(/\/+$/, '');
   const anyOrigin = (writePath === '/feedback' || writePath === '/feedback/screenshot') && origin;
   const cors = ORIGIN_OK.test(origin) || anyOrigin ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};
-  const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors }); res.end(JSON.stringify(body)); };
   const path = new URL(req.url, 'http://x').pathname.replace(/\/+$/, '');
+  // kanban #3895: a report taken after the bug bounty ended is answered noReward, so the form's thanks says no reward comes
+  const send = (status, body) => { if (path === '/feedback' && body && body.ok === true && bountyOver()) body = { ...body, noReward: true };
+    res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors }); res.end(JSON.stringify(body)); };
   // A TABLE WITH SOMEBODY AT IT (kanban #926): said by the page, read by the test opponent
   if (path === '/opponent' || path === '/faucet/opponent') {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '86400' }); return res.end(); }
@@ -941,6 +949,9 @@ createServer((req, res) => {
         let b; try { b = JSON.parse(raw || '{}'); } catch { return send(400, { ok: false, why: 'not JSON' }); }
         const by = 'admin';
         if ((b.action === 'approve' || b.action === 'reward') && !bountyOn()) return send(403, { ok: false, why: 'rewards are off until the owner turns them on: reject, duplicate and notes still work' });
+        // kanban #3895: a report received after the bug bounty ended is never approved for money and gets no reward link; one received before keeps its rules
+        if (b.action === 'approve' || b.action === 'reward') { const r0 = FEEDBACK.report(b.id);
+          if (endedFor(r0)) { if (b.action === 'approve' && r0.state === 'new') FEEDBACK.remark(r0.id, BOUNTY_ENDED_WHY, { by }); return send(200, { ok: false, bountyEnded: true, why: BOUNTY_ENDED_WHY }); } }
         if (b.action === 'approve') {
           await PLAYED.fresh().catch(() => 0);
           // A NODE BOUNTY ONLY ON ITS CHECKLIST (kanban #1342): the node's census, 1 day online in the last 7, committees and signed rounds, outside the team - read now
@@ -1177,7 +1188,9 @@ createServer((req, res) => {
     return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, paidSats: p.paidSats, owedSats: p.owedSats, leftSats: p.leftSats, drawPrizeSats: p.drawPrizeSats, nodes: p.nodes, nodesMost: p.nodesMost,
       usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor((LEVEL_SATS.useful * BOT_PCT) / 100), nextSeasonMs: seasonEndMs(p.season, S2_START_MS),
       // kanban #2789: this season's reports still waiting for review (a number only), for the stage pot banner from 98 %
-      pendingNew: FEEDBACK.countNew(seasonEndMs(p.season - 1, S2_START_MS) ?? 0) }); }
+      pendingNew: FEEDBACK.countNew(seasonEndMs(p.season - 1, S2_START_MS) ?? 0),
+      // kanban #3895: when the bug bounty ends, and whether it has
+      bountyEndMs: BOUNTY_END_MS, bountyEnded: bountyOver() }); }
   if (S2 && (path === '/feedback/link' || path === '/feedback/verify')) {
     if (req.method === 'OPTIONS') { res.writeHead(204, { ...cors, 'access-control-allow-methods': 'POST', 'access-control-allow-headers': 'authorization', 'access-control-max-age': '86400' }); return res.end(); }
     if (req.method !== 'POST') return send(405, { ok: false, why: 'POST' });
