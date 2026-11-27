@@ -1719,6 +1719,10 @@ export function openStore(path = ':memory:') {
   // round out of every order's fee, so the row itself names no one player
   if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'parts'))
     db.exec('ALTER TABLE donation_outputs ADD COLUMN parts TEXT');
+  // AND WHETHER ONLY A PEER VOUCHED FOR ITS ROUND (kanban #3844): 1 for a row kept from another seat's GET /reserves (reserve-book.js
+  // verifyPeerReserveRow); this seat's own verification or payout record of the same outpoint clears it
+  if (!db.prepare('PRAGMA table_info(donation_outputs)').all().some((c) => c.name === 'peer'))
+    db.exec('ALTER TABLE donation_outputs ADD COLUMN peer INTEGER NOT NULL DEFAULT 0');
   // A PEER'S ANSWER TO AN OFFERED FIRST MARK NAMES ITS BLOCK (§13C, RULED 2026-09-24): this node's tip when it recorded
   // the answer. A store made before the ruling gets the column; a row there names none, and its refusal counts nowhere.
   if (!db.prepare('PRAGMA table_info(first_mark_offers)').all().some((c) => c.name === 'block_hash'))
