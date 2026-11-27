@@ -12,12 +12,17 @@
  * FM_WS_API_CONNECT_OVERRIDES ("wss://public=ws://127.0.0.1:port/,..."), applied to every WebSocket the page's wasm opens.
  * Unset, nothing changes. A browser player is one client from its own address and keeps the public endpoints.
  */
+// kanban #3893: the overrides name each endpoint with and without a trailing slash and the later pair wins; a seat's guardian path
+// (fed2-N/guardian-next) upgrades only on its exact path and answers 400 to ".../guardian-next/" - all of 4dc88be7's guardians failed
+// from the old Mac (measured 2026-11-27 20:40Z). A target with a path opens without the slash; a bare host:port target is kept as written.
+const pathTarget = (v) => { try { return new URL(v).pathname.length > 1 ? v.replace(/\/+$/, '') : v; } catch { return v; } };
+
 export function routeGuardianSockets(overrides = process.env.FM_WS_API_CONNECT_OVERRIDES) {
   if (!overrides || !globalThis.WebSocket) return 0;
   const map = new Map();
   for (const pair of overrides.split(',')) {
     const at = pair.indexOf('=');
-    if (at > 0) map.set(pair.slice(0, at).trim().replace(/\/+$/, ''), pair.slice(at + 1).trim());
+    if (at > 0) map.set(pair.slice(0, at).trim().replace(/\/+$/, ''), pathTarget(pair.slice(at + 1).trim()));
   }
   if (!map.size) return 0;
   const Base = globalThis.WebSocket;

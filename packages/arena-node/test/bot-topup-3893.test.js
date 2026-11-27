@@ -46,3 +46,29 @@ test('a claim that never comes: after claimMs the next gateway is asked', async 
   assert.equal(r.ok, true); assert.equal(r.gateway, 'B'); assert.deepEqual(r.tried.map((t) => [t.gateway, t.step]), [['A', 'claim']]);
   assert.match(r.tried[0].why, /no claim in 0 s/);
 });
+
+// kanban #3893 follow-up (measured 2026-11-27 20:00-20:20Z): gw-c was not joined to 4dc88be7 ("No federation available for prefix 4dc88be7") and
+// the wallet could not reach its guardians, yet the faucet paid gw-a's and gw-b's invoices each pass - 6000 sat a time into contracts nobody claimed.
+test('#3893b: only the gateways the federation lists are asked; the others are reported, not tried', async () => {
+  const asked = [], logs = [];
+  const r = await topUp({ gateways: ['https://gw-c.x/', 'https://gw-a.x/'], log: (x) => logs.push(x),
+    listed: async () => ['https://gw-a.x/', 'https://gw-b.x'],
+    receive: async (gw) => { asked.push(gw); return { invoice: gw, operation: gw }; }, ask: async () => ({ ok: true }), awaitReceive: async () => 'Claimed' });
+  assert.equal(r.ok, true); assert.equal(r.gateway, 'https://gw-a.x/');
+  assert.deepEqual(asked, ['https://gw-a.x/']);
+  assert.deepEqual(r.tried.map((t) => [t.gateway, t.step]), [['https://gw-c.x/', 'not joined']]);
+  assert.ok(logs.some((l) => l.gateway === 'https://gw-c.x/' && l.stage === 'not joined'));
+});
+
+test('#3893b: a federation the wallet cannot reach is not paid into - no invoice, no faucet, the reason reported', async () => {
+  let asked = 0, invoices = 0;
+  const r = await topUp({ gateways: ['A', 'B'], listMs: 50,
+    listed: () => new Promise(() => {}),
+    receive: async (gw) => { invoices++; return { invoice: gw, operation: gw }; }, ask: async () => { asked++; return { ok: true }; }, awaitReceive: async () => 'Claimed' });
+  assert.equal(r.ok, false); assert.equal(asked, 0); assert.equal(invoices, 0);
+  assert.deepEqual(r.tried.map((t) => t.step), ['federation']);
+  assert.match(r.tried[0].why, /guardians not reachable/);
+  const thrown = await topUp({ gateways: ['A'], listed: async () => { throw new Error('Failed to download client config'); },
+    receive: async () => { invoices++; return {}; }, ask: async () => ({ ok: true }), awaitReceive: async () => 'x' });
+  assert.equal(thrown.ok, false); assert.equal(invoices, 0); assert.match(thrown.tried[0].why, /Failed to download/);
+});
