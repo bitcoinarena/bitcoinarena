@@ -6625,8 +6625,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (g.ok && g.headToHead) {
         const players = g.plugin.manifest.players;
         // kanban #2691: full only with seen stakes - a stake lock still waiting for its fee lock yields its seat to a player who locks both
+        // ONLY THE SEATED ENTRY OF THIS VERY HANDOUT IS LEFT OUT (kanban #3817, a bypass of #1485 found by the #1489 audit): the count left out
+        // every seated entry of the handout's player key, so a second, different order of a key already seated (two tabs of one imported seed
+        // racing for one table) was taken here and at the page's pre-lock recheck (#3694) on a full table - the page locked, and every seat
+        // refused its entry ("already seats ... 2 players", round.js, which leaves out only that entry's own id). Now only the entry this handout
+        // belongs to (its vssSharesRef is this handout's id, or its stake point this handout's A0) is spared: a reload re-posting the same
+        // handout still goes through, any other handout of that key counts the full table and is refused before anything is locked
+        const ownId = Buffer.from(handoutId(handout)), ownA0 = handout.commitments[0] ? Buffer.from(handout.commitments[0]) : null;
+        const isThisHandouts = (e) => !!e && !!e.playerPubkey && Buffer.from(e.playerPubkey).equals(Buffer.from(handout.playerPubkey))
+          && ((e.vssSharesRef && Buffer.from(e.vssSharesRef).equals(ownId)) || (ownA0 && e.stakePoint && Buffer.from(e.stakePoint).equals(ownA0)));
         const others = round.seatedEntriesOf(handout.roundId, roundContract.stakeMsat, { played: true })
-          .filter((x) => !(x.entry && x.entry.playerPubkey && Buffer.from(x.entry.playerPubkey).equals(Buffer.from(handout.playerPubkey)))).length;
+          .filter((x) => !isThisHandouts(x.entry)).length;
         if (others >= players)
           return { ok: false, status: 409, why: `handout refused: that table is full - the round already seats game "${g.plugin.manifest.gameName}"'s ${players} players; nothing is locked, tap the next round` };
       }
