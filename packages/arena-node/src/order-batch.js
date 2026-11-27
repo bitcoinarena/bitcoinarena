@@ -504,6 +504,13 @@ export class OrderBook {
   //    bookLedger over the parsed batches and verifies only that batch's sells.
   // The kept ledger is shared between callers: read it, never change it.
   #parsedBook = new Map();   // round hex -> { batches: Map(k -> { batchId, batch }), intervalMs, state (the kept BookLedgerState, kanban #2086) }
+  // PUBLIC READS KEEP THEIR OWN SLOTS (kanban #3836, bypass of #3294, audit r40-attest-1, high): 64 GET /book of rounds that each hold one
+  // certified batch (GET /market-rounds lists 200) still pushed the busy round out of #parsedBook, and its next ledger() replayed the
+  // whole book from batch 0 (230 ms on the loop). Now a read (GET /book, GET /standing, standing()) uses the round's kept state where
+  // #parsedBook holds it, and otherwise keeps it in #readBook, an LRU of its own: a read never evicts a round that lead(), a follower's
+  // #check, POST /sell or the settlement plan keep. Those move a round from #readBook into #parsedBook. A slot is taken only after every
+  // certified record of the round parsed.
+  #readBook = new Map();
   #parsedBatch(roundIdBytes, rec, { verified }) {
     const entries = new Map();
     const entryOf = (id) => { if (!entries.has(id)) entries.set(id, this.#orderEntry(roundIdBytes, id)); return entries.get(id); };
@@ -539,16 +546,17 @@ export class OrderBook {
     return { ok: true, id, sell: { id, entry: s.entry, outcome: s.outcome, price, sharesMsat: BigInt(s.sharesMsat) } };
   }
   /** The round's certified batches, parsed (each once): { ok, batches, key } - key names the certified set and the interval read. */
-  #certifiedBatches(roundIdBytes) {
+  #certifiedBatches(roundIdBytes, { read = false } = {}) {
     const rid = Buffer.from(roundIdBytes), hex = toHex(roundIdBytes);
     const rows = this.db.prepare('SELECT k, batch_id FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL ORDER BY k').all(rid);
-    let r = this.#parsedBook.get(hex);
-    if (!r || r.intervalMs !== this.intervalMs) r = { batches: new Map(), intervalMs: this.intervalMs, state: null };
     // A ROUND WITH NO CERTIFIED BATCH TAKES NO SLOT (kanban #3294, audit attest-a5-1-1, high): 64 public GET /book of the series' empty
     // coming windows pushed the busy round out, and its next ledger() replayed the whole book from batch 0 (634 ms on the loop).
-    if (!rows.length) { this.#parsedBook.delete(hex); return { ok: true, batches: [], ids: [], kept: { batches: new Map(), intervalMs: this.intervalMs, state: null } }; }
-    this.#parsedBook.delete(hex); this.#parsedBook.set(hex, r);   // most recently read last
-    while (this.#parsedBook.size > REPLAY_ROUNDS_MAX) this.#parsedBook.delete(this.#parsedBook.keys().next().value);
+    if (!rows.length) { this.#parsedBook.delete(hex); this.#readBook.delete(hex); return { ok: true, batches: [], ids: [], kept: { batches: new Map(), intervalMs: this.intervalMs, state: null } }; }
+    // kanban #3836: a read takes the busy round's kept state without moving it; else its own LRU (#readBook), never #parsedBook
+    const kept = this.#parsedBook.has(hex);
+    const into = kept || !read ? this.#parsedBook : this.#readBook;
+    let r = kept ? this.#parsedBook.get(hex) : this.#readBook.get(hex);
+    if (!r || r.intervalMs !== this.intervalMs) r = { batches: new Map(), intervalMs: this.intervalMs, state: null };
     const recQ = this.db.prepare('SELECT record FROM market_batches WHERE round_id = ? AND k = ?');
     const out = [];
     for (const row of rows) {
@@ -563,14 +571,21 @@ export class OrderBook {
       out.push(held.batch);
     }
     if (r.batches.size > rows.length) { const ks = new Set(rows.map((x) => Number(x.k))); for (const k of [...r.batches.keys()]) if (!ks.has(k)) r.batches.delete(k); }
+    // the slot is taken only now, every record parsed (kanban #3836); a read of a kept round does not move it
+    if (!(read && kept) || r !== this.#parsedBook.get(hex)) {
+      if (into === this.#parsedBook) this.#readBook.delete(hex);
+      into.delete(hex); into.set(hex, r);   // most recently read last
+      while (into.size > REPLAY_ROUNDS_MAX) into.delete(into.keys().next().value);
+    }
     return { ok: true, batches: out, ids: rows.map((x) => `${x.k}:${x.batch_id}`), kept: r };
   }
 
   /** The ledger of the round's certified batches (book-ledger.js), optionally with one more batch on top. */
-  ledger(roundIdBytes, extra = null) {
+  ledger(roundIdBytes, extra = null, { read = false } = {}) {
     const m = this.market(roundIdBytes);
     if (!m.ok) return m;
-    const c = this.#certifiedBatches(roundIdBytes);
+    // `read` (kanban #3836): a public read - GET /book, GET /standing, standing() - never evicts a round the batch path keeps
+    const c = this.#certifiedBatches(roundIdBytes, { read });
     if (!c.ok) return c;
     // THE KEPT LEDGER GROWS, IT IS NOT REPLAYED (kanban #2086, after #1526/#1933/#1969): it was rebuilt from batch 0 after each new
     // certificate and replayed whole again for each batch on top - 645,120 resting sells (three minutes of 16 dust orders x 16 sells
@@ -1628,7 +1643,7 @@ export class OrderBook {
       const undecided = this.kindPending(roundIdBytes);
       return { book: false, wrongType: null, ...(undecided.length ? { kindPending: undecided } : {}) };
     }
-    const L = this.ledger(roundIdBytes);
+    const L = this.ledger(roundIdBytes, null, { read: true })   // kanban #3836;
     if (!L.ok) return { book: true, filled: true, cancelled: false, inPending: false, why: L.why };
     const p = L.positions.get(toHex(entryIdBytes));
     // ANY BATCH OF THE ROUND UNDECIDED HERE, not only the order's own (kanban #1150: a batch this seat signed below a certified cancel can
@@ -1649,7 +1664,7 @@ export class OrderBook {
 
   /** GET /book: the certified batches as this seat clears them, and every position. */
   cleared(roundIdBytes) {
-    const L = this.ledger(roundIdBytes);
+    const L = this.ledger(roundIdBytes, null, { read: true });   // kanban #3836: GET /book is a public read
     if (!L.ok) return L;
     const ids = this.db.prepare('SELECT k, batch_id FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL ORDER BY k').all(Buffer.from(roundIdBytes));
     return { ok: true, batches: L.batches.map((b, i) => ({ ...b, batchId: ids[i] && ids[i].batch_id })), refused: L.refused, resting: L.resting, levels: L.levels, pending: this.pending(roundIdBytes),
