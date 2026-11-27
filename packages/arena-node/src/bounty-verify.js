@@ -73,6 +73,22 @@ export function xVerifier({ session = () => xSessionFromChrome(), fetchFn = fetc
   };
 }
 
+/** AN X NAME -> FOLLOWS @bitcoinarena_io (kanban #2641; on 2.0 for the Orange Pill Run's X rule, #3720b / #3892): the same friendships/show read, answering the account's stable id with it. */
+export function xByName({ session = () => xSessionFromChrome(), fetchFn = fetch, gap = spaced(3000), timeoutMs = 10000 } = {}) {
+  return async (input) => {
+    const name = String(input || '').trim().replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//i, '').replace(/^@/, '').replace(/[/?].*$/, '');
+    if (!/^[A-Za-z0-9_]{1,15}$/.test(name)) return { userId: null, member: null, why: 'that is not an X username' };
+    try {
+      const s = await session(); await gap();
+      const r = await fetchFn(`https://x.com/i/api/1.1/friendships/show.json?source_screen_name=${X_ACCOUNT}&target_screen_name=${encodeURIComponent(name)}`, { headers: xHeaders(s), signal: AbortSignal.timeout(timeoutMs) });
+      const j = await r.json().catch(() => null); const rel = j && j.relationship;
+      if (r.status === 404 || (j && Array.isArray(j.errors) && j.errors.some((e) => e && (e.code === 50 || e.code === 163)))) return { userId: null, username: name, member: false, why: 'no such X account' };
+      if (r.status !== 200 || !rel || !rel.target) return { userId: null, member: null, why: `x ${r.status}` };
+      return { userId: rel.target.id_str ? String(rel.target.id_str) : null, username: rel.target.screen_name || name, member: !!rel.target.following, why: rel.target.following ? 'follows' : 'does not follow' };
+    } catch (e) { return { userId: null, member: null, why: short(e) }; }
+  };
+}
+
 /** THE NEWEST X POSTS FOR A QUERY (SearchTimeline, Latest): [{ id, text, userId, name }] - the posts a link code is looked for in. */
 // MORE THAN ONE PAGE (kanban #3018, audit faucet r1-1, gap in #3003): one page of 40 newest posts was read, so a copied code plus 39 filler
 // posts before the next poll pushed the reporter's own post out and the copy was the oldest one seen - redeemed, the stranger's account

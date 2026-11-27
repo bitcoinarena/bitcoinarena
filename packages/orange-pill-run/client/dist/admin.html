@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Orange Pill Run admin</title>
+<!-- THE ADMIN PANEL (kanban #3249/#3250): rounds, flagged runs to approve or disqualify (#3332), runs with their bot likelihood (#3274), payout lists and test rounds, over the service's
+     /api/opr/admin/* routes. The admin code lives in sessionStorage only and goes out as the x-arena-admin header - never in a URL or a log.
+     Self-contained: no script, style or font from elsewhere. -->
+<style>
+:root { color-scheme: dark; --bg: #0f0a10; --panel: #1a1219; --panel2: #231822; --text: #f6ece4; --soft: #c8bab2; --dim: #8f7f86; --btc: #f7931a;
+  --line: #46343f; --red: #ff5a5a; --redbg: #3a1418; --green: #4fd18b; --amber: #f3c24b; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+header h1 { font: 700 1.05rem "Space Grotesk", "Segoe UI", system-ui, sans-serif; margin: 0; flex: 1 1 auto; }
+header h1 b { color: var(--btc); }
+main { max-width: 1200px; margin: 0 auto; padding: 12px 16px 48px; display: grid; gap: 14px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+h2 { font: 600 1rem "Space Grotesk", "Segoe UI", system-ui, sans-serif; margin: 0 0 8px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+h2 small { color: var(--dim); font-weight: 400; font-size: .85rem; }
+input, select, button { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; min-height: 36px; }
+input, select { min-width: 0; }
+button { cursor: pointer; background: #2d1f2b; }
+button:hover:not(:disabled) { border-color: var(--btc); }
+button:disabled { opacity: .45; cursor: default; }
+button.go { background: var(--btc); color: #1a0f05; border-color: var(--btc); font-weight: 600; }
+button.bad { border-color: #7a2c33; color: #ffb3b3; }
+button.small { min-height: 30px; padding: 4px 8px; font-size: .85rem; }
+label { display: grid; gap: 3px; font-size: .85rem; color: var(--soft); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }
+.row > label { flex: 1 1 140px; }
+#msg { padding: 8px 10px; border-radius: 7px; display: none; white-space: pre-wrap; word-break: break-word; }
+#msg.on { display: block; }
+#msg.err { background: var(--redbg); color: #ffd0d0; border: 1px solid #7a2c33; }
+#msg.ok { background: #12301f; color: #c9f5dc; border: 1px solid #2c6b48; }
+.muted { color: var(--dim); }
+.pill { display: inline-block; padding: 0 6px; border-radius: 9px; font-size: .78rem; border: 1px solid var(--line); color: var(--soft); white-space: nowrap; }
+.pill.test { border-color: var(--amber); color: var(--amber); }
+.pill.red { border-color: var(--red); color: var(--red); }
+.pill.green { border-color: var(--green); color: var(--green); }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .85em; }
+.bot { font-weight: 700; }
+.bot.hi { color: var(--red); }
+.bot.mid { color: var(--amber); }
+.why { color: var(--dim); font-size: .8rem; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 6px; border-top: 1px solid var(--line); vertical-align: top; }
+th { color: var(--dim); font-weight: 500; font-size: .8rem; border-top: 0; }
+tr.hot td { background: var(--redbg); }
+tr.dq td { opacity: .6; }
+td.acts { white-space: nowrap; }
+td.acts > * { margin: 0 4px 4px 0; }
+a { color: var(--btc); }
+.list { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; background: var(--panel2); }
+.list h3 { margin: 0 0 6px; font-size: .95rem; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.grid2 { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 900px) { .grid2 { grid-template-columns: 1fr 1fr; } }
+/* PHONES (375 px): each run and each list row is a card, its cells labelled */
+@media (max-width: 720px) {
+  table.cards thead { display: none; }
+  table.cards, table.cards tbody, table.cards tr, table.cards td { display: block; width: 100%; }
+  table.cards tr { border: 1px solid var(--line); border-radius: 8px; margin: 8px 0; padding: 6px 8px; }
+  table.cards tr.hot { background: var(--redbg); }
+  table.cards td { border: 0; padding: 3px 0; display: grid; grid-template-columns: 82px 1fr; gap: 8px; }
+  table.cards td::before { content: attr(data-l); color: var(--dim); font-size: .8rem; }
+  table.cards td.acts { display: flex; flex-wrap: wrap; }
+  table.cards td.acts::before { content: none; }
+  table.cards td > span, table.cards td > div { min-width: 0; overflow-wrap: anywhere; }
+}
+/* THE REPLAY VIEWER (kanban #3533): the game beside this panel in a frame, fed the run this panel fetched with its code */
+#viewer { position: fixed; inset: 0; z-index: 5; background: rgba(8,5,9,.82); display: grid; place-items: center; padding: 12px; }
+#viewer[hidden] { display: none; }
+#viewer .vbox { width: min(960px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: grid; gap: 8px; }
+#viewer .vhead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#viewer .vhead b { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+#vFrame { width: 100%; height: min(72vh, 620px); border: 0; border-radius: 8px; background: #000; display: block; }
+</style>
+</head>
+<body>
+<header>
+  <h1><b>Orange Pill Run</b> admin</h1>
+  <span id="who" class="muted"></span>
+  <button id="forget" type="button" hidden>Forget code</button>
+</header>
+<main>
+  <div id="msg" role="status" aria-live="polite"></div>
+
+  <section id="login">
+    <h2>Admin code <small>kept in this tab only (sessionStorage), sent as a header</small></h2>
+    <form id="loginForm" class="row" autocomplete="off">
+      <label>Code <input id="code" type="password" autocomplete="off" spellcheck="false" required></label>
+      <label>Your name (signs decisions) <input id="by" type="text" maxlength="80" autocomplete="off" placeholder="admin"></label>
+      <button class="go" type="submit">Open</button>
+    </form>
+  </section>
+
+  <div id="panel" hidden>
+    <div class="grid2">
+      <section>
+        <h2>Round <small id="roundInfo"></small></h2>
+        <div class="row">
+          <label>Pick a round (newest first) <select id="round"></select></label>
+          <button id="reload" type="button">Reload</button>
+        </div>
+        <div id="roundFacts" class="why" style="margin-top:8px"></div>
+      </section>
+      <section>
+        <h2>New test round <small>entry as the service sets it (0 on the stage), one round at a time</small></h2>
+        <form id="testForm" class="row" autocomplete="off">
+          <label>Starts in (min) <input id="tStart" type="number" min="0" max="10080" value="5" required></label>
+          <label>Runs (min) <input id="tMin" type="number" min="10" max="10080" value="30" required></label>
+          <label>Chart day (UTC) <input id="tDay" type="date" required></label>
+          <label>Max attempts <input id="tMax" type="number" min="1" max="99" value="5" required></label>
+          <button class="go" type="submit">Create</button>
+        </form>
+      </section>
+    </div>
+
+    <section id="flaggedBox" style="margin-top:14px">
+      <h2>Flagged runs <small id="flaggedInfo">suspiciously strong, inhumanly precise, or X saved after the first run (#3720) - held off every payout list until you decide</small></h2>
+      <div id="flagged"></div>
+    </section>
+
+    <section style="margin-top:14px">
+      <h2>Runs <small id="runsInfo"></small></h2>
+      <table id="runs" class="cards"></table>
+    </section>
+
+    <section style="margin-top:14px">
+      <h2>Payout lists <small id="listsInfo"></small></h2>
+      <div id="lists"></div>
+      <div id="approvals" class="why" style="margin-top:8px"></div>
+    </section>
+  </div>
+</main>
+<div id="viewer" hidden role="dialog" aria-modal="true" aria-labelledby="vTitle">
+  <div class="vbox">
+    <div class="vhead"><b id="vTitle">Replay</b><button id="vClose" type="button" class="small">Close</button></div>
+    <div id="vWhy" class="why" role="status"></div>
+    <iframe id="vFrame" title="Replay of the run"></iframe>
+  </div>
+</div>
+<script>
+"use strict";
+(() => {
+  // kanban #3328: the stage's own Worker; testnet.bitcoinarena.io (Pages) and its previews ask https://bitcoinarena.io/api/opr (CORS there)
+  const API = location.hostname === "testnet-stage.bitcoinarena.io" || location.hostname === "localhost" || location.hostname === "127.0.0.1" ? location.origin + "/api/opr"
+    : /^https?:$/.test(location.protocol) ? "https://bitcoinarena.io/api/opr" : "https://testnet-stage.bitcoinarena.io/api/opr";
+  const KEY = "opr-admin-code", BY = "opr-admin-by";
+  const $ = (id) => document.getElementById(id);
+  const store = (() => { try { return window.sessionStorage; } catch (_) { return null; } })();
+  const local = (() => { try { return window.localStorage; } catch (_) { return null; } })();
+  let code = ""; try { code = (store && store.getItem(KEY)) || ""; } catch (_) { code = ""; }
+  // A LINK WITH THE CODE (owner 2026-11-22): #code=<code> in the address (a fragment: never sent to a server) is taken into this tab once and
+  // removed from the address at once, as the feedback admin page does
+  try { const h = new URLSearchParams(location.hash.replace(/^#/, "")); const c = h.get("code"); if (c) { code = c.trim(); if (store) store.setItem(KEY, code); history.replaceState(null, "", location.pathname + location.search); } } catch (_) { /* the address keeps nothing */ }
+  let by = ""; try { by = (local && local.getItem(BY)) || ""; } catch (_) { by = ""; }
+  let rounds = [], holdAbove = 70, current = null, lastRuns = null, lastLists = null;
+
+  const say = (text, kind = "err") => { const m = $("msg"); m.textContent = text || ""; m.className = text ? "on " + kind : ""; if (kind === "ok" && text) setTimeout(() => { if (m.textContent === text) say(""); }, 4000); };
+  const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k, v] of Object.entries(props)) { if (v == null) continue; if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else if (k.startsWith("on")) e[k] = v; else e.setAttribute(k, v); } for (const c of kids) if (c != null) e.append(c); return e; };
+  const short = (k) => (k ? String(k).slice(0, 8) + "…" : "-");
+  // the X link's proof kind at sign-off (kanban #3279, owner 2026-11-22): typed in the form, or proven by a posted link code - shown, never refused
+  const proofTxt = (p) => (p === "game" ? " (game X check)" : p === "code" ? " (proven by code)" : p ? " (typed)" : "");
+  const when = (ms) => (ms ? new Date(ms).toISOString().replace("T", " ").slice(0, 16) + "Z" : "-");
+  const fmtTime = (s) => (s == null ? "-" : (+s).toFixed(2) + " s");
+
+  /** One admin call. The code goes only in the x-arena-admin header; 403 and 429 are said plainly. */
+  async function call(method, path, body) {
+    let r;
+    try {
+      r = await fetch(API + path, { method, headers: { "x-arena-admin": code, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify({ ...body, by: by || "admin" }) : undefined, cache: "no-store", credentials: "omit", referrerPolicy: "no-referrer" });
+    } catch (e) { throw new Error("the service did not answer (" + ((e && e.message) || e) + ")"); }
+    let j = null; try { j = await r.json(); } catch (_) { j = null; }
+    if (r.status === 403) { lock(); throw new Error("403: that is not the admin code."); }
+    if (r.status === 429) throw new Error("429: too many wrong admin codes from here - wait 15 minutes, then try again.");
+    if (!r.ok || !j || !j.ok) throw new Error(r.status + ": " + ((j && j.why) || "refused"));
+    return j;
+  }
+  window.OPR_ADMIN = { call: (m, p, b) => call(m, p, b), api: API };   // for tests
+
+  function lock() { code = ""; try { store && store.removeItem(KEY); } catch (_) { /* none */ } $("login").hidden = false; $("panel").hidden = true; $("forget").hidden = true; $("who").textContent = ""; }
+  function unlocked() { $("login").hidden = true; $("panel").hidden = false; $("forget").hidden = false; $("who").textContent = "signed as " + (by || "admin"); }
+
+  $("by").value = by;
+  $("loginForm").onsubmit = async (ev) => {
+    ev.preventDefault();
+    code = $("code").value.trim(); $("code").value = "";
+    by = $("by").value.trim().slice(0, 80); try { local && local.setItem(BY, by); } catch (_) { /* none */ }
+    if (!code) return;
+    try { await loadRounds(); try { store && store.setItem(KEY, code); } catch (_) { /* none */ } unlocked(); say(""); } catch (e) { say(e.message); }
+  };
+  $("forget").onclick = () => { lock(); say("The code is forgotten in this tab.", "ok"); };
+
+  // ---------- rounds ----------
+  async function loadRounds(keep) {
+    const j = await call("GET", "/admin/rounds");
+    rounds = (j.rounds || []).slice().sort((a, b) => b.startMs - a.startMs);
+    const sel = $("round"); sel.textContent = "";
+    for (const r of rounds) sel.append(el("option", { value: r.id, text: (r.test ? "[TEST] " : "") + r.id + " · #" + r.number + " · " + r.state + " · " + r.players + " players" }));
+    const pick = keep && rounds.some((r) => r.id === keep) ? keep : (rounds[0] && rounds[0].id);
+    if (pick) { sel.value = pick; await loadRound(pick); } else { $("roundFacts").textContent = "No round yet."; }
+  }
+  $("round").onchange = () => loadRound($("round").value).catch((e) => say(e.message));
+  $("reload").onclick = () => loadRounds(current).then(() => say("Reloaded.", "ok")).catch((e) => say(e.message));
+
+  async function loadRound(id) {
+    current = id;
+    const r = rounds.find((x) => x.id === id);
+    const f = $("roundFacts"); f.textContent = "";
+    if (r) {
+      $("roundInfo").textContent = r.test ? "test round" : "daily round";
+      f.append(el("span", { class: "pill" + (r.test ? " test" : ""), text: r.test ? "TEST" : "daily" }), " ",
+        el("span", { text: r.state + " · " + r.phase + " · " + when(r.startMs) + " to " + when(r.endMs) + " · chart " + r.chartDay + " · " + (r.free ? "free" : "entry " + r.entrySats + " sat, pot " + r.potSats + " sat") + " · max " + r.maxAttempts + " attempts" + (r.ceiling ? " · level ceiling " + r.ceiling + " (search, " + fmtTime(r.ceilingS) + ")" : " · level ceiling not computed yet") + (r.postWhy ? " · post: " + r.postWhy : "") }));
+    }
+    const [runs, lists] = await Promise.all([call("GET", "/admin/runs?round=" + encodeURIComponent(id)), call("GET", "/admin/lists?round=" + encodeURIComponent(id))]);
+    if (current !== id) return;
+    lastRuns = runs; lastLists = lists; holdAbove = runs.holdAbove || 70;
+    drawFlagged(runs); drawRuns(runs, lists); drawLists(lists);
+  }
+
+  // ---------- flagged runs (kanban #3332) ----------
+  // a SUSPICIOUSLY STRONG run (near the level's ceiling, or far above the field below it) or an INHUMANLY PRECISE one (bot likelihood above the hold
+  // line) waits for the owner: Approve clears the run (POST /admin/review clear), Disqualify takes the player out of the round. Until then every
+  // list it ranks above has no row - nobody below moves up
+  function drawFlagged(j) {
+    const box = $("flagged"); box.textContent = "";
+    const fl = j.flagged || [], dq = new Set((j.disqualified || []).map((d) => d.player));
+    if (!fl.length) { box.append(el("div", { class: "muted", text: "No flagged run in this round." })); return; }
+    const t = el("table", { class: "cards" });
+    t.append(el("thead", {}, el("tr", {}, ...["Rank", "Player", "Score", "Flag", "Why", "Decision", ""].map((h) => el("th", { text: h })))));
+    const tb = el("tbody"); t.append(tb);
+    for (const f of fl) {
+      const acts = el("td", { class: "acts" });
+      acts.append(el("button", { type: "button", class: "small", text: "Replay", title: "watch this run", onclick: () => watchRun({ attempt: f.attempt, name: f.name, score: f.score }) }));
+      acts.append(el("button", { type: "button", class: "small go", text: "Approve", disabled: f.decision !== "pending" ? "" : null, title: "a human run: it counts for payout",
+        onclick: () => { if (confirm("Approve the run of " + (f.name || short(f.player)) + " (" + f.score + " points) as " + (by || "admin") + "? It is then paid like any other run.")) act("/admin/review", { attempt: f.attempt, action: "clear" }, "Run " + short(f.attempt) + " approved."); } }));
+      acts.append(el("button", { type: "button", class: "small bad", text: "Disqualify", disabled: dq.has(f.player) ? "" : null,
+        onclick: () => { const why = prompt("Disqualify " + (f.name || short(f.player)) + " in " + current + " - reason:", f.kind === "strong" ? "tool-assisted run" : f.kind === "late-x" ? "several keys behind one X account" : "bot"); if (why && why.trim()) act("/admin/disqualify", { round: current, player: f.player, why: why.trim() }, (f.name || short(f.player)) + " disqualified."); } }));
+      tb.append(el("tr", { class: f.decision === "pending" ? "hot" : null },
+        el("td", { "data-l": "Rank" }, el("span", { text: String(f.rank) })),
+        el("td", { "data-l": "Player" }, el("div", {}, el("b", { text: f.name || "(no name)" }), " ", el("span", { class: "mono muted", text: short(f.player), title: f.player }))),
+        el("td", { "data-l": "Score" }, el("span", { text: f.score + " · " + fmtTime(f.timeS) })),
+        el("td", { "data-l": "Flag" }, el("span", { class: "pill red", text: f.kind === "strong" ? "suspiciously strong" : f.kind === "late-x" ? "X saved after first run" : "inhumanly precise" })),
+        el("td", { "data-l": "Why" }, el("span", { class: "why", text: f.why + (f.bot && f.bot.reasons && f.bot.reasons.length ? " · bot " + f.bot.score + ": " + f.bot.reasons.join(" · ") : "") })),
+        el("td", { "data-l": "Decision" }, el("span", { class: "pill " + (f.decision === "approved" ? "green" : "red"), text: f.decision })), acts));
+    }
+    box.append(t);
+  }
+
+  // ---------- runs ----------
+  const byRank = (a, b) => (b.total - a.total) || (a.timeS - b.timeS) || ((a.submittedMs || 0) - (b.submittedMs || 0)) || (a.attempt < b.attempt ? -1 : 1);
+  function botCell(b) {
+    if (!b) return el("span", { class: "muted", text: "-" });
+    const s = b.score | 0, d = el("div", {}, el("span", { class: "bot " + (s >= 70 ? "hi" : s >= 40 ? "mid" : ""), text: String(s) }));
+    if (b.reasons && b.reasons.length) d.append(el("div", { class: "why", text: b.reasons.join(" · ") }));
+    return d;
+  }
+  function drawRuns(j, lists) {
+    const t = $("runs"); t.textContent = "";
+    const runs = j.runs || [], dq = new Map((j.disqualified || []).map((d) => [d.player, d]));
+    const ln = new Map(); for (const l of (lists && lists.lists) || []) for (const w of l.rows || []) if (w.lnAddress) ln.set(w.player, w.lnAddress);
+    // rank: the board's - each player's best scored run, ranked as the service ranks (score, then time)
+    const scored = runs.filter((a) => a.state === "scored" && a.score).map((a) => ({ attempt: a.attempt, player: a.player, total: a.score.total, timeS: a.score.timeS, submittedMs: a.submittedMs }));
+    const best = new Map(); for (const r of scored) { const b = best.get(r.player); if (!b || byRank(r, b) < 0) best.set(r.player, r); }
+    const rankOf = new Map([...best.values()].sort(byRank).map((r, i) => [r.attempt, i + 1]));
+    const order = runs.slice().sort((a, b) => { const ra = rankOf.get(a.attempt) || 1e9, rb = rankOf.get(b.attempt) || 1e9; return ra - rb || ((b.score && b.score.total) || -1) - ((a.score && a.score.total) || -1) || (a.startedMs || 0) - (b.startedMs || 0); });
+    $("runsInfo").textContent = runs.length + " runs · " + best.size + " players scored · held above " + holdAbove;
+    t.append(el("thead", {}, el("tr", {}, ...["#", "Player", "Score", "Time", "Bot", "Flags", "State", ""].map((h) => el("th", { text: h })))));
+    const body = el("tbody"); t.append(body);
+    if (!runs.length) body.append(el("tr", {}, el("td", { colspan: "8", class: "muted", text: "No run in this round." })));
+    for (const a of order) {
+      const x = a.x || {}, rank = rankOf.get(a.attempt);
+      const pl = el("div", {}, el("b", { text: a.name || "(no name)" }), " ", el("span", { class: "mono muted", text: short(a.player), title: a.player }));
+      const tags = el("div", { class: "why" });
+      tags.append(x.x ? el("span", { text: (x.x.username ? "@" + x.x.username : "X") + proofTxt(x.x.proof) + " " }) : el("span", { text: "no X " }));
+      tags.append(el("span", { class: "pill " + (x.placed ? "green" : ""), text: x.placed ? "placed" : "not placed", title: x.why || "" }));
+      if (!x.placed && x.why && x.why !== "no X account linked") tags.append(" ", el("span", { text: x.why }));
+      tags.append(el("div", { text: "LN: " + (ln.get(a.player) || "-") }));
+      pl.append(tags);
+      const flags = Object.entries(a.flags || {}).filter(([, v]) => v).map(([k, v]) => (v === true ? k : k + ": " + (typeof v === "object" ? JSON.stringify(v) : v)));
+      const st = el("div", {}, el("span", { text: a.state }));
+      if (a.why) st.append(el("div", { class: "why", text: a.why }));
+      if (a.review && a.review !== "none") st.append(el("div", {}, el("span", { class: "pill " + (a.review === "cleared" ? "green" : "red"), text: "review " + a.review })));
+      if (dq.has(a.player)) st.append(el("div", {}, el("span", { class: "pill red", text: "disqualified" }), el("div", { class: "why", text: dq.get(a.player).why + " (" + dq.get(a.player).by + ", " + when(dq.get(a.player).at_ms) + ")" })));
+      const acts = el("td", { class: "acts" });
+      acts.append(el("button", { type: "button", class: "small", text: "Replay", title: "watch this run", onclick: () => watchRun({ attempt: a.attempt, name: a.name, score: a.score && a.score.total }) }));
+      acts.append(el("button", { type: "button", class: "small", text: "Clear", disabled: a.review === "cleared" ? "" : null, title: "clear the run for payout", onclick: () => act("/admin/review", { attempt: a.attempt, action: "clear" }, "Run " + short(a.attempt) + " cleared.") }));
+      acts.append(el("button", { type: "button", class: "small bad", text: "Disqualify", disabled: dq.has(a.player) ? "" : null, onclick: () => { const why = prompt("Disqualify " + (a.name || short(a.player)) + " in " + current + " - reason:"); if (why && why.trim()) act("/admin/disqualify", { round: current, player: a.player, why: why.trim() }, (a.name || short(a.player)) + " disqualified."); } }));
+      const s = a.bot ? a.bot.score : -1;
+      const tr = el("tr", { class: (s >= 70 ? "hot " : "") + (dq.has(a.player) ? "dq" : "") },
+        el("td", { "data-l": "Rank" }, el("span", { text: rank ? String(rank) : "·" })),
+        el("td", { "data-l": "Player" }, pl),
+        el("td", { "data-l": "Score" }, el("span", { text: a.score ? String(a.score.total) : "-" })),
+        el("td", { "data-l": "Time" }, el("span", { text: fmtTime(a.score && a.score.timeS) })),
+        el("td", { "data-l": "Bot" }, botCell(a.bot)),
+        el("td", { "data-l": "Flags" }, el("span", { class: "why", text: flags.join(", ") || "-" })),
+        el("td", { "data-l": "State" }, st), acts);
+      body.append(tr);
+    }
+  }
+
+  // ---------- payout lists ----------
+  function drawLists(j) {
+    const box = $("lists"); box.textContent = "";
+    const lists = j.lists || [];
+    $("listsInfo").textContent = lists.length ? lists.length + " list" + (lists.length > 1 ? "s" : "") : "none yet (written when the round has closed)";
+    for (const l of lists) {
+      const d = el("div", { class: "list" });
+      const pill = el("span", { class: "pill " + (l.state === "approved" ? "green" : l.state === "rejected" ? "red" : ""), text: l.state });
+      const h = el("h3", {}, el("span", { text: (l.kind === "pot" ? "Pot" : "Bounty") + " list · " + l.sats + " sat" + (l.carrySats ? " · carry " + l.carrySats + " sat" : "") }), pill);
+      if (l.state !== "waiting") h.append(el("span", { class: "why", text: "by " + (l.by || "?") + " " + when(l.atMs) + (l.why ? " - " + l.why : "") }));
+      else h.append(el("span", { class: "why", text: "made " + when(l.madeMs) }));
+      d.append(h);
+      const t = el("table", { class: "cards" });
+      t.append(el("thead", {}, el("tr", {}, ...["Place", "Player", "Sats", "LN address", "Bot", ""].map((x) => el("th", { text: x })))));
+      const tb = el("tbody"); t.append(tb);
+      if (!(l.rows || []).length) tb.append(el("tr", {}, el("td", { colspan: "6", class: "muted", text: "No row." })));
+      for (const w of l.rows || []) {
+        const acts = el("td", { class: "acts" });
+        if (l.state === "waiting") acts.append(el("button", { type: "button", class: "small bad", text: "Reject row", onclick: () => { const why = prompt("Reject the row of " + (w.name || short(w.player)) + " - reason:"); if (why && why.trim()) act("/admin/row", { round: l.round, kind: l.kind, player: w.player, why: why.trim() }, "Row rejected."); } }));
+        tb.append(el("tr", { class: w.bot && w.bot.score >= 70 ? "hot" : null },
+          el("td", { "data-l": "Place" }, el("span", { text: String(w.place) + " (rank " + w.rank + ")" })),
+          el("td", { "data-l": "Player" }, el("div", {}, el("b", { text: w.name || "(no name)" }), " ", el("span", { class: "mono muted", text: short(w.player) }), el("div", { class: "why", text: (w.xAccount ? "@" + w.xAccount + proofTxt(w.xProof) : "no X") + " · score " + w.score + " · " + fmtTime(w.timeS) }))),
+          el("td", { "data-l": "Sats" }, el("span", { text: w.sats + " (" + w.pct + " %)" })),
+          el("td", { "data-l": "LN address" }, el("span", { class: "mono", text: w.lnAddress || "-" })),
+          el("td", { "data-l": "Bot" }, botCell(w.bot)), acts));
+      }
+      d.append(t);
+      const skipped = ((l.rows || [])[0] && l.rows[0].skipped) || [];
+      if (skipped.length) d.append(el("div", { class: "why", text: "Skipped: " + skipped.map((s) => "rank " + s.rank + " " + (s.name || short(s.player)) + (s.xAccount ? " @" + s.xAccount + proofTxt(s.xProof) : "") + " - " + s.why).join("; ") }));
+      if (l.waiting) d.append(el("div", { class: "why", style: "color:var(--red)", text: "Waiting: " + l.waiting }));
+      if ((l.held || []).length) d.append(el("div", { class: "why", text: "Held: " + l.held.map((s) => "rank " + s.rank + " " + (s.name || short(s.player)) + (s.xAccount ? " @" + s.xAccount + proofTxt(s.xProof) : "") + " - " + s.why).join("; ") }));
+      if (l.state === "waiting") {
+        d.append(el("div", { class: "row", style: "margin-top:8px" },
+          el("button", { type: "button", class: "go", text: "Approve list", disabled: l.waiting ? "" : null, title: l.waiting ? "decide the flagged run first" : null, onclick: () => { if (confirm("Approve the " + l.kind + " list of " + l.round + " (" + l.sats + " sat) as " + (by || "admin") + "?")) act("/admin/list", { round: l.round, kind: l.kind, action: "approve", version: l.version }, "List approved."); } }),
+          el("button", { type: "button", class: "bad", text: "Reject list", onclick: () => { const why = prompt("Reject the " + l.kind + " list of " + l.round + " - reason:"); if (why && why.trim()) act("/admin/list", { round: l.round, kind: l.kind, action: "reject", why: why.trim() }, "List rejected."); } })));
+      }
+      box.append(d);
+    }
+    const ap = $("approvals"); ap.textContent = "";
+    if ((j.approvals || []).length) ap.append(el("div", { text: "History: " + j.approvals.map((a) => a.kind + " " + a.action + " by " + a.by + " " + when(a.at_ms) + (a.why ? " (" + a.why + ")" : "")).join("; ") }));
+    if (j.claim) ap.append(el("div", { text: "Bounty claimed by " + short(j.claim.player) + " to " + j.claim.ln_address + " " + when(j.claim.at_ms) }));
+  }
+
+  // ---------- the replay viewer (kanban #3533) ----------
+  // ANY run (a weaker one, a refused one kept with its log, a disqualified player's) from GET /admin/replay/<id> with this tab's code; the game
+  // (index.html beside this page, same origin) plays it in a frame through window.OPR.watch - the code never leaves this page, never in a URL
+  let frameReady = null, watching = 0;
+  function gameFrame() {
+    if (frameReady) return frameReady;
+    const f = $("vFrame");
+    frameReady = new Promise((ok, no) => {
+      f.onload = () => { let g = null; try { g = f.contentWindow && f.contentWindow.OPR; } catch (_) { g = null; } if (g && typeof g.watch === "function") ok(g); else no(new Error("the game page did not load here")); };
+      f.src = "index.html?practice";
+    });
+    frameReady.catch(() => { frameReady = null; });
+    return frameReady;
+  }
+  async function watchRun(a) {
+    const n = ++watching;
+    $("viewer").hidden = false; $("vClose").focus();
+    $("vTitle").textContent = "Replay · " + (a.name || "(no name)") + " · " + short(a.attempt) + (a.score != null ? " · " + a.score + " points" : "");
+    $("vWhy").textContent = "Loading …";
+    let facts = "";
+    try {
+      const [j, g] = await Promise.all([call("GET", "/admin/replay/" + a.attempt), gameFrame()]);
+      if (n !== watching) return;
+      facts = j.state + (j.why ? " - " + j.why : "") + (j.review && j.review !== "none" ? " · review " + j.review : "") + " · round " + j.level.round + " · " + j.level.gameVersion;
+      g.watch(j);
+      $("vWhy").textContent = facts;
+    } catch (e) { if (n === watching) $("vWhy").textContent = "Replay not shown: " + ((e && e.message) || e) + (facts ? " (" + facts + ")" : ""); }
+  }
+  function closeViewer() { watching++; $("viewer").hidden = true; frameReady = null; $("vFrame").src = "about:blank"; }
+  $("vClose").onclick = closeViewer;
+  document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !$("viewer").hidden) closeViewer(); });
+  window.OPR_ADMIN.watch = (attempt) => watchRun({ attempt });   // for tests
+
+  async function act(path, body, okText) {
+    try { await call("POST", path, body); say(okText, "ok"); await loadRounds(current); } catch (e) { say(e.message); }
+  }
+
+  // ---------- new test round ----------
+  { const d = new Date(Date.now() - 86400000); $("tDay").value = d.toISOString().slice(0, 10); $("tDay").max = d.toISOString().slice(0, 10); }
+  $("testForm").onsubmit = async (ev) => {
+    ev.preventDefault();
+    const startIn = +$("tStart").value, minutes = +$("tMin").value, maxAttempts = +$("tMax").value, chartDay = $("tDay").value;
+    if (!confirm("Create a test round: starts in " + startIn + " min, runs " + minutes + " min, chart " + chartDay + ", " + maxAttempts + " attempts, entry 0?")) return;
+    try {
+      const j = await call("POST", "/admin/test-round", { startMs: Date.now() + Math.round(startIn * 60000), minutes, chartDay, maxAttempts });
+      say("Test round " + j.round.id + " created.", "ok"); await loadRounds(j.round.id);
+    } catch (e) { say(e.message); }
+  };
+
+  if (code) loadRounds().then(unlocked).catch((e) => { say(e.message); if (!code) lock(); else unlocked(); });
+  else lock();
+})();
+</script>
+</body>
+</html>
