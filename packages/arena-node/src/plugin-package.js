@@ -112,6 +112,8 @@ export function markTrialPassed(at, pkg) {
 }
 // `trialedAt` (kanban #3679): the installed directory whose kept mark may stand for the trial; any other caller always runs it
 export function verifyPackage(pkg, { verify, want = null, parentOf, trialedAt = null } = {}) {
+  // kanban #3872: an installed package.json keeps no bodies; with its directory named, they are read back from its files (then checked by hash)
+  if (trialedAt) { try { pkg = withBodiesFromDisk(trialedAt, pkg); } catch (e) { return { ok: false, why: `its files on disk: ${e.message}`, checks: [] }; } }
   const r = checkPackage(pkg, { verify, want, parentOf });
   if (!r.ok) return r;
   const manifest = decodeManifest(fromHex(String(pkg.manifest)));
@@ -141,6 +143,29 @@ export function seatTitleAt(at) {
   try { const j = JSON.parse(readFileSync(join(at, SEAT_TITLE_FILE), 'utf8')); return typeof j.title === 'string' && j.title ? j.title.slice(0, 80) : null; } catch { return null; }
 }
 
+// ONE COPY OF A CLIENT, NOT ONE PER VERSION (kanban #3872, #1489 r40-hosting-3): autoUpdateSweep takes a hosted game's developer's next
+// signed version every sweep, free and unattended, and none is ever removed; installPackage wrote each version's every client and core
+// file and package.json carrying all of them again as base64 - ~2.3x the package per version (a 12 MB client ~28 MB, ~4 GB a day on every
+// seat hosting the game). Clients are now kept once per seat by their hash (CLIENT_STORE_DIR, beside the version directories: the same
+// bytes in the next version cost nothing) and package.json keeps no file body. Local storage only: the package a seat serves, checks
+// and signs nothing new; packageOf builds it from the files as before, and a package.json an older build kept (bodies inside) loads as before.
+export const CLIENT_STORE_DIR = 'clients';
+const withoutBodies = (pkg) => ({ ...pkg,
+  cores: pkg.cores.map((c) => (Array.isArray(c.files) ? { ...c, files: c.files.map((f) => ({ path: f.path })) } : (({ source, ...rest }) => rest)(c))),
+  clients: (pkg.clients || []).map((k) => ({ hash: k.hash })) });
+/** Where an installed client's bytes are: its version directory (an older build's install) or the seat's client store (kanban #3872). */
+const clientFileAt = (at, hash) => { const own = join(at, `client-${hash}.html`); return existsSync(own) ? own : join(dirname(at), CLIENT_STORE_DIR, `${hash}.html`); };
+/** package.json as kept (kanban #3872) with its bodies read back from disk; a body already inside (an older build's) is kept. Checked after, by hash. */
+export function withBodiesFromDisk(at, pkg) {
+  const b = (file) => readFileSync(file).toString('base64');
+  return { ...pkg,
+    cores: (Array.isArray(pkg.cores) ? pkg.cores : []).map((c) => {
+      if (Array.isArray(c.files)) return { ...c, files: c.files.map((f) => (typeof f.body === 'string' ? f : { ...f, body: b(join(at, coreDirOf(c.hash), ...String(f.path).split('/'))) })) };
+      return typeof c.source === 'string' ? c : { ...c, source: b(join(at, coreFileOf(c.hash))) };
+    }),
+    clients: (Array.isArray(pkg.clients) ? pkg.clients : []).map((k) => (typeof k.body === 'string' ? k : { ...k, body: b(clientFileAt(at, k.hash)) })) };
+}
+
 /** Kept on disk, one directory per game id: the package as fetched and its files; `title`, when given, as this seat's title. */
 export function installPackage(dir, pkg, gameId, { title = null } = {}) {
   const at = join(dir, gameId);
@@ -154,8 +179,15 @@ export function installPackage(dir, pkg, gameId, { title = null } = {}) {
     }
     writeFileSync(join(at, coreFileOf(c.hash)), Buffer.from(c.source, 'base64'));
   }
-  for (const k of pkg.clients || []) writeFileSync(join(at, `client-${k.hash}.html`), Buffer.from(k.body, 'base64'));
-  writeFileSync(join(at, 'package.json'), JSON.stringify(pkg));
+  // kanban #3872: each client once per seat, in CLIENT_STORE_DIR by its hash (kept when its bytes already hash to it), and package.json
+  // without any file body - the files beside it and in the store are its bodies (loadInstalled reads them back, checked by hash as before)
+  const store = join(dir, CLIENT_STORE_DIR);
+  for (const k of pkg.clients || []) {
+    const to = join(store, `${k.hash}.html`);
+    let kept = false; try { kept = sha(readFileSync(to)) === k.hash; } catch { /* not there yet */ }
+    if (!kept) { mkdirSync(store, { recursive: true }); writeFileSync(to, Buffer.from(k.body, 'base64')); }
+  }
+  writeFileSync(join(at, 'package.json'), JSON.stringify(withoutBodies(pkg)));
   if (typeof title === 'string' && title) writeFileSync(join(at, SEAT_TITLE_FILE), JSON.stringify({ title: title.slice(0, 80) }));
   return at;
 }
@@ -204,7 +236,7 @@ export async function registrationFromPackage(at, pkg, { title = null, within = 
   return { name: manifest.gameName, title: typeof title === 'string' && title ? title.slice(0, 80) : manifest.gameName, manifest, gameId: gameIdOf(manifest), cores, info: pkg.info || null,
     ancestors: w.window.map((h) => decodeManifest(fromHex(h))), ancestorCut: typeof w.cut === 'string' ? w.cut : null,
     donationSet: pkg.donationSet.map((r) => ({ recipientPk: fromHex(r.recipientPk), shareBps: r.shareBps, label: String(r.label || '') })),
-    clientUrls: (pkg.clients || []).map((k) => pathToFileURL(join(at, `client-${k.hash}.html`)).href), ...(load ? {} : { unloaded: true }) };
+    clientUrls: (pkg.clients || []).map((k) => pathToFileURL(clientFileAt(at, k.hash)).href), ...(load ? {} : { unloaded: true }) };
 }
 
 /**
@@ -223,7 +255,8 @@ export async function loadInstalled(dir, { verify, keepUnloaded = null } = {}) {
   for (const id of readdirSync(dir)) {
     if (!/^[0-9a-f]{64}$/.test(id)) continue;
     const at = join(dir, id);
-    try { found.push({ id, at, pkg: JSON.parse(readFileSync(join(at, 'package.json'), 'utf8')) }); } catch (e) { refused.push({ dir: at, why: e.message }); }
+    // kanban #3872: package.json keeps no bodies; they are read back from the files (a missing or changed one is refused here or by the hash checks)
+    try { found.push({ id, at, pkg: withBodiesFromDisk(at, JSON.parse(readFileSync(join(at, 'package.json'), 'utf8'))) }); } catch (e) { refused.push({ dir: at, why: e.message }); }
   }
   let idle = new Set();
   if (typeof keepUnloaded === 'function') {
