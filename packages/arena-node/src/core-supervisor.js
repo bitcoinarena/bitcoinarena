@@ -37,6 +37,10 @@ const SRC_DIR = dirname(RUNNER);
 const PACKAGE_JSON = realOr(join(dirname(SRC_DIR), 'package.json'));
 /** kanban #3732: how long a core process with no core thread left is kept for the next call into the same core. */
 export const IDLE_MS = 60000;
+/** kanban #3842: at most this many core processes with no core thread left are kept at once; past it the longest idle is ended now.
+ *  A package of MAX_PACKAGE_CORES (32) cores, each load-checked (sandboxChecked) at install and every start, left 32 idle processes
+ *  of about 65 MB each (2.1 GB measured) for IDLE_MS. */
+export const MAX_IDLE_PROCESSES = 4;
 
 /** THE CORE PROCESS'S NODE COMMAND LINE: node's permission model - it reads only this node's code (its src directory and the package.json
  *  that says those files are modules), writes nothing, starts no process, loads no addon, opens no inspector; it may start worker threads. */
@@ -99,16 +103,25 @@ if (parentPort && workerData && workerData.arenaCoreSupervisor) {
     Atomics.notify(c.ctrl, C.STATE);
   };
   /** A core process with no core left is ended after IDLE_MS, unless a core of its group comes first. */
+  const endChild = (group, k) => {
+    if (k.idle) { clearTimeout(k.idle); k.idle = null; }
+    children.delete(group);
+    try { k.p.disconnect(); } catch { /* gone */ }
+    try { k.p.kill('SIGKILL'); } catch { /* gone */ }
+  };
   const idleCheck = (group, k) => {
     if (k.cores.size || k.idle || children.get(group) !== k) return;
+    k.idleSince = Date.now();
     k.idle = setTimeout(() => {
       k.idle = null;
       if (k.cores.size || children.get(group) !== k) return;
-      children.delete(group);
-      try { k.p.disconnect(); } catch { /* gone */ }
-      try { k.p.kill('SIGKILL'); } catch { /* gone */ }
+      endChild(group, k);
     }, IDLE_MS);
     k.idle.unref();
+    // kanban #3842: THE IDLE PROCESSES ARE BOUNDED - past MAX_IDLE_PROCESSES the one idle longest is ended at once (a process with a
+    // live core thread is never ended here; a later call into an ended one's core starts a new process, as after IDLE_MS)
+    const idle = [...children].filter(([, x]) => x.idle && !x.cores.size).sort((a, b) => a[1].idleSince - b[1].idleSince);
+    while (idle.length > MAX_IDLE_PROCESSES) { const [g, x] = idle.shift(); endChild(g, x); }
   };
   // what the owner set (ARENA_CORE_PROCESS); only 'auto' steps down when a core process does not start
   const asked = String(workerData.coreProcess || 'auto');
@@ -121,7 +134,7 @@ if (parentPort && workerData && workerData.arenaCoreSupervisor) {
     // AN EMPTY ENVIRONMENT, and nothing of this process's argv: the child is node, its permission flags and the runner
     const p = spawn(cmd[0], cmd[1], { env: {}, stdio: ['ignore', 'ignore', 'pipe', 'ipc'], serialization: 'advanced', windowsHide: true });
     // `queued`: what was sent before the child said it is ready (a bwrap that cannot start is not the core's fault)
-    const k = { p, ready: false, queued: [], said: '', started: cmd[2], cores: new Set(), idle: null };
+    const k = { p, ready: false, queued: [], said: '', started: cmd[2], cores: new Set(), idle: null, idleSince: 0 };
     p.stderr.setEncoding('utf8');
     p.stderr.on('data', (s) => { if (k.said.length < 2048) k.said += s; });
     p.on('message', (m) => {
