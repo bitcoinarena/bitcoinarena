@@ -404,7 +404,8 @@ function countRandomness(nodes, reads, committee = 0) {
 // Where no curve is loaded (no proof can be checked: a test harness, never a page that dealt the handout) each URL counts, as before.
 const handoutVerify = () => { const c = globalThis.ARENA_CURVE; return c && typeof c.verify === 'function' ? (sg, m, k) => { try { return !!c.verify(sg, m, k); } catch { return false; } } : null; };
 const handoutKeys = (stake) => { try { return decodeHandout(stake.body).shares.map((x) => x.signerNodePubkey).filter((k) => k instanceof Uint8Array); } catch { return []; } };
-export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, graceMs = 300, waitMs = 20000, out = null, keys = null, verify = undefined } = {}) {
+// `bound` (kanban #3800): the round is of protocol 34+ (bindsIdentity) - a URL proves a signer node's key only with a proof bound to its host.
+export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, graceMs = 300, waitMs = 20000, out = null, keys = null, verify = undefined, bound = false } = {}) {
   if (!stake || !stake.body) throw new Error('there is no dealt stake to publish');
   // THE SIGNER NODES THAT MUST HOLD IT are the threshold it was dealt at - which
   // `stakeFor` makes the round's. The default was a flat 5 (M3.3-26).
@@ -439,7 +440,7 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
   // with no curve to check a proof by (a page has one before it can deal a handout at all: dealHandout), each URL counts, as before
   const proofCheck = verify !== undefined ? verify : handoutVerify();
   const seatIds = nodes.map((u, i) => (typeof proofCheck === 'function' ? `host:${hostOf(u)}` : `url:${i}`));
-  const grouping = (typeof proofCheck !== 'function' ? Promise.resolve([]) : seatsOf(nodes, { keys: keys || handoutKeys(stake), verify: proofCheck, fetcher, ms: Math.min(8000, waitMs) }))
+  const grouping = (typeof proofCheck !== 'function' ? Promise.resolve([]) : seatsOf(nodes, { keys: keys || handoutKeys(stake), verify: proofCheck, fetcher, ms: Math.min(8000, waitMs), bound }))
     .then((groups) => {
       const idOf = new Map();
       for (const g of groups) for (const u of g.urls) idOf.set(u, g.id);
@@ -525,8 +526,8 @@ export function h2hLockRefusal({ put = null, entryCloseMs, leadMs, now = Date.no
  * unless `needed` seats still take it; then h2hLockRefusal on that fresh answer. Answers null (lock) or why not (nothing is locked).
  * The gap left is the lock's own time (2-3 s), the one the #1485 lead covers.
  */
-export async function h2hLockRecheck({ stake, nodes, needed, put = null, entryCloseMs, leadMs, fetcher = fetch, waitMs = 6000, graceMs = 300, now = () => Date.now() } = {}) {
-  const fresh = await postHandout(stake, nodes, { fetcher, needed, waitMs, graceMs });
+export async function h2hLockRecheck({ stake, nodes, needed, put = null, entryCloseMs, leadMs, fetcher = fetch, waitMs = 6000, graceMs = 300, now = () => Date.now(), bound = false } = {}) {
+  const fresh = await postHandout(stake, nodes, { fetcher, needed, waitMs, graceMs, bound });
   if (!fresh.ok) return `the seats no longer take this handout - ${fresh.refused.length ? fresh.refused[0].slice(0, 200) : fresh.why} - nothing was locked`;
   return h2hLockRefusal({ put: fresh.seatCloseAtMs !== null && fresh.seatCloseAtMs !== undefined ? fresh : put, entryCloseMs, leadMs, now: now() });
 }
