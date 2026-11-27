@@ -9,6 +9,16 @@ export const REFERRAL_NAMES_SQL = `CREATE TABLE IF NOT EXISTS referral_names (
   site TEXT PRIMARY KEY, name TEXT NOT NULL, at_ms INTEGER NOT NULL, bytes BLOB NOT NULL, signature BLOB NOT NULL, kept_ms INTEGER NOT NULL)`;
 
 /**
+ * THE DATE EACH RECORD WAS FIRST READ AT (kanban #3851, the r20 gossip audit): a name dated ahead is read as dated "now" (#1190) - but "now" at
+ * each arrival, so a stranger replaying the site's old record (public, every seat gossips it) after its rename got it dated later than the
+ * rename, and the old name came back. A record's date, as read, is fixed at its first arrival here and reused on every later one. At most
+ * REFERRAL_NAME_SEEN_PER_SITE records per site are remembered (only the site's own key signs them); rows are never removed.
+ */
+export const REFERRAL_NAME_SEEN_SQL = `CREATE TABLE IF NOT EXISTS referral_name_seen (
+  hash TEXT PRIMARY KEY, site TEXT NOT NULL, at_ms INTEGER NOT NULL)`;
+export const REFERRAL_NAME_SEEN_PER_SITE = 64;
+
+/**
  * WHICH OF TWO NAMES OF ONE SITE STANDS (kanban #1190, the 2026-11-06 state-machine audit): the later one, its date read no later than this seat's clock when
  * it was taken (a name dated ahead of the clock blocked every rename until its date came: the newest name won by `atMs` alone); two names of one date
  * ordered by their record's hash, the lower first (two seats that got them in another order kept other names). `had` and `next` are
@@ -47,6 +57,7 @@ export function keepReferralName(db, body, { verify, nowMs = Date.now() }) {
   const st = referralNameStands(r, sig, { verify });
   if (!st.ok) return { ok: false, status: 422, why: st.why };
   db.exec(REFERRAL_NAMES_SQL);
+  db.exec(REFERRAL_NAME_SEEN_SQL);
   const site = toHex(r.site);
   const bytes = fromHex(String(body.record).toLowerCase());
   // A NAME DATED AHEAD IS READ AS DATED NOW (kanban #1190): it stands until a later name comes, not until its own date
@@ -54,11 +65,18 @@ export function keepReferralName(db, body, { verify, nowMs = Date.now() }) {
   // ONE STEP, READ AND WRITTEN IN ONE TRANSACTION: two posts of one site never both win
   const own = !db.isTransaction;   // inside a caller's transaction this step is part of it
   if (own) db.exec('BEGIN IMMEDIATE');
+  // kanban #3851: a record read before keeps the date it was read at then, not this arrival's clock
+  const seen = () => {
+    if (Number(db.prepare('SELECT COUNT(*) AS n FROM referral_name_seen WHERE site = ?').get(site).n) >= REFERRAL_NAME_SEEN_PER_SITE) return;
+    db.prepare('INSERT OR IGNORE INTO referral_name_seen (hash, site, at_ms) VALUES (?, ?, ?)').run(next.hash, site, next.atMs);
+  };
   try {
+    const first = db.prepare('SELECT at_ms FROM referral_name_seen WHERE hash = ?').get(next.hash);
+    if (first) next.atMs = Number(first.at_ms);
     const row = db.prepare('SELECT at_ms, name, bytes FROM referral_names WHERE site = ?').get(site);
     const had = row ? { atMs: Number(row.at_ms), hash: toHex(sha256(new Uint8Array(row.bytes))), name: row.name } : null;
     const step = referralNameStep(had, next);
-    if (step !== 'new') { if (own) db.exec('COMMIT'); return { ok: true, kept: step, site, name: step === 'held' ? r.name : had.name }; }
+    if (step !== 'new') { if (had) seen(); if (own) db.exec('COMMIT'); return { ok: true, kept: step, site, name: step === 'held' ? r.name : had.name }; }
     // A NEW KEY THAT EARNED NOTHING, PAST THE BOUND, IS REFUSED (kanban #1927): a rename of a kept site never grows the table
     if (!had && unearnedHeld(db) >= REFERRAL_NAMES_UNEARNED_MAX && !hasEarned(db, site)) {
       if (own) db.exec('COMMIT');
@@ -66,6 +84,7 @@ export function keepReferralName(db, body, { verify, nowMs = Date.now() }) {
     }
     db.prepare('INSERT OR REPLACE INTO referral_names (site, name, at_ms, bytes, signature, kept_ms) VALUES (?, ?, ?, ?, ?, ?)')
       .run(site, r.name, next.atMs, Buffer.from(bytes), Buffer.from(sig), nowMs);
+    seen();
     if (own) db.exec('COMMIT');
   } catch (e) { if (own) { try { db.exec('ROLLBACK'); } catch { /* none open */ } } throw e; }
   return { ok: true, kept: 'new', site, name: r.name };
