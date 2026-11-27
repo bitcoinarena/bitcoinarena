@@ -1870,6 +1870,11 @@ Implicit, recomputed on every read; nothing is kept but the 10-minute answer cac
   height up to `REFIND_SPAN` (36) above it (each height once per block hash); a block that holds it goes through `proposals.add`, the
   ORPHANED -> COUNTING move that checks deposit, donation set, census and schedule again. A reorg that re-mines the deposit one
   block later no longer orphans a paid proposal for good.
+- **Config proposal, ORPHANED below its old height (kanban #3809, ballot-tally.js followReorgs, sm1-census-1):** the refind scan
+  starts `REFIND_SPAN` below the old publication height, not at it. A reorg two or more blocks deep forks below the publication
+  block, and the winning branch may hold the deposit one block lower; that block is now asked too (once per hash).
+- Invariant: a proposal whose deposit is confirmed on this seat's chain within `REFIND_SPAN` of its old publication height, above
+  or below, does not stay ORPHANED: it is taken again from the block that holds it (proposals.add checks the schedule again).
 #### SM-E (change) Refused/unentered lock: each try's fee lock beside its own stake (kanban #1945)
 - POST /refused-lock keeps a fee lock (image H(F)) under H(handout id || "fee") of the handout whose kept stake lock shares its txid (both are outputs of one lock transaction); only when no kept stake of that player's handouts shares it, under the first handout whose player's refund key it names, as before. A player's second try (a fresh handout, the same player key) in a refused round therefore has its fee lock kept for its return, not refused as "another lock for that handout"; "the first kept lock stands" still holds per (handout, kind).
 #### SM-L1 (change) Stake lock record: an intent under a refused record (kanban #1946)

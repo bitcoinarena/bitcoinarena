@@ -1,96 +1,77 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// kanban #1489 sm1 census (release audit 2026.1.9.30, state machine, concurrency inside one seat): the #2629 fix undecides a
-// DECIDED twin when a new twin is taken, and the tally re-reads a COUNTING group whose twin list changed - checked at the top
-// of each proposal's turn in a pass. A twin taken by POST /proposal or the peer pull WHILE that pass awaits the chain for the
-// same group (its census at publication - minutes when cold after a restart - or its phase's blocks) finds the group still
-// COUNTING, so nothing is undecided; the pass then decides with the twin list it read before the await, leaving out the votes
-// under the new twin's id. From the next pass on the group is decided (the decided twin stands for it) and is never counted
-// again: this seat's outcome differs for good from a seat that held the twin before its own decision.
-// Original header of the fixture this reuses (kanban #2629):
-// kanban #1489 sm1 census-1 (state machine, order / two seats at once): a bound twin (#2607 - the same body re-signed on the same
-// deposit) is "taken at any time", and "the one already decided stands for the group, so a twin posted after the outcome never
-// moves it". That holds at ONE seat. Seats decide a proposal each on its own pass (every 10 s, a seat restarting or catching up
-// later), and a twin reaches each seat when it is posted there or pulled (every 10 min). Votes under the twin's id can sit in
-// the voting blocks before any seat holds the twin (its id is known to whoever signed it). A seat that decided BEFORE the twin
-// arrived never counts those votes (decided once, the twin not counted); a seat that took the twin before ITS decision counts
-// them. The two seats write different outcomes for one proposal, both final, and disagree on the live config from its
-// activation on: every round under one config is served by one half and refused (409) by the other.
-// Safe behaviour: one proposal, one outcome at every seat that holds its twins.
+// kanban #1489 sm1 census-1 (2026-11-27): the #1941 refind (ballot-tally.js followReorgs) looks for an orphaned proposal's deposit only
+// from its OLD publication height upward (h = p.publishedAt .. +REFIND_SPAN). A reorg two blocks deep (fork below the publication
+// block) re-mines the deposit in the winning branch's block ONE BELOW the old publication height - the deposit was in the mempool when
+// that branch's miner built it. That block is never asked, so the proposal stays ORPHANED for good at every seat (the pull hands only
+// the old hash), deposit paid and confirmed on the chain the seat follows.
+// Safe behaviour: a proposal whose deposit is confirmed on this seat's chain is counted from the block that holds it.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { createProposals } from '../src/proposals.js';
+import { createProposals, stateOf } from '../src/proposals.js';
 import { createBallotTally } from '../src/ballot-tally.js';
-import { proposalId, decodeConfigProposalBody, encodeConfigProposalBody, proposalBodyId, encodeVote, voteMessage, CHOICE, CLASS, SCHEDULES, REPEAL_SCHEDULES, configHashOf } from '../../arena-protocol/src/ballot.js';
-import { depositOutputsExpected, depositCommitmentScript } from '../../arena-protocol/src/ballot-chain.js';
+import { encodeConfigProposalBody, proposalBodyId, CLASS, SCHEDULES, REPEAL_SCHEDULES, configHashOf } from '../../arena-protocol/src/ballot.js';
+import { depositOutputsExpected, BALLOT_GENESIS } from '../../arena-protocol/src/ballot-chain.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
-import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { toHex } from '../../arena-protocol/src/hash.js';
 
 const le = (n, bytes) => Uint8Array.from({ length: bytes }, (_, i) => Number((BigInt(n) >> BigInt(8 * i)) & 0xffn));
-const tx = (fill, outs) => Uint8Array.from([...le(2, 4), 1, ...new Uint8Array(32).fill(fill), ...le(0, 4), 0, ...le(0xffffffff, 4),
+const tx = (outs) => Uint8Array.from([...le(2, 4), 1, ...new Uint8Array(32).fill(7), ...le(0, 4), 0, ...le(0xffffffff, 4),
   outs.length, ...outs.flatMap((o) => [...le(o.sats, 8), o.script.length, ...o.script]), ...le(0, 4)]);
-const secret = new Uint8Array(32).fill(1); const proposer = schnorr.getPublicKey(secret);
 const pk = (i) => Uint8Array.from([0x02, ...schnorr.getPublicKey(new Uint8Array(32).fill(i))]);
-const SET = [{ recipientPk: pk(2), shareBps: 6000, label: 'a' }, { recipientPk: pk(3), shareBps: 4000, label: 'b' }];
+const SET = [{ recipientPk: pk(2), shareBps: 10000, label: 'a' }];
 const verify = (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } };
 const NET = new Uint8Array(32).fill(0x4e);
-const G = Uint8Array.of(7, 7, 7), X = Uint8Array.of(1, 2, 3);
-const GENESIS = { configHash: configHashOf(G), config: G };
-const BLOCK = '20'.repeat(32);
-// three voting bonds (50 / 30 / 20), the proposer the first
-const sk = (i) => (i === 1 ? secret : new Uint8Array(32).fill(0x30 + i));
-const CENSUS = [1, 2, 3].map((i) => ({ pubkey: schnorr.getPublicKey(sk(i)), outpoint: `${String(i).repeat(64)}:0`, bondSats: [0, 50, 30, 20][i] }));
+const h64 = (tag, h) => (tag + h.toString(16).padStart(6, '0')).padEnd(64, '0');
 
-// one deposit at 200 for P: G -> X (regtest 1 / 6 / 1: voting 201-206, activation 208); `aux` picks the signature, the body is the same
-function deposit(bound) {
-  const chain = new Map();
-  const body = { networkId: NET, parent: GENESIS.configHash, configHash: configHashOf(X), config: X, class: CLASS.DESIGN, activationHeight: 208, proposer };
-  const outs = depositOutputsExpected(1000, SET).outputs.map((o) => ({ sats: o.sats, script: o.script }));
-  const raw = tx(9, bound ? [...outs, { sats: 0, script: depositCommitmentScript(body) }] : outs);
+test('wf1489 sm1 census-1: a deposit re-mined BELOW its old publication height by a 2-deep reorg leaves its proposal orphaned for good', async () => {
+  const raw = tx(depositOutputsExpected(1000, SET).outputs.map((o) => ({ sats: o.sats, script: o.script })));
   const depositTxid = Uint8Array.from(parseTransaction(raw).txid);
-  chain.set(toHex(Uint8Array.from(depositTxid).reverse()), { raw, height: 200, block: BLOCK });
-  const signed = (aux, edit = {}) => { const p = { ...body, ...edit, depositTxid };
-    return { proposal: toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), secret, new Uint8Array(32).fill(aux))])), blockHash: BLOCK }; };
-  return { chain, signed };
-}
-function seat({ chain, bound = true, tip, votes = new Map(), during = null }) {
-  let tally = null;
-  const proposals = createProposals({ confirmedTx: async (txid, block) => { const t = chain.get(txid); return t && t.block === block ? { raw: t.raw, height: t.height } : null; },
-    recipientsFor: () => SET, lowestBondMinSatsFor: () => 100000n, verify, scheduleFor: () => SCHEDULES.regtest, repealScheduleFor: () => REPEAL_SCHEDULES.regtest,
-    historyFor: (net, h) => tally.historyAt(net, h), censusAt: async () => CENSUS, store: { read: () => [], write: () => {} }, bindHeightFor: () => (bound ? 0 : 1e9),
-    // this seat's node key is bond 2's (30 of the 50 left after the proposer's): its own sighting in time is the #2700 majority
-    seenSigner: { pubkey: schnorr.getPublicKey(sk(2)), sign: (m) => schnorr.sign(m, sk(2)) } });
-  // the tally's census read: the first one awaits `during` (a POST /proposal or peer pull landing while the pass waits on the chain)
-  tally = createBallotTally({ proposals, tipHeight: async () => tip.at, votesAt: async (h) => (votes.get(h) || []).map((v) => ({ ...v, height: h })),
-    censusAt: async () => { if (during.fn) { const f = during.fn; during.fn = null; await f(proposals); } return CENSUS; }, verify, genesisFor: () => GENESIS });
-  return { proposals, tally, liveAt: (h) => toHex(tally.historyAt(toHex(NET), h).at(-1).configHash) };
-}
-const vote = (i, id, choice, seq, txid) => ({ payload: encodeVote({ proposalId: fromHex(id), choice, seq, signature: schnorr.sign(voteMessage(fromHex(id), choice, seq), sk(i)) }), txid });
+  const display = toHex(Uint8Array.from(depositTxid).reverse());
+  const secret = new Uint8Array(32).fill(1);
+  const proposer = schnorr.getPublicKey(secret);
+  // THE CHAIN: blocks by height; the deposit sits in the block `depositAt` names
+  const chain = { tip: 203, hashes: new Map(), depositAt: 200 };
+  for (let h = 0; h <= 400; h++) chain.hashes.set(h, h64('aa', h));
+  const confirmedTx = async (txid, block) => {
+    const h = [...chain.hashes].find(([hh, x]) => x === block && hh <= chain.tip);
+    return h && h[0] === chain.depositAt && txid === display ? { raw, height: h[0] } : null;
+  };
+  const censusAt = async () => [{ pubkey: proposer, outpoint: 'aa:0', bondSats: 100000n }];
+  const seat = createProposals({ confirmedTx, recipientsFor: () => SET, lowestBondMinSatsFor: () => 100000n, verify, schedule: SCHEDULES.regtest,
+    repealSchedule: REPEAL_SCHEDULES.regtest, censusAt, store: { read: () => [], write: () => {} } });
+  const p = { networkId: NET, parent: BALLOT_GENESIS.configHash, configHash: configHashOf(Uint8Array.of(7)), config: Uint8Array.of(7),
+    class: CLASS.DESIGN, activationHeight: 230, proposer, depositTxid };
+  const hex = toHex(Uint8Array.from([...encodeConfigProposalBody(p), ...schnorr.sign(proposalBodyId(p), secret)]));
+  const got = await seat.add({ proposal: hex, blockHash: chain.hashes.get(200) });
+  assert.equal(got.status, 201, got.why);
+  const tally = createBallotTally({ proposals: seat, tipHeight: async () => chain.tip, votesAt: async () => [], censusAt, verify,
+    blockHashAt: async (h) => (h <= chain.tip ? chain.hashes.get(h) : null), decideDepthFor: () => 1, minDecideDepthFor: () => 1 });
+  await tally.pass();
+  assert.equal(stateOf(seat.list()[0]), 'COUNTING');
 
-test('wf1489-sm1-census-1: a twin taken while the deciding pass awaits the census is never counted - two outcomes for one proposal', async () => {
-  const { chain, signed } = deposit(true);
-  const tip = { at: 200 };
-  const votes = new Map();
-  const A = signed(11), B = signed(12);
-  const bb = fromHex(B.proposal); const bId = toHex(proposalId({ ...decodeConfigProposalBody(bb.subarray(0, bb.length - 64)), signature: bb.slice(bb.length - 64) }));
-  // seat 1: B arrives while its pass awaits the census of A's group; seat 2: B arrives before its pass
-  const d1 = { fn: null }, d2 = { fn: null };
-  const s1 = seat({ chain, tip, votes, during: d1 });
-  const s2 = seat({ chain, tip, votes, during: d2 });
-  const a1 = await s1.proposals.add(A); assert.equal(a1.status, 201, a1.why);
-  const a2 = await s2.proposals.add(A); assert.equal(a2.status, 201, a2.why);
-  // bonds 1 (50) and 2 (30) vote YES under B's id in the voting phase (201-206)
-  votes.set(202, [vote(1, bId, CHOICE.YES, 1, 'c1'.repeat(32)), vote(2, bId, CHOICE.YES, 1, 'c2'.repeat(32))]);
-  tip.at = 215;
-  let b1 = null;
-  d1.fn = async (proposals) => { b1 = await proposals.add(B); };
-  const b2 = await s2.proposals.add(B); assert.equal(b2.status, 201, b2.why);
-  for (let i = 0; i < 4; i++) { await s1.tally.pass(); await s2.tally.pass(); }
-  assert.equal(b1 && b1.status, 201, b1 && b1.why);
-  const st = (s) => { const rows = s.tally.list(); const r = rows.find((x) => x.id === s.proposals.twinOf(a1.id)); return { stands: r.id.slice(0, 8), phase: r.phase, passed: r.tally && r.tally.passed, yes: r.tally && r.tally.yesSats }; };
-  const o1 = st(s1), o2 = st(s2);
-  console.log('  seat 1:', JSON.stringify(o1), ' seat 2:', JSON.stringify(o2), ' live at 215:', s1.liveAt(215).slice(0, 8), s2.liveAt(215).slice(0, 8));
-  assert.equal(o1.passed, o2.passed, 'both seats hold A and B; one proposal must have one outcome');
-  assert.equal(s1.liveAt(215), s2.liveAt(215), 'and one live config');
+  // THE REORG, TWO DEEP: another branch from 199 up, and its 199 holds the deposit (old 199 did not, old 200 did)
+  for (let h = 199; h <= 400; h++) chain.hashes.set(h, h64('bb', h));
+  chain.depositAt = 199;
+  chain.tip = 204;
+  for (let i = 0; i < 6; i++) {
+    await tally.pass();
+    // the peer pull: every other seat orphaned it alike and hands the record it holds
+    await seat.pull(seat.list().map((r) => ({ id: r.id, proposal: r.proposal, blockHash: r.blockHash })));
+    chain.tip++;
+  }
+  const r = seat.list()[0];
+  const onChain = await confirmedTx(display, chain.hashes.get(199));
+  console.log('  deposit on this chain at', onChain && onChain.height, '; proposal state:', stateOf(r), '; phase:', tally.list()[0].phase,
+    '; orphaned:', JSON.stringify(r.orphaned || null));
+  // CONTROL: the same proposal posted to a fresh seat naming the block that holds it now is taken - it stands from 199
+  const fresh = createProposals({ confirmedTx, recipientsFor: () => SET, lowestBondMinSatsFor: () => 100000n, verify, schedule: SCHEDULES.regtest,
+    repealSchedule: REPEAL_SCHEDULES.regtest, censusAt, store: { read: () => [], write: () => {} } });
+  const ctl = await fresh.add({ proposal: hex, blockHash: chain.hashes.get(199) }, { own: true });
+  console.log('  control: posted naming the new block 199 ->', ctl.status, ctl.why || '');
+  assert.equal(ctl.status, 201, 'control: the proposal stands from the block that holds its deposit now');
+  assert.ok(onChain, 'the deposit is confirmed on the chain the seat follows');
+  assert.notEqual(stateOf(r), 'ORPHANED',
+    'its deposit is confirmed in block 199 of this chain, yet the proposal stays ORPHANED ("its publication block left this chain") and is never counted');
 });
