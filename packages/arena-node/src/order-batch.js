@@ -34,6 +34,7 @@ import { BookLedgerState, positionFilled } from '../../arena-protocol/src/book-l
 import { entryFeeBpsOf, feeBpsOf, donationBpsOf, reserveBpsOf } from '../../arena-protocol/src/fee.js';
 import { marketBps } from '../../arena-protocol/src/fee-proposal.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
+import { poolsFirst } from '../../arena-protocol/src/constants.js';   // kanban #3854
 import { toHex, fromHex, taggedHash } from '../../arena-protocol/src/hash.js';
 import { pluginForRound } from './plugins.js';
 import { marketOfRound } from '../../arena-protocol/src/manifest.js';
@@ -216,6 +217,21 @@ export class OrderBook {
   isBook(roundIdBytes) {
     const m = this.market(roundIdBytes);
     if (!m.ok) return false;
+    if (!this.holdsCertifiedOrder(roundIdBytes)) return false;
+    // POOL FIRST (kanban #3854, ruling comment 11620, protocol 35): a backed plain pick makes the round a pool, whatever orders were certified -
+    // one late minimum order no longer refunds every plain pick. Rounds below 35 keep #1417 option B.
+    return !this.#poolFirst(roundIdBytes, m.contract);
+  }
+
+  /** Kanban #3854: a round of protocol 35+ holding a plain pick whose stake this seat saw (the set its settlement counts): a pool, settled. */
+  #poolFirst(roundIdBytes, contract) {
+    return poolsFirst(contract.protocolVersion) && this.round.entriesOf(roundIdBytes).some((x) => !isOrder(x.entry)
+      && (x.entry.stakeMsat === 0n || typeof this.round.stakeSeen !== 'function' || !!this.round.stakeSeen(x.entryId)));
+  }
+
+  /** #1417 option B: a certified batch of the round holds an order - the round's kind below protocol 35, and the entry door's (kanban #3854:
+   *  the door stays as it was, ruling comment 11620). */
+  holdsCertifiedOrder(roundIdBytes) {
     return this.db.prepare('SELECT record FROM market_batches WHERE round_id = ? AND certificate IS NOT NULL').all(Buffer.from(roundIdBytes))
       .some((r) => { try { return (JSON.parse(r.record).orders || []).length > 0; } catch { return false; } });
   }
@@ -1722,6 +1738,8 @@ export class OrderBook {
    */
   kindPending(roundIdBytes) {
     if (this.isBook(roundIdBytes)) return [];
+    // kanban #3854: a protocol-35 round with a backed plain pick is a pool whatever a pending batch holds - its kind is decided
+    { const m = this.market(roundIdBytes); if (m.ok && this.#poolFirst(roundIdBytes, m.contract)) return []; }
     return this.db.prepare('SELECT k, record FROM market_batches WHERE round_id = ? AND certificate IS NULL ORDER BY k').all(Buffer.from(roundIdBytes))
       .filter((r) => { try { return (JSON.parse(r.record).orders || []).length > 0; } catch { return true; } }).map((r) => Number(r.k));
   }
@@ -1741,7 +1759,14 @@ export class OrderBook {
       const undecided = this.kindPending(roundIdBytes);
       return { book: false, wrongType: null, ...(undecided.length ? { kindPending: undecided } : {}) };
     }
-    const L = this.ledger(roundIdBytes, null, { read: true })   // kanban #3836;
+    const L = this.ledger(roundIdBytes, null, { read: true });   // kanban #3836
+    // AN ORDER IN A POOL-FIRST POOL (kanban #3854, protocol 35): no entry of the round - never filled, whatever a batch matched; its locks
+    // come back as an unfilled order's (cancelled, or the market final), and no share of it is handed out
+    { const m = this.market(roundIdBytes);
+      if (m.ok && this.#poolFirst(roundIdBytes, m.contract)) {
+        const p = L.ok ? L.positions.get(toHex(entryIdBytes)) : null;
+        return { book: true, filled: false, cancelled: !!(p && p.cancelled), inPending: false, pool: 'an order in a round that is a pool (a backed plain pick, kanban #3854)' };
+      } }
     if (!L.ok) return { book: true, filled: true, cancelled: false, inPending: false, why: L.why };
     const p = L.positions.get(toHex(entryIdBytes));
     // ANY BATCH OF THE ROUND UNDECIDED HERE, not only the order's own (kanban #1150: a batch this seat signed below a certified cancel can

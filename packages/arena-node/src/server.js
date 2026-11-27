@@ -3697,7 +3697,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return minCap(pool, att);
     } });
   // the round's door asks whether a round is a book by the certified batches (§0A.7b, kanban #1411/#1417)
-  round.isBookRound = (rid) => orderBook.isBook(rid);
+  round.isBookRound = (rid) => orderBook.holdsCertifiedOrder(rid);   // kanban #3854: the door keeps #1417 option B (ruling comment 11620)
   // AN ORDER A CERTIFIED BATCH NAMES THAT NEVER REACHED THIS SEAT (kanban #620, measured 2026-10-24: round 42835aaa never settled - fed2-3
   // and fed2-7 held no entry 008e278a of batch 3585700432, refused its certificate - "this seat holds no entry 008e278ac2bfff47" - and
   // rebuilt settlement 8f0144a1 where the others built ffabdc94): the entry from the seat that handed the batch, kept when its bytes hash
