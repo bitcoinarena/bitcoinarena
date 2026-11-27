@@ -15,7 +15,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { updateNode, resumeUpdate, readJournal, releaseOfUnit } from '../src/update.js';
+import { updateNode, resumeUpdate, readJournal, releaseOfUnit, journalFile } from '../src/update.js';
 import { seatUnit, UNIT } from '../src/service.js';
 
 const KEY = Buffer.alloc(32, 7);
@@ -107,3 +107,44 @@ test('sm1-node-3 an updater killed while its rollback copies node.db back: the r
   assert.ok(db === DB, 'node.db is the backup');
 });
 
+
+// kanban #1646 (2.0 port of 1.9 c91254cdb): the rollback notes `dbRestoring` before its copy and `dbRestored` once it is whole. A resume after
+// `dbRestored` (the copy was whole, the old release may have run and written on it) keeps that database - a second copy would put the backup
+// over what the old release wrote - and ends dbKept false (the backup was put back). A resume after only `dbRestoring` puts it back again.
+test('#1646 a rollback that died after its whole copy: the resume keeps the database the old release wrote on', async () => {
+  const n = linuxNode();
+  const v1 = n.release('0.1.0');
+  const v2 = n.release('0.1.1', { broken: true, onStart: () => { n.hangStop = true; } });
+  n.install(v1, DB);
+  updateNode({ ...n.opts, newRelease: v2 }).catch(() => {});
+  const j = await untilRollingBack(n);
+  assert.equal(j.served, false, 'the fixture: the rollback decided to put the backup back');
+  // the copy was whole and noted, the old release started and wrote, and then the updater died before ROLLED_BACK
+  const WROTE = DB + 'old release: nonce 42 used\n';
+  writeFileSync(join(n.home, 'node.db'), WROTE);
+  writeFileSync(journalFile(n.home), JSON.stringify({ ...readJournal(n.home), dbRestoring: true, dbRestored: true }, null, 2) + '\n');
+  n.hangStop = false;
+  const r = await resumeUpdate({ ...n.opts });
+  const db = readFileSync(join(n.home, 'node.db'), 'utf8');
+  console.log(`  #1646 resumed: ${r && r.resumed} (${r && r.why}); dbKept ${r && r.dbKept}; node.db ${db === WROTE ? 'kept as the old release wrote it' : db === DB ? 'COPIED OVER with the backup' : 'other'}`);
+  assert.equal(r.resumed, 'rolled-back');
+  assert.ok(db === WROTE, 'the old release\'s writes on the whole copy were put over by a second copy of the backup');
+  assert.equal(r.dbKept, false);
+  assert.equal(readJournal(n.home).phase, 'rolled-back');
+});
+
+test('#1646 a rollback that died inside its copy (dbRestoring only): the resume puts the backup back again', async () => {
+  const n = linuxNode();
+  const v1 = n.release('0.1.0');
+  const v2 = n.release('0.1.1', { broken: true, onStart: () => { n.hangStop = true; } });
+  n.install(v1, DB);
+  updateNode({ ...n.opts, newRelease: v2 }).catch(() => {});
+  await untilRollingBack(n);
+  writeFileSync(join(n.home, 'node.db'), DB.slice(0, 4096));
+  writeFileSync(journalFile(n.home), JSON.stringify({ ...readJournal(n.home), dbRestoring: true }, null, 2) + '\n');
+  n.hangStop = false;
+  const r = await resumeUpdate({ ...n.opts });
+  assert.equal(r.resumed, 'rolled-back');
+  assert.ok(readFileSync(join(n.home, 'node.db'), 'utf8') === DB, 'node.db is the backup');
+  assert.match(r.why, /being put back: put back again/);
+});
