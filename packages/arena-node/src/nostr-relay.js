@@ -360,6 +360,7 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
   // event loop - an honest REQ took 11.6 s. A refused (id, sig) is remembered (bounded), and past VERIFY_BURST checks (VERIFY_PER_S refilled)
   // an EVENT is answered 'rate-limited' before its signature is read, so the loop is never held longer than one burst.
   const refusedSigs = new Set(), checkedSigs = new Set();   // kanban #3359: checkedSigs the (id, sig) pairs lately verified good
+  const passedEphemeral = new Set();   // kanban #3837: ids of ephemeral events lately passed on (bounded FIFO, REFUSED_SIGS_KEPT)
   const lim = { authorEvents: AUTHOR_EVENTS, authorBytes: AUTHOR_BYTES, totalEvents: TOTAL_EVENTS, totalBytes: TOTAL_BYTES, logShare: LOG_SHARE, totalSlowBytes: TOTAL_SLOW_BYTES,
     seedEvents: SEED_EVENTS, seedBytes: SEED_BYTES, verifyBurst: VERIFY_BURST, verifyPerS: VERIFY_PER_S,
     verifyStandingBurst: VERIFY_STANDING_BURST, verifyStandingPerS: VERIFY_STANDING_PER_S, verifyCleanBurst: VERIFY_CLEAN_BURST, verifyCleanPerS: VERIFY_CLEAN_PER_S,
@@ -777,6 +778,14 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
             if (reserve) reserve.left = Math.min(lim[reserve.burst], reserve.left + 1);   // kanban #3174: junk never keeps a reserve token
             refusedSigs.add(key); if (refusedSigs.size > REFUSED_SIGS_KEPT) refusedSigs.delete(refusedSigs.values().next().value); return bad(why);
           }
+        }
+        // AN EPHEMERAL EVENT IS PASSED ON ONCE (kanban #3837, audit r40 nostr-1, the gap in #3262): the 'duplicate:' check below runs only for
+        // kept kinds, and since #3359 a copy of a lately verified (id, sig) costs no verify token - so a stranger who saw a player's NWC request
+        // (23194) or NIP-46 sign request (24133) on a public filter could re-send it 60 times per 10 s and every copy reached the wallet service or
+        // signer as a new request. The ids of the ephemeral events lately passed on are remembered (bounded FIFO); a copy is 'duplicate:', not sent on
+        if (isEphemeral(e.kind)) {
+          if (passedEphemeral.has(e.id)) return send(['OK', e.id, true, 'duplicate: already passed on']);
+          passedEphemeral.add(e.id); if (passedEphemeral.size > REFUSED_SIGS_KEPT) passedEphemeral.delete(passedEphemeral.values().next().value);
         }
         if (!isEphemeral(e.kind)) {
           const d = isParam(e.kind) ? dTag(e) : '';
