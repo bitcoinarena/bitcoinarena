@@ -169,7 +169,7 @@ export const UPDATE_DEPTH = 6;
  * txid, depth, need, minutesLeft } or null when no update is on its way.
  */
 export function progressOf(u, { namesNew = false, censusRead = false } = {}) {
-  if (censusRead && namesNew) return { step: 'taken', txid: (u && u.txid) || null, depth: u && Number.isInteger(u.depth) ? u.depth : null, need: UPDATE_DEPTH, minutesLeft: 0 };
+  if (censusRead && namesNew) return !u || !u.txid ? null : { step: 'taken', txid: (u && u.txid) || null, depth: u && Number.isInteger(u.depth) ? u.depth : null, need: UPDATE_DEPTH, minutesLeft: 0 };
   if (!u || !u.txid) return null;
   const depth = Number.isInteger(u.depth) ? u.depth : null;
   const left = Math.max(0, CENSUS_TAKES_BLOCKS - (depth || 0));

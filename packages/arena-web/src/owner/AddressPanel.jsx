@@ -32,7 +32,7 @@ export class AddressPanel extends React.Component {
   }
   mismatch(r) {
     const m = r.follow && r.follow.mismatch;
-    if (!m) return null;
+    if (!m || !m.confDiffers) return null;   // the census alone behind: the lines below say it, with the update's progress
     const a = r.follow.adopt && String(a0(r.follow.adopt.url)) === String(a0(m.conf)) ? r.follow.adopt : null;
     return (
       <div className="addr-mismatch" data-check="mismatch">
@@ -88,7 +88,7 @@ export class AddressPanel extends React.Component {
     const f = r.follow, a = r.announced, lines = [];
     const hours = (m) => (m >= 90 ? `about ${Math.round(m / 60)} hours` : `about ${m} minutes`);
     if (a && a.roots) lines.push(<p key="a" className="sub">{a.took} of {a.roots} seats know this address (the node's signed announcement).</p>);
-    if (f && f.censusRead && r.stable) {
+    if (f && f.censusRead && r.stable && !(f.mismatch && f.mismatch.confDiffers)) {   // public_url edited: "this address" is not the one served
       if (f.censusNamesNew) lines.push(<p key="c" className="ok">The census names this address.</p>);
       else if (f.bonded) {
         lines.push(<p key="c" className="warnline">The census still names {(f.advertised || []).join(', ') || 'another address'}: pages and seats that read it go there until it names this one.</p>);

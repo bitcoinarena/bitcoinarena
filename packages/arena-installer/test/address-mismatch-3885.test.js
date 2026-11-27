@@ -129,4 +129,5 @@ test('kanban #3889: the update\'s progress - sent, n of 6 confirmations (the blo
   f = await followReach({ home: n.home, state: n.state, publicEndpoint: NEW, censusRead: true, ownEndpoints: [NEW], refresh: n.refresh, removeTunnel: n.removeTunnel, nowMs: 6, depthOf });
   assert.equal(f.view.progress.step, 'taken'); assert.equal(asks.length, 3, 'taken: not asked again');
   assert.equal(progressOf(null), null);
+  assert.equal(progressOf(null, { namesNew: true, censusRead: true }), null, 'the census named it with no update sent: no progress to show (seen in the Chrome check)');
 });

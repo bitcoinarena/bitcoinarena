@@ -18,6 +18,11 @@ test('the Address card says the difference and offers the update; asked, it post
   assert.match(html, /address and its advertisement differ/);
   assert.match(html, /public_url in arena\.conf is <code>https:\/\/arena\.example\.org<\/code>/);
   assert.match(html, /Post the advertisement update for https:\/\/arena\.example\.org/);
+  // seen in the Chrome check: the installer's address in the census is not "this address" once public_url was edited; the census alone behind is no red box
+  const named = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: { ...answer, follow: { ...answer.follow, censusNamesNew: true } } } }));
+  assert.doesNotMatch(named, /The census names this address/);
+  const behind = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: { ...answer, follow: { ...answer.follow, mismatch: { ...mm, confDiffers: false } } } } }));
+  assert.doesNotMatch(behind, /address and its advertisement differ/);
   const quick = renderToStaticMarkup(React.createElement(AddressPanel, { initial: { loaded: true, answer: { ...answer, follow: { ...answer.follow, mismatch: { ...mm, adoptable: false, quick: true } } } } }));
   assert.doesNotMatch(quick, /Post the advertisement update/);
   assert.match(quick, /never put on chain/);

@@ -13,7 +13,7 @@
 import { jsonUpTo } from './peer-read.js';
 import { addressRefusal } from './address-rules.js';
 
-export const CHECK_SEATS_MOST = 3;
+export const CHECK_SEATS_MOST = 5;   // kanban #3890: seats in more regions
 export const CHECK_TIMEOUT_MS = 20000;
 export const CHECK_ANSWER_BYTES = 16384;
 const norm = (u) => String(u || '').trim().replace(/\/+$/, '').replace(/^ws(s?):/i, 'http$1:').toLowerCase();
@@ -70,7 +70,23 @@ export async function outsideCheck({ url, node, seats = [], fetchFn = fetch, nee
   const reached = results.filter((r) => r.reached === true).length, failed = results.filter((r) => r.reached === false), unknown = results.filter((r) => r.reached === null).length;
   const ok = reached >= Math.min(need, seats.length || need) && !failed.length && reached > 0;
   let why = null;
-  if (failed.length) why = `${failed.length} of ${results.length} seats could not reach ${url}: ${[...new Set(failed.map(kindText))].join('; ')}`;
+  if (failed.length) why = `${failed.length} of ${results.length} seats could not reach ${url}: ${[...new Set(failed.map(kindText))].join('; ')}${regionText(results, url)}`;
   else if (!ok) why = seats.length ? `${reached} of ${results.length} seats reached ${url} (${unknown} could not check it yet): checked again in 10 min` : 'no other seat to check the address from';
   return { ok, url, asked: results.length, reached, failed: failed.length, unknown, results, why };
+}
+
+/**
+ * REACHED FROM SOME REGIONS, NOT FROM OTHERS (kanban #3890, #3723: a Tailscale Funnel name served from the Tokyo ingress timed out from every
+ * seat in Europe): `results` [{ reached, region }] - '' when every region agrees or none is named, else the plain sentence with another route.
+ */
+export function regionText(results, url = '') {
+  const named = results.filter((r) => r.region && (r.reached === true || r.reached === false));
+  const by = new Map();
+  for (const r of named) { const e = by.get(r.region) || { ok: 0, no: 0 }; if (r.reached) e.ok++; else e.no++; by.set(r.region, e); }
+  const from = [...by].filter(([, e]) => e.ok).map(([k]) => k), not = [...by].filter(([, e]) => !e.ok && e.no).map(([k]) => k);
+  if (!from.length || !not.length) return '';
+  let host = ''; try { host = new URL(url).hostname; } catch { host = ''; }
+  const route = /\.ts\.net$/i.test(host) ? 'A Tailscale Funnel name is served from one region\'s ingress and can time out elsewhere: a named Cloudflare tunnel or your own domain works from everywhere'
+    : 'Some networks cannot reach this address: a named Cloudflare tunnel or your own domain behind a well-connected host works from everywhere';
+  return `. Reached from ${from.join(', ')}, not from ${not.join(', ')}. ${route}`;
 }

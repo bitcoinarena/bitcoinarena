@@ -22,6 +22,16 @@ export const PROBE_TARGETS_MOST = 3;
 const KEY = /^[0-9a-f]{64}$/;
 const norm = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
 
+// WHERE THE SEAT IS, ROUGHLY (kanban #3890: a Funnel name on the Tokyo ingress reached from Asia, not from Europe, #3723): the answer names the
+// seat's region - ARENA_REGION as its operator sets it, else the first part of its time zone (Europe, America, Asia...) - so a page asking seats
+// in several regions can say which region cannot reach a node. Nothing signed and nothing derived from it: a hint for the operator.
+export function seatRegion(env = process.env, zone = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })()) {
+  const named = String(env.ARENA_REGION || '').trim();
+  if (named) return /^[A-Za-z0-9 ._-]{1,40}$/.test(named) ? named : null;
+  const part = String(zone || '').split('/')[0];
+  return /^(Africa|America|Antarctica|Asia|Atlantic|Australia|Europe|Indian|Pacific)$/.test(part) ? part : null;
+}
+
 /** The addresses a seat dials for a node: its census endpoints, then its newest announced one - each once, at most PROBE_TARGETS_MOST. */
 export function probeTargets({ census = [], announced = null, refusal = () => null }) {
   const out = [];
@@ -91,7 +101,7 @@ export async function probeOne(url, node, { fetchFn = fetch, timeoutMs = PROBE_T
  * The door's logic. `targetsOf(nodeHex)` answers { census: [endpoint...], announced: endpoint | null } as this seat holds them; `probe(url,
  * node)` probeOne. Answers { status, body }.
  */
-export function createReachProbe({ targetsOf, refusal = () => null, probe = probeOne, nowMs = () => Date.now(), env = process.env } = {}) {
+export function createReachProbe({ targetsOf, refusal = () => null, probe = probeOne, nowMs = () => Date.now(), env = process.env, region = seatRegion(env) } = {}) {
   const asks = new Map(), kept = new Map(), running = new Map();
   let all = [];
   return async function reachProbe(req, nodeParam) {
@@ -114,7 +124,7 @@ export function createReachProbe({ targetsOf, refusal = () => null, probe = prob
     if (asks.size > 10000) for (const [a, v] of asks) if (!v.some((t) => now - t < 60000)) asks.delete(a);
     const job = (async () => {
       const results = await Promise.all(targets.map(async (t) => ({ ...t, ...(await probe(t.url, node)) })));
-      const body = { ok: true, node, census, announced, results, atMs: nowMs() };
+      const body = { ok: true, node, census, announced, results, atMs: nowMs(), ...(region ? { region } : {}) };   // kanban #3890
       kept.set(node, { at: nowMs(), body });
       if (kept.size > 1000) kept.delete(kept.keys().next().value);
       return body;
