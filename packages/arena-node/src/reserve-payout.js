@@ -247,7 +247,9 @@ export function reserveRowsOfNetwork(rows, networkHex, networkOfRound) {
   const out = [];
   for (const r of rows || []) {
     const rid = String(r.roundId || '').toLowerCase();
-    if (!rid || /^0+$/.test(rid)) { out.push(r); continue; }
+    // kanban #3844 (audit #1489 r30-settle-1): a zero round id is this network's own change only when this seat derived the row itself (its own
+    // payout record or verification). One a peer listed may be an ancestor network's output relabelled: at most `unknown`, never picked.
+    if (!rid || /^0+$/.test(rid)) { out.push(r.peer ? { ...r, unknown: true } : r); continue; }
     let n = null; try { n = networkOfRound(rid); } catch { n = null; }
     if (typeof n !== 'string') out.push({ ...r, unknown: true });
     else if (n.toLowerCase() === want) out.push(r);

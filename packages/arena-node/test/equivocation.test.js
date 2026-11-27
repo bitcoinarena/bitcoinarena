@@ -271,6 +271,8 @@ test('a receipt for a mark this node never got is kept as evidence', () => {
   })();
 
   assert.equal(round.foreignReceipts().length, 0);
+  // kanban #3862: a foreign receipt is filed only under a committee member's key (a stranger's is refused) - this one is on a committee
+  round.recordSignerNodes(rid, [schnorr.getPublicKey(member)]);
   assert.throws(() => round.takeReceipt(receipt), /a receipt for a mark this node has not got/);
 
   const kept = round.foreignReceipts();
@@ -479,6 +481,7 @@ test('a node publishes the receipts it holds for marks it has not got', async ()
     const none = await fetch(`http://127.0.0.1:${empty.port}/foreign-receipts`);
     assert.equal(none.status, 204);
 
+    round.recordSignerNodes(mark.roundId, [r.nodePubkey]); // kanban #3862: only a committee member's receipt is filed
     assert.throws(() => round.takeReceipt(receipt), /has not got/);
 
     const got = await fetch(`http://127.0.0.1:${node.port}/foreign-receipts`);

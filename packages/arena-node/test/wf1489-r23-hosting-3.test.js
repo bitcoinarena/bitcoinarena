@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyPackage, installPackage, registrationFromPackage } from '../src/plugin-package.js';
 import { hostedPlugins } from '../src/plugins.js';
+import { MAX_MANIFEST_BYTES } from '../src/plugin-check.js';   // kanban #3847
 import { verifyEd25519 } from '../src/ed25519.js';
 import { testGame, testDonationSet } from './plugins/sign.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
@@ -33,6 +34,14 @@ async function hostWith(C) {
     donationSet: testDonationSet(name).map((r) => ({ recipientPk: toHex(r.recipientPk), shareBps: r.shareBps, label: r.label })),
     cores: [{ hash, name, configs: cfgs, source: Buffer.from(src).toString('base64') }], clients: [] };
   const v = verifyPackage(pkg, { verify: verifyEd25519, want: gameId });
+  // kanban #3847: the count is now bounded - a manifest past MAX_MANIFEST_BYTES (here 1500 or 3000 configs) is refused at once, and
+  // hostedPlugins leaves it out without a config check; within the bound (400 configs) the check stays linear
+  if (pkg.manifest.length / 2 > MAX_MANIFEST_BYTES) {
+    assert.equal(v.ok, false); assert.match(v.why, /its manifest is \d+ bytes, more than/);
+    const t0 = Date.now();
+    assert.throws(() => hostedPlugins([game], { verify: verifyEd25519, log: () => {} }), /more than the \d+ a seat hosts/);
+    return Date.now() - t0;
+  }
   assert.ok(v.ok, v.why);
   const at = installPackage(mkdtempSync(join(tmpdir(), 'wf1489-r23-hosting-3-')), pkg, gameId);
   const reg = await registrationFromPackage(at, pkg);
@@ -46,6 +55,7 @@ async function hostWith(C) {
 test('#1489 r23-hosting-3: hostedPlugins checks a core\'s configs in C x C', async () => {
   const a = await hostWith(1500);
   const b = await hostWith(3000);
+  assert.ok(await hostWith(400) < 1000, 'a core with 400 configs (within MAX_MANIFEST_BYTES) is hosted in under a second');   // kanban #3847
   console.log(`  FACTS r23-hosting-3: doubling the configs took ${(b / Math.max(1, a)).toFixed(1)}x; 65535 configs (a 4 MB manifest) about ${Math.round(b * (65535 / 3000) ** 2 / 60000)} min`);
   assert.ok(b < 1000, `a core with 3000 configs held the seat's thread ${b} ms in hostedPlugins (quadratic)`);
 });

@@ -53,6 +53,7 @@ import { PRICE_SCALE, TICK, SHARE_MSAT, MIN_SHARES, MIN_ORDER_MSAT, MAX_ORDER_MS
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
+import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
 import { encodeFraudProof, fraudProofHash } from '../../arena-protocol/src/slash.js';
 import { lockClaimDigest, lockClaimKeyOf, LOCK_CLAIM_BYTES } from '../../arena-protocol/src/lock-claim.js';
@@ -213,6 +214,9 @@ export const FINAL_SIG_EVIDENCE_PER_SIGNER = 4;
  * a walk-away (FORFEIT, stake claimed) into a refund the player chose (VOID), which §13C forbids. Such a refusal is never
  * kept (Round#putRefusedFirstMark) and never counted (verify.js #noQuorum), here or shown by a peer.
  */
+// kanban #3868: bounds of the seat-local price-check memos (Round.refusedPriceBatches, Round.priceSigsStood)
+const PRICE_MEMO_REFUSED = 1024;
+const PRICE_MEMO_SIGS = 32768;
 export const PLAYER_CAUSED_REFUSAL = /send the batches first|names inputs this node has not seen|does not follow the chain head|expected a tick after|behind this seat's clock for the run/;   // kanban #2826: a run played behind the clock
 export const playerCausedRefusal = (why) => PLAYER_CAUSED_REFUSAL.test(String(why || ''));
 
@@ -284,6 +288,12 @@ export class Round {
     // could not sign would have to answer a checkpoint with something other
     // than a receipt, and there is no such answer.
     this.identity = nodeIdentity(db);
+    // A REFUSED BATCH'S PRICES ARE NOT CHECKED AGAIN, AND A COMMITTEE SIGNATURE THAT STOOD IS NOT VERIFIED AGAIN (kanban #3868, audit
+    // r40-attest-4): the #3302 skip covers only a batch the seat holds, so a player's own signed frame of ~90 good attestations and one junk
+    // one was refused after ~600 schnorr checks on every copy (402.6 ms a 61.7 kB frame against 1.09 ms for junk). Seat-local memos only:
+    // checkBatchPrices is a pure function of the batch, the round's contract and the seat's feed setting, so the answer is the same.
+    this.refusedPriceBatches = new Map();   // batch id hex + feed flag -> why, at most PRICE_MEMO_REFUSED
+    this.priceSigsStood = new Set();        // key|msg|sig hex of a schnorr check that held, at most PRICE_MEMO_SIGS
     // the moves of rows made ACCEPTED on a history txid before #1249, put right once at open (kanban #1275)
     try { const fixed = this.repairAcceptedMoves(); if (fixed) console.log(`#1275 [settlement] ${fixed} ACCEPTED row(s) had another txid's moves: rewritten from the history`); } catch { /* a store without those tables */ }
   }
@@ -433,6 +443,11 @@ export class Round {
       // signature is checked under the key the receipt names - the only check
       // available without a round to read a committee from - and it is filed
       // unattributed until the mark itself turns up.
+      // A COMMITTEE MEMBER'S, NOT ANY KEY'S (kanban #3862, #1489 r30-play-2): #2151 gave carryReceipts this rule, the /play door had none -
+      // a stranger signing 4096 receipts with fresh keys flushed every real one out (FOREIGN_RECEIPTS_KEPT). The mark's round is unknown
+      // here, so the signer must be on the assigned committee of SOME round this seat holds; anyone else is refused before the verify.
+      if (!this.db.prepare('SELECT 1 FROM signer_nodes WHERE pubkey = ? LIMIT 1').get(r.nodePubkey))
+        throw new Error(`the receipt from ${toHex(r.nodePubkey)} is signed by no committee member this node knows`);
       if (!verifyNode(signature, receiptId(r), r.nodePubkey))
         throw new Error(`the receipt from ${toHex(r.nodePubkey)} does not verify`);
       this.db.prepare(
@@ -850,10 +865,14 @@ export class Round {
       // or its stake lock verified - what seats it, seatedEntriesOf), and in a free round only one that names the same player key - the same player entering
       // again, which is what #1479 saw. A lockless entry of another player that names the key shuts no one out; it can never play (every batch, mark,
       // reveal and address must be signed by the session key).
+      // AND IN A PAYING ROUND TOO, ONLY ONE OF THE SAME PLAYER KEY (kanban #3825, a bypass of #1597): a lock proves only that someone paid, not that he owns
+      // the key - the copier locked his own refundable stake and fee from his own player key, and the seat the copy reached first refused the honest entry
+      // for good. An earlier entry holds the key only when it is backed by a lock (paying) AND names the same player key - a stake lock's refund key is
+      // the entry's player key (stake-lock-signer-node.js), so a copier who also copies the player key pays the honest player. One player entering again
+      // under one session key (#1479) is still refused; entries of other player keys are other players, as under fresh session keys (bypass-session-key-1).
       if (!accepted) { const mine = entryId(contract);
-        const holders = asks.stakeMsat === 0n
-          ? this.entriesOf(contract.roundId).filter((x) => same(x.entry.playerPubkey, contract.playerPubkey))
-          : this.seatedEntriesOf(contract.roundId, asks.stakeMsat);
+        const holders = (asks.stakeMsat === 0n ? this.entriesOf(contract.roundId) : this.seatedEntriesOf(contract.roundId, asks.stakeMsat))
+          .filter((x) => same(x.entry.playerPubkey, contract.playerPubkey));
         if (holders.some((x) => same(x.entry.sessionPubkey, contract.sessionPubkey) && !same(x.entryId, mine)))
           throw new Error('that session key already has an entry in this round: one entry per session key'); }
       // THE HIDDEN MOVE: an entry into a head-to-head round names its commitment, before entry close, and the
@@ -1033,10 +1052,62 @@ export class Round {
    * behind for a second attempt to inherit.
    */
   rememberHandout({ id, roundId, bytes }) {
-    this.db.prepare(
+    const took = this.db.prepare(
       'INSERT OR IGNORE INTO handouts (handout_id, round_id, bytes, accepted_ms) VALUES (?, ?, ?, ?)')
-      .run(id, roundId, bytes, this.now());
+      .run(id, roundId, bytes, this.now()).changes === 1;
+    // kanban #3846: a round whose keys are already indexed takes the new row at its end (rowid order, as handoutsOf reads it)
+    if (took) this.#keysIndexAdd(roundId, id, bytes);
     return id;
+  }
+
+  /**
+   * THE HANDOUTS OF ONE ROUND BY THEIR A0 AND THEIR PLAYER'S REFUND KEY, DECODED ONCE (kanban #3846, audit r30 entry-1, #1605 regressed):
+   * POST /refused-lock decoded every handout of the round per ask - a stranger's free loose handouts reach HANDOUTS_LOOSE_CEILING
+   * (8192, #2136/#2481), 19.9 ms per unauthenticated ask with a made-up lock. Each handout is decoded once, when it is stored or when
+   * the round is first asked for, and kept here as its id, A0 (hex), refund key (hex) and player key, in rowid order (the order
+   * handoutsOf answers, so the first match stays the one it was). Only the rounds last asked for are kept (HANDOUT_KEYS_ROUNDS).
+   * Memory only, nothing a seat agrees on: the same rows, the same matches, read without decoding.
+   */
+  #handoutKeys = new Map();
+  static HANDOUT_KEYS_ROUNDS = 32;
+  static #handoutKeyOf(id, bytes) {
+    let d; try { d = decodeHandout(new Uint8Array(bytes)); } catch { return null; }
+    let refund = null; try { refund = toHex(refundKeyOf(d.playerPubkey)); } catch { /* no refund key: matches no lock */ }
+    return { id: new Uint8Array(id), a0: d.commitments && d.commitments[0] ? toHex(d.commitments[0]) : null, refund, playerPubkey: d.playerPubkey };
+  }
+  #keysIndexOf(roundIdBytes) {
+    const key = toHex(roundIdBytes);
+    let ix = this.#handoutKeys.get(key);
+    if (ix) { this.#handoutKeys.delete(key); this.#handoutKeys.set(key, ix); return ix; }
+    ix = { rows: [], at: new Map() };
+    for (const r of this.db.prepare('SELECT handout_id, bytes FROM handouts WHERE round_id = ? ORDER BY rowid').all(Buffer.from(roundIdBytes))) {
+      ix.at.set(toHex(r.handout_id), ix.rows.length); ix.rows.push(Round.#handoutKeyOf(r.handout_id, r.bytes));
+    }
+    this.#handoutKeys.set(key, ix);
+    while (this.#handoutKeys.size > Round.HANDOUT_KEYS_ROUNDS) this.#handoutKeys.delete(this.#handoutKeys.keys().next().value);
+    return ix;
+  }
+  #keysIndexAdd(roundIdBytes, id, bytes) {
+    const ix = this.#handoutKeys.get(toHex(roundIdBytes));
+    if (!ix || ix.at.has(toHex(id))) return;
+    ix.at.set(toHex(id), ix.rows.length); ix.rows.push(Round.#handoutKeyOf(id, bytes));
+  }
+  #keysIndexReplace(roundIdBytes, oldId, id, bytes) {
+    const ix = this.#handoutKeys.get(toHex(roundIdBytes));
+    if (!ix) return;
+    const i = ix.at.get(toHex(oldId));
+    if (i === undefined) { this.#handoutKeys.delete(toHex(roundIdBytes)); return; }
+    ix.at.delete(toHex(oldId)); ix.at.set(toHex(id), i); ix.rows[i] = Round.#handoutKeyOf(id, bytes);
+  }
+
+  /** kanban #3846: the round's handouts whose A0 is `a0Hex`, in handoutsOf's order: { id, a0, refund, playerPubkey } (decoded ones only). */
+  handoutsWithA0(roundIdBytes, a0Hex) {
+    return this.#keysIndexOf(roundIdBytes).rows.filter((h) => h && h.a0 !== null && h.a0 === a0Hex);
+  }
+
+  /** kanban #3846: the round's handouts whose player's refund key is `refundHex`, in handoutsOf's order (decoded ones only). */
+  handoutsRefundingTo(roundIdBytes, refundHex) {
+    return this.#keysIndexOf(roundIdBytes).rows.filter((h) => h && h.refund !== null && h.refund === refundHex);
   }
 
   /** An accepted handout by its id, or nothing. */
@@ -1177,11 +1248,30 @@ export class Round {
     // tagged hash of its whole encoding, attestations included) fixes its bytes - a stranger replaying a public signed batch to /play ran one
     // schnorr verify per committee signature of every attestation on each copy (90.6 ms a 53.7 KB frame against 3.2 ms for junk)
     if (!seen && ((b.attests && b.attests.length) || (requirePrices && ((b.samples && b.samples.length) || (b.tapes && b.tapes.length))))) {
+      // kanban #3868: the same refused batch (its id fixes every byte) is refused again without a signature check
+      const memoKey = `${toHex(id)}:${requirePrices ? 1 : 0}`;
+      const refused = this.refusedPriceBatches.get(memoKey);
+      if (refused !== undefined) throw new Error(refused);
       const c = decodeRoundContract(new Uint8Array(round.contract));
+      // kanban #3868: a signature that stood once stands again - a copy with one byte changed re-runs only the checks it changed
+      const stood = this.priceSigsStood;
+      const verify = (sig, msg, key) => {
+        let k;
+        try { k = `${toHex(key)}|${toHex(msg)}|${toHex(sig)}`; } catch { return false; }
+        if (stood.has(k)) return true;
+        let ok = false;
+        try { ok = schnorr.verify(sig, msg, key); } catch { ok = false; }
+        if (ok) { stood.add(k); if (stood.size > PRICE_MEMO_SIGS) stood.delete(stood.values().next().value); }
+        return ok;
+      };
       // the ROUND's version picks the scheme: from protocol 5 the median of the seats' own signed readings
       const prices = checkBatchPrices({ batch: b, roundId: b.roundId, committee: c.nodes, threshold: (() => { try { return receiptsNeeded(c.gameVerifySlots); } catch { return c.nodes.length; } })(),
-        verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } }, require: requirePrices, median: mediansPrices(c) });
-      if (!prices.ok) throw new Error(prices.why);
+        verify, require: requirePrices, median: mediansPrices(c) });
+      if (!prices.ok) {
+        this.refusedPriceBatches.set(memoKey, prices.why);
+        if (this.refusedPriceBatches.size > PRICE_MEMO_REFUSED) this.refusedPriceBatches.delete(this.refusedPriceBatches.keys().next().value);
+        throw new Error(prices.why);
+      }
     }
 
     // AND IT MUST NOT BE LONGER THAN THE ROUND. `blockTicks` is a field of
@@ -1734,6 +1824,10 @@ export class Round {
     const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
     const head = this.db.prepare('SELECT batch_id FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq DESC LIMIT 1').get(roundIdBytes, entryIdBytes);
     const now = { n: this.db.prepare('SELECT COUNT(*) AS n FROM batches WHERE round_id = ? AND entry_id = ?').get(roundIdBytes, entryIdBytes).n, last: head ? toHex(new Uint8Array(head.batch_id)) : '' };
+    // A PAIR WITH NO BATCHES TAKES NO KEY (kanban #3827, #1489 r40-play-1): any stranger may name any (round, entry) pair, and each
+    // made-up one used to take one of the 256 keys and push a long run's answer out, so ~257 cheap asks bought a whole rebuild of it.
+    // An empty chain costs nothing to build, so it is built per ask and never kept.
+    if (now.n === 0) return this.#handOverBuilt(roundIdBytes, entryIdBytes);
     if (!this.handedOver) this.handedOver = new Map();
     const kept = this.handedOver.get(key);
     if (kept && kept.n === now.n && kept.last === now.last) return kept.out;
@@ -3115,8 +3209,11 @@ export class Round {
    * bounded and nothing is dropped beside it. Answers whether the row was taken (false when that old one is gone or now named).
    */
   replaceHandout(oldId, { id, roundId, bytes }) {
-    return this.db.prepare('UPDATE OR IGNORE handouts SET handout_id = ?, bytes = ?, accepted_ms = ? WHERE handout_id = ? AND round_id = ?')
+    const took = this.db.prepare('UPDATE OR IGNORE handouts SET handout_id = ?, bytes = ?, accepted_ms = ? WHERE handout_id = ? AND round_id = ?')
       .run(Buffer.from(id), Buffer.from(bytes), this.now(), Buffer.from(oldId), Buffer.from(roundId)).changes === 1;
+    // kanban #3846: the row keeps its rowid, so its indexed keys are replaced in place
+    if (took) this.#keysIndexReplace(roundId, oldId, id, bytes);
+    return took;
   }
 
   /** Every handout this signer node accepted for one round: its id and bytes. */
@@ -4613,12 +4710,12 @@ export class Round {
 
   /** Donation outputs this signer node verified for one entry (2026-10-03): kept, and indexed by recipient key. */
   putDonationOutputs(rows) {
-    const put = this.db.prepare('INSERT OR REPLACE INTO donation_outputs (outpoint, entry_id, round_id, federation_id, recipient_pk, amount_msat, contract_id, verified_ms, sender_on_contract, image, item, parts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    const put = this.db.prepare('INSERT OR REPLACE INTO donation_outputs (outpoint, entry_id, round_id, federation_id, recipient_pk, amount_msat, contract_id, verified_ms, sender_on_contract, image, item, parts, peer) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     for (const r of rows)
       put.run(`${Buffer.from(r.outpoint.txid).toString('hex')}:${r.outpoint.outIdx}`, Buffer.from(r.entryId), Buffer.from(r.roundId),
         Buffer.from(r.federationId), Buffer.from(r.recipientPk).toString('hex'), String(r.amountMsat), r.contractId, this.now(), r.senderOnContract ? 1 : 0,
         typeof r.image === 'string' ? r.image : null, typeof r.item === 'string' ? r.item.slice(0, 120) : null,
-        Array.isArray(r.parts) && r.parts.length ? JSON.stringify(r.parts.slice(0, 500)) : null);
+        Array.isArray(r.parts) && r.parts.length ? JSON.stringify(r.parts.slice(0, 500)) : null, r.peer ? 1 : 0);   // kanban #3844
   }
 
   /**
@@ -4636,6 +4733,8 @@ export class Round {
       const same = Buffer.from(h.federation_id).equals(Buffer.from(r.federationId)) && h.recipient_pk === Buffer.from(r.recipientPk).toString('hex')
         && String(h.amount_msat) === String(r.amountMsat) && h.contract_id === r.contractId;
       if (!same) throw new Error(`${o.slice(0, 16)}… is kept already with other fields: not replaced`);
+      // kanban #3844: this seat's own payout record now vouches for a row a peer listed first - its round id is no longer only a peer's word
+      if (!r.peer) this.db.prepare('UPDATE donation_outputs SET peer = 0 WHERE outpoint = ? AND peer = 1').run(o);
     }
     if (fresh.length) this.putDonationOutputs(fresh);
   }
@@ -4936,11 +5035,12 @@ export class Round {
     // AND WHO SENT IT (2026-10-05): the entry's player key, read from the stored entry; whether that key
     // is also on the Fedimint contract (its payment image) or the contract carries the zero image of an older page.
     const playerOf = (entryId) => { const e = this.entry(entryId); try { return e ? Buffer.from(decodeEntryContract(e).playerPubkey).toString('hex') : null; } catch { return null; } };
-    const rows = this.db.prepare('SELECT outpoint, entry_id, round_id, federation_id, amount_msat, contract_id, verified_ms, sender_on_contract, image, item, parts FROM donation_outputs WHERE recipient_pk = ? AND verified_ms >= ? ORDER BY verified_ms, outpoint LIMIT 5000')
+    const rows = this.db.prepare('SELECT outpoint, entry_id, round_id, federation_id, amount_msat, contract_id, verified_ms, sender_on_contract, image, item, parts, peer FROM donation_outputs WHERE recipient_pk = ? AND verified_ms >= ? ORDER BY verified_ms, outpoint LIMIT 5000')
       .all(String(recipientHex).toLowerCase(), Math.max(0, Math.floor(Number(sinceMs) || 0)))
       .map((r) => ({ outpoint: r.outpoint, entryId: Buffer.from(r.entry_id).toString('hex'), roundId: Buffer.from(r.round_id).toString('hex'),
         federationId: Buffer.from(r.federation_id).toString('hex'), amountMsat: r.amount_msat, contractId: r.contract_id, verifiedMs: Number(r.verified_ms),
         playerKey: playerOf(new Uint8Array(r.entry_id)) || r.image || null, senderOnContract: r.sender_on_contract === 1, ...(r.item ? { item: r.item } : {}),
+        ...(r.peer === 1 ? { peer: true } : {}),   // kanban #3844: only a peer vouched for its round id
         // a market's donation: each filled order's part (kanban #580)
         ...(r.parts ? (() => { try { return { parts: JSON.parse(r.parts) }; } catch { return {}; } })() : {}) }));
     if (all) this._donationKept.set(String(recipientHex).toLowerCase(), rows);

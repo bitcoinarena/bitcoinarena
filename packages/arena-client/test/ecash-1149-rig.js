@@ -27,13 +27,15 @@ export function encodeEcash(fedHex, msat, salt = 1) {
 }
 
 export const A = '33'.repeat(32), B = '4d'.repeat(32);
+/** kanban #3873: the seats the tests' daily.json names (exchangeRig siteSeats). */
+export const SITE = ['http://s1', 'http://s2', 'http://s3'];
 
 /**
  * One browser and its seats. `failWrite(key, value)` makes the browser refuse a write (QuotaExceededError); `seats` maps an origin to
  * { holds: { fed: msat }, post(body, mint) } - `mint(fed, msat)` hands the seat new e-cash of its own. `msatInReceive` answers the
  * face value in the receive (the 2.0 lock client) or not (the 1.9 one).
  */
-export function exchangeRig({ html, seats, failWrite = null, msatInReceive = false, balances = { [A]: 1000000n, [B]: 0n }, sentLog = true }) {
+export function exchangeRig({ html, seats, failWrite = null, msatInReceive = false, balances = { [A]: 1000000n, [B]: 0n }, sentLog = true, siteSeats = null }) {
   const store = new Map();
   const vault = {
     getItem: (k) => (store.has(k) ? store.get(k) : null),
@@ -80,6 +82,8 @@ export function exchangeRig({ html, seats, failWrite = null, msatInReceive = fal
     return { ok: said.status === 200, status: said.status, json: async () => said.body, text: async () => String(said.body) };
   };
   const window = { ARENA_BROWSER_STORE: () => proxy, ARENA_WALLET_BALANCE: { parts: [{ federation: A, sats: Number((bal.get(A) || 0n) / 1000n), merging: 0, arriving: 0 }] }, ARENA_WALLETS: wallets };
+  // kanban #3873: the seats the site's daily.json names - the only ones the page hands notes to (none unless the test names them)
+  if (siteSeats) window.ARENA_EXCHANGE_SEATS = async () => [...siteSeats];
   const text = html || readFileSync(new URL('../../../src/arena-ui/index.html', import.meta.url), 'utf8');
   const a = text.indexOf('    window.ARENA_EXCHANGE_INTO = async');
   const code = text.slice(a, text.indexOf('\n    };\n', a) + 7);

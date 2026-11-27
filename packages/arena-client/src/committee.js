@@ -27,29 +27,12 @@ import { explorerAgrees } from './explorer-check.js';
 import { chainAnchorFor } from './directory.js';
 import { readWithOneRetry } from './reread.js';
 import { noteAdverts } from './seat-identity.js';
+import { bytesUpTo } from './reread.js';   // kanban #2740 reader, moved there for join.js fetchRound (kanban #3848)
 // A SEAT'S ANSWER IS READ UP TO A BOUND (kanban #2740, #1489 r6-census-1): GET /census, /committee and /seating were read whole (json, arrayBuffer,
 // text), bounded only by READ_MS - one seat streaming 64 MiB of whitespace made the tab hold all of it before the honest providers were asked
 // (a phone's tab froze; the join never finished). Each is read chunk by chunk up to its cap, the stream cancelled past it (that seat refused).
 const CENSUS_ANSWER_MAX = 4 * 1024 * 1024, COMMITTEE_ANSWER_MAX = 64 * 1024, SEATING_ANSWER_MAX = 256 * 1024;
-async function bytesUpTo(r, max) {
-  const said = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
-  if (Number.isFinite(said) && said > max) { try { await r.body?.cancel(); } catch { /* gone */ } throw new Error(`its answer is ${said} bytes, more than ${max}`); }
-  const reader = r.body && typeof r.body.getReader === 'function' ? r.body.getReader() : null;
-  if (!reader) { const b = new Uint8Array(await r.arrayBuffer()); if (b.length > max) throw new Error(`its answer is more than ${max} bytes`); return b; }
-  const parts = []; let n = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      n += value.byteLength;
-      if (n > max) throw new Error(`its answer is more than ${max} bytes`);
-      parts.push(value);
-    }
-  } catch (e) { try { await reader.cancel(); } catch { /* gone */ } throw e; }
-  const all = new Uint8Array(n); let at = 0;
-  for (const p of parts) { all.set(p, at); at += p.byteLength; }
-  return all;
-}
+// the reader itself now lives in reread.js, shared with join.js fetchRound (kanban #3848)
 // a test's stand-in answer with no stream and no arrayBuffer is read by its own json()/text()
 const jsonUpTo = async (r, max) => (r.body === undefined && typeof r.arrayBuffer !== 'function' && typeof r.json === 'function' ? r.json() : JSON.parse(new TextDecoder().decode(await bytesUpTo(r, max))));
 const textUpTo = async (r, max) => (r.body === undefined && typeof r.arrayBuffer !== 'function' && typeof r.text === 'function' ? r.text() : new TextDecoder().decode(await bytesUpTo(r, max)));
@@ -458,8 +441,9 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   const seatHex = toHex(seatId);
   // the seatings a standing certificate superseded, per role, as sorted keys (kanban #2537): a seat still naming one is behind, not lying
   const supersededOf = {};
-  // ONE READ OF A ROLE'S SEATING. `every`: wait for every seat, not for a majority and the grace.
-  const askSeating = async (role, every = false) => {
+  // ONE READ OF A ROLE'S SEATING. `every`: wait for every seat, not for a majority and the grace. `fresh` (kanban #3870): a read again that
+  // still waits only for a majority and the grace (2.0 keeps no answers between reads, so every read is fresh).
+  const askSeating = async (role, every = false, fresh = false) => {
     let spoke = false; const refused = [];
     // A CERTIFICATE OF ANOTHER ROUND (kanban #1389, the owner's playtest 2026-11-09 ~11:05Z, UI 594: the old test host's seats, on an older tree, seated each
     // round of an RPS table on its own and answered that round's certificate, where the table's first round seats it): no lie about this round's
@@ -616,8 +600,16 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     // weil eine Node offline ist"): the certificate may be what this client missed, in a read that came back empty or in the seats that fell outside the grace. Every seat is
     // waited for now, and the comparison is made again on what they hand.
     if (seats.some((s) => s.agrees === false)) {
-      for (const role of roles) {
-        const s = await askSeating(role, true);
+      // ONE SEAT DOES NOT HOLD EVERY JOIN (kanban #3870, wf1489 r40 census-2: one seat answering /committee with a made-up list and letting
+      // GET /seating run to SEATING_ASK_MS held every join 2 x 6 s - 12.8 s against 46 ms): a role whose first read already found a checked
+      // certificate is read again fresh (no kept answers) but waits only for a majority and the grace, as the first read; only a role with no
+      // certificate yet still waits for every seat. The roles are read side by side, not one after the other.
+      const again = await Promise.all(roles.map((role) => {
+        const had = got.seating[role] && Array.isArray(got.seating[role].seated);
+        return had ? askSeating(role, false, true) : askSeating(role, true);
+      }));
+      for (const [i, role] of roles.entries()) {
+        const s = again[i];
         if (s.found || !got.seating[role] || got.seating[role].unread) {
           if (!s.found || !got.seating[role] || !(got.seating[role].index > s.found.index)) keepSeating(role, s);
         }

@@ -1695,6 +1695,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // checked when the game was taken (registrationFromPackage keeps only the checked window), so the sort above sees no forged
   // version; at most MAX_PACKAGE_ANCESTORS of them, with the one below as the cut marker (a checked one when the chain is longer
   // here, else the marker the game was taken with). `extra` are newer manifests appended (hostSplit, an update's old version).
+  // kanban #3830: GET /plugin's built package per hosted game object (weak: a dropped version frees its bytes)
+  const pluginPackageCache = new WeakMap();
   const chainHex = (g, extra = []) => {
     const hex = [...chainOf(g), ...extra].map((m) => toHex(encodeManifest(m)));
     // the marker only on a full window: on a shorter one a peer would decode it as a checked version
@@ -3695,7 +3697,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       return minCap(pool, att);
     } });
   // the round's door asks whether a round is a book by the certified batches (§0A.7b, kanban #1411/#1417)
-  round.isBookRound = (rid) => orderBook.isBook(rid);
+  round.isBookRound = (rid) => orderBook.holdsCertifiedOrder(rid);   // kanban #3854: the door keeps #1417 option B (ruling comment 11620)
   // AN ORDER A CERTIFIED BATCH NAMES THAT NEVER REACHED THIS SEAT (kanban #620, measured 2026-10-24: round 42835aaa never settled - fed2-3
   // and fed2-7 held no entry 008e278a of batch 3585700432, refused its certificate - "this seat holds no entry 008e278ac2bfff47" - and
   // rebuilt settlement 8f0144a1 where the others built ffabdc94): the entry from the seat that handed the batch, kept when its bytes hash
@@ -7873,8 +7875,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (g.ok && g.headToHead) {
         const players = g.plugin.manifest.players;
         // kanban #2691: full only with seen stakes - a stake lock still waiting for its fee lock yields its seat to a player who locks both
+        // ONLY THE SEATED ENTRY OF THIS VERY HANDOUT IS LEFT OUT (kanban #3817, a bypass of #1485 found by the #1489 audit): the count left out
+        // every seated entry of the handout's player key, so a second, different order of a key already seated (two tabs of one imported seed
+        // racing for one table) was taken here and at the page's pre-lock recheck (#3694) on a full table - the page locked, and every seat
+        // refused its entry ("already seats ... 2 players", round.js, which leaves out only that entry's own id). Now only the entry this handout
+        // belongs to (its vssSharesRef is this handout's id, or its stake point this handout's A0) is spared: a reload re-posting the same
+        // handout still goes through, any other handout of that key counts the full table and is refused before anything is locked
+        const ownId = Buffer.from(handoutId(handout)), ownA0 = handout.commitments[0] ? Buffer.from(handout.commitments[0]) : null;
+        const isThisHandouts = (e) => !!e && !!e.playerPubkey && Buffer.from(e.playerPubkey).equals(Buffer.from(handout.playerPubkey))
+          && ((e.vssSharesRef && Buffer.from(e.vssSharesRef).equals(ownId)) || (ownA0 && e.stakePoint && Buffer.from(e.stakePoint).equals(ownA0)));
         const others = round.seatedEntriesOf(handout.roundId, roundContract.stakeMsat, { played: true })
-          .filter((x) => !(x.entry && x.entry.playerPubkey && Buffer.from(x.entry.playerPubkey).equals(Buffer.from(handout.playerPubkey)))).length;
+          .filter((x) => !isThisHandouts(x.entry)).length;
         if (others >= players)
           return { ok: false, status: 409, why: `handout refused: that table is full - the round already seats game "${g.plugin.manifest.gameName}"'s ${players} players; nothing is locked, tap the next round` };
       }
@@ -8328,8 +8339,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE SERIES THIS NODE DOES NOT HOLD, PULLED FROM THE NODES IT KNOWS (kanban #757, series-pull.js): the poster's push reaches a node
   // only at the address its advert names, and a node no operator of the series runs refused it as unfunded. Every node asks a few
   // others what they hold and takes each paying series whose publication its own chain confirms. ARENA_SERIES_PULL=0 turns it off.
+  // kanban #3832: each root everySeat() names, mapped to the census key whose advert or announced address it is (the newest round's census
+  // and the chain's newest, as everySeat reads them), so one seat at two roots is one peer in the pull; read again each pass
+  let pullSeatKeys = new Map();
+  const seatKeysByRoot = () => {
+    const m = new Map();
+    const add = (entries) => {
+      for (const e of entries || []) {
+        if (!e || !e.pubkey) continue;
+        const k = toHex(e.pubkey);
+        let announced = null; try { announced = addressBook && addressBook.endpointOf ? addressBook.endpointOf(e) : null; } catch { announced = null; }
+        for (const at of [e.advert && e.advert.endpoint, announced]) if (at) m.set(baseOf(at), k);
+      }
+    };
+    let rows = [];
+    try { rows = round.db.prepare('SELECT round_id FROM rounds ORDER BY rowid DESC LIMIT 40').all(); } catch { rows = []; }
+    for (const r of rows) {
+      let c; try { c = roster.censusFor(new Uint8Array(r.round_id)); } catch { c = null; }
+      if (c && c.ok && Array.isArray(c.entries) && c.entries.length) { add(c.entries); break; }
+    }
+    try { add(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : []); } catch { /* none read yet */ }
+    return m;
+  };
   const seriesPull = chainFor && process.env.ARENA_SERIES_PULL !== '0' ? createSeriesPull({
-    peers: () => everySeat(),
+    peers: () => { try { pullSeatKeys = seatKeysByRoot(); } catch { pullSeatKeys = new Map(); } return everySeat(); },
+    seatOf: (u) => pullSeatKeys.get(u) || null,
     // and the ones taken out here on purpose (droppedSeries): not pulled back in
     held: () => [...writers.map((w) => toHex(w.id)), ...droppedSeries],
     take: async (t) => { const p = await publishedHere(t); if (!p.ok) return p; const got = takeGridSeries(t, { published: true }); return got.ok ? got : { ok: false, why: got.why }; },
@@ -12434,10 +12468,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/plugin') {
         const g = hosted.get(String(url.searchParams.get('game') || '').toLowerCase());
         if (!g) return text(res, 404, 'this seat hosts no such game');
-        let pkg; try { pkg = packageOf(g); if (pkg) pkg = { ...pkg, ancestors: chainHex(g) }; } catch (e) { return text(res, 500, `that game's files could not be read: ${e.message}`); }
-        if (!pkg) return text(res, 409, 'this seat cannot package that game: its cores are not files it can hand out (a replayed game\'s engine)');
-        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
-        return res.end(JSON.stringify(pkg));
+        // ONE BUILD PER VERSION, ONE BUFFER FOR EVERY ASK (kanban #3830, audit r40 hosting-2): every ask ran packageOf (every core and
+        // client read, base64'd and stringified on the seat's thread) and res.end()ed its own string, so a stranger opening sockets that
+        // never read kept N copies of a package of up to 16 MB in the seat (40 asks of 6 MB: +958 MB RSS). The package is now built
+        // once per hosted game object and the chain it is handed on with, and the same Buffer is written to every socket (no copy).
+        // The bytes served are the ones packageOf builds, unchanged; a new version or a longer chain builds anew.
+        let anc, entry;
+        try {
+          anc = chainHex(g); const ancKey = anc.join(',');
+          entry = pluginPackageCache.get(g);
+          if (!entry || entry.ancKey !== ancKey) {
+            let pkg = packageOf(g); if (pkg) pkg = { ...pkg, ancestors: anc };
+            entry = { ancKey, buf: pkg ? Buffer.from(JSON.stringify(pkg)) : null };
+            pluginPackageCache.set(g, entry);
+          }
+        } catch (e) { return text(res, 500, `that game's files could not be read: ${e.message}`); }
+        if (!entry.buf) return text(res, 409, 'this seat cannot package that game: its cores are not files it can hand out (a replayed game\'s engine)');
+        res.writeHead(200, { 'content-type': 'application/json', 'content-length': entry.buf.length, 'cache-control': 'public, max-age=60', ...CORS });
+        return res.end(entry.buf);
       }
       // THE GAMES AND MARKETS THIS SEAT FOUND ON THE NETWORK: public, as /games is; ?fresh=1 reads them again now
       if (req.method === 'GET' && url.pathname === '/network-games') {
@@ -14549,10 +14597,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const matches = []; let a0Seen = false; let feeTries = 0;
         const feeId = (h) => sha256(new Uint8Array([...h.id, ...new TextEncoder().encode('fee')]));
         const txHex = toHex(outpoint.txid);
-        for (const h of round.handoutsOf(rid)) {
-          let d; try { d = decodeHandout(h.bytes); } catch { continue; }
-          const refunds = toHex(refundKeyOf(d.playerPubkey)) === toHex(fields.refundPk);
-          if (image.kind === 'point' && d.commitments[0] && toHex(d.commitments[0]) === hex) { a0Seen = true; if (refunds) matches.push({ id: h.id, handout: d }); }
+        // ONLY THE HANDOUTS THAT NAME THE LOCK, NEVER EVERY ONE (kanban #3846, audit r30 entry-1, #1605 regressed): this loop decoded all of the
+        // round's handouts per ask - up to HANDOUTS_LOOSE_CEILING (8192) a stranger posts for free, 19.9 ms per unauthenticated ask with a made-up
+        // lock. round.js keeps each handout's A0 and refund key, decoded once; the same handouts match, in the same order, as before.
+        const refundHex = toHex(fields.refundPk);
+        const naming = image.kind === 'point' ? (hex ? round.handoutsWithA0(rid, hex) : [])
+          : image.kind === 'hash' ? round.handoutsRefundingTo(rid, refundHex) : [];
+        for (const h of naming) {
+          const d = { playerPubkey: h.playerPubkey };
+          const refunds = h.refund === refundHex;
+          if (image.kind === 'point' && h.a0 === hex) { a0Seen = true; if (refunds) matches.push({ id: h.id, handout: d }); }
           if (image.kind === 'hash' && refunds) {
             // A FEE LOCK IS THE TRY'S IT WAS LOCKED WITH (kanban #1945): the handout whose kept stake lock is an output of its own lock transaction first
             const stakeKept = round.refusedLock(h.id);
@@ -14975,7 +15029,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const book = orderBook.isBook(rid);
           let bookRow = null;
           if (book && out && out.state === 'ATTESTED') {
-            const L = orderBook.ledger(rid);
+            const L = orderBook.ledger(rid, null, { read: true });   // kanban #3836: GET /standing is a public read
             if (L.ok) {
               const plugin = attestedOf(c);
               const scalar = isScalar(plugin.manifest) && out.value !== undefined ? { value: BigInt(out.value), bounds: marketOfRound(plugin.manifest, c).scalar } : null;
@@ -16738,7 +16792,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/dkg') {
         const dealt = await read(req);
         try { peerMakesEpoch(decodeContribution(dealt).epochId); } catch { /* accept says what is wrong with it */ }
-        const took = await dkg.accept(dealt);
+        // kanban #3852: the Dkg that ran this epoch (the round's, or a federation's reserve key's) knows the committee's peers to ask
+        let door = dkg;
+        try { const e = toHex(decodeContribution(dealt).epochId); for (const d of reserveDkgs.values()) if (d.asksFor(e)) { door = d; break; } } catch { /* accept says what is wrong with it */ }
+        const took = await door.accept(dealt);
+        // kanban #3852: a checked contribution not held yet is not kept from a post; this node's run fetches it from its dealer
+        if (!took.ok && took.asksDealer) return text(res, 202, took.why);
         if (!took.ok) return text(res, 409, took.why);
         res.writeHead(took.fresh ? 201 : 200, { 'content-type': 'text/plain', ...CORS });
         return res.end(took.fresh ? 'taken' : 'already');

@@ -6,7 +6,7 @@
 // nothing moves on its own. "My feedback" is asked with a NIP-98 HTTP-auth event by the same key: a report's reward link is a bearer secret, so the
 // list is never read by its pubkey alone.
 import { DatabaseSync } from 'node:sqlite';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { walletUrlRefusal, publicFetch, checkedFetch, internalAddress, guardedLookup } from './public-fetch.js';
 import { lnurlFor, urlOfLnurl } from '../../arena-protocol/src/bech32.js';
 import { eventId, eventRefusal } from './nostr-relay.js';
@@ -73,7 +73,9 @@ export const AUTH_AGE_MOST_S = 60;
 const WALLET_KEYS = Object.freeze([
   /\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi,
   /\b[xtyzuvXYZUV]prv[1-9A-HJ-NP-Za-km-z]{100,112}\b/g,
-  /(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/gi,
+  // kanban #3821 (a bypass of #1472): any hex run of 32 or more digits, not only exactly 64 - the lookarounds never matched inside a 128-hex BIP39
+  // seed, and a 12-word seed's 128-bit entropy is 32 hex. Glued to non-hex ("0x" + hex) it still counts, as before.
+  /(?<![0-9a-f])[0-9a-f]{32,}(?![0-9a-f])/gi,
   /\b[5KLc9][1-9A-HJ-NP-Za-km-z]{50,51}\b/g,
 ]);
 /**
@@ -148,8 +150,19 @@ export function keptEvent(e) {
   // (kanban #2676) and the content's strings read as one text, with no JSON key between them
   let joined = ''; try { joined = stringsOf(JSON.parse(content)).join(' '); } catch { joined = String(content); }
   if (!seedRunSpans(JSON.stringify([kept.tags, kept.content])).length && !seedRunSpans(joined).length) return kept;
-  const plain = tags.filter((t) => hexTagValue(t, t[1], 1) || (STRICT_TAG[t[0]] && typeof t[1] === 'string' && STRICT_TAG[t[0]].test(t[1]))).map((t) => [t[0], t[1]]);
-  return { ...kept, tags: plain, content: JSON.stringify({ removed: 'a seed phrase was found in this report: its content is not kept' }) };
+  let plain = tags.filter((t) => hexTagValue(t, t[1], 1) || (STRICT_TAG[t[0]] && typeof t[1] === 'string' && STRICT_TAG[t[0]].test(t[1]))).map((t) => [t[0], t[1]]);
+  // THE CHECKED ADDRESS SURVIVES THE DROP (kanban #3845, a way round #2468 / #1677): POST /feedback checks reportAddress(e) - the content's lnAddress
+  // when it names one. Dropping the content left only the signed lud16 tag, so the payout read an address never checked. A content that names an
+  // lnAddress keeps that one address (well-formed, and no seed run in it read word by word); when it cannot be kept, the lud16 tag goes too.
+  const removed = { removed: 'a seed phrase was found in this report: its content is not kept' };
+  let c = null; try { c = JSON.parse(e.content); } catch { c = null; }
+  const named = c && typeof c === 'object' && !Array.isArray(c) ? c.lnAddress : undefined;
+  if (named !== undefined && named !== null && named !== '') {
+    const own = reportAddress(e);
+    if (own && !seedRunSpans(own).length && !seedRunSpans(own.replace(/[^a-z0-9]+/gi, ' ')).length) removed.lnAddress = own;
+    else plain = plain.filter((t) => t[0] !== 'lud16');
+  }
+  return { ...kept, tags: plain, content: JSON.stringify(removed) };
 }
 const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? String(t[1] ?? '') : ''; };
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
@@ -186,7 +199,8 @@ export function openFeedbackStore(path = ':memory:') {
     CREATE TABLE IF NOT EXISTS report_moves (id TEXT NOT NULL, from_state TEXT NOT NULL, to_state TEXT NOT NULL, at_ms INTEGER NOT NULL, by TEXT, note TEXT);
     CREATE TABLE IF NOT EXISTS rewards (k1 TEXT PRIMARY KEY, report TEXT NOT NULL UNIQUE, pubkey TEXT NOT NULL, amount_sats INTEGER NOT NULL, network TEXT NOT NULL,
       created_ms INTEGER NOT NULL, state TEXT NOT NULL DEFAULT 'open', invoice TEXT, payment_hash TEXT, tried_ms INTEGER, paid_ms INTEGER, why TEXT);
-    CREATE TABLE IF NOT EXISTS dup_links (token TEXT PRIMARY KEY, report TEXT NOT NULL UNIQUE, ticket INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, made_ms INTEGER NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS dup_links (token TEXT PRIMARY KEY, report TEXT NOT NULL UNIQUE, ticket INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL, made_ms INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS auth_seen (id TEXT PRIMARY KEY, at_ms INTEGER NOT NULL);`);
   // COLUMNS ADDED AFTER THE FIRST FILE (kanban #1342 follow-up): a file from before gains them, null for its old rows
   for (const [col, ddl] of [['source', 'TEXT'], ['node', 'TEXT'], ['screenshot', 'TEXT'], ['number', 'INTEGER']])
     if (!db.prepare('PRAGMA table_info(reports)').all().some((c) => c.name === col)) db.exec(`ALTER TABLE reports ADD COLUMN ${col} ${ddl}`);
@@ -292,13 +306,23 @@ export function openFeedbackStore(path = ':memory:') {
 
   /**
    * WHO ASKS (NIP-98): a kind 27235 event signed within a minute, naming this exact URL and method. Answers the pubkey, or { why }.
+   * USED ONCE AND BOUND TO THE BODY (kanban #3881, audit #1489 r40 nostr-3, the Orange Pill Run's authOf ported): one seen header (a log line, a
+   * proxy, an extension, a shared HAR) was good for any number of requests for its minute, with any body - GET /feedback/mine answered the
+   * reporter's open reward lnurl and dup tokens to the replayer, POST /feedback/social linked another X handle or nostr key to the reporter.
+   * Now a POST is taken only for the body whose SHA-256 its `payload` tag names, and an event id is taken once (auth_seen, recorded only after
+   * every other check, so a try at another of the faucet's base URLs does not use it up; rows older than three times the sign-in's age are dropped: a sign-in dated a minute ahead stands until two minutes on, plus rounding).
    */
-  function authOf(e, { url, method = 'GET', nowMs = Date.now() } = {}) {
+  const seenAt = db.prepare('INSERT OR IGNORE INTO auth_seen (id, at_ms) VALUES (?, ?)');
+  const seenTrim = db.prepare('DELETE FROM auth_seen WHERE at_ms < ?');
+  function authOf(e, { url, method = 'GET', body = '', nowMs = Date.now() } = {}) {
     const nowS = Math.floor(nowMs / 1000);
     const refused = eventRefusal(e, { kinds: [HTTP_AUTH_KIND], nowS });
     if (refused) return { ok: false, why: refused.startsWith('blocked:') ? 'that is not a sign-in (NIP-98)' : refused };
     if (Math.abs(nowS - e.created_at) > AUTH_AGE_MOST_S) return { ok: false, why: 'that sign-in is older than a minute' };
     if (tag(e, 'u') !== url || tag(e, 'method').toUpperCase() !== String(method).toUpperCase()) return { ok: false, why: 'that sign-in names another address or method' };
+    if (String(method).toUpperCase() === 'POST' && tag(e, 'payload').toLowerCase() !== createHash('sha256').update(String(body ?? '')).digest('hex')) return { ok: false, why: 'that sign-in is for another body' };
+    seenTrim.run(nowMs - 3 * AUTH_AGE_MOST_S * 1000);
+    if (seenAt.run(e.id, nowMs).changes === 0) return { ok: false, why: 'that sign-in was used already' };
     return { ok: true, pubkey: e.pubkey };
   }
 

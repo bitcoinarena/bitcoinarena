@@ -13,7 +13,7 @@ const fake = (i, tag = '11') => ({ outpoint: `${i.toString(16).padStart(64, '0')
   fields: { paymentImage: { kind: 'hash', bytes: tag.repeat(32) }, amountMsat: '1000', claimPk: '02' + '22'.repeat(32), refundPk: '02' + '33'.repeat(32), expiration: 100 } });
 const real = fake(0xabc, '44');
 const flood = Array.from({ length: 5000 }, (_, i) => fake(i + 1));
-const fetcher = async (url) => ({ ok: true, status: 200, json: async () => (url.startsWith('http://evil') ? flood : [real]), text: async () => '' });
+const fetcher = async (url) => ({ ok: true, status: 200, json: async () => (url.startsWith('http://evil') ? flood : [real]), text: async () => JSON.stringify(url.startsWith('http://evil') ? flood : [real]) });
 const nodes = ['http://evil', 'http://a', 'http://b', 'http://evil2'];
 
 test('findLock on a 5000-lock flood: the bundle, the WebGL template copy and the src module keep the same locks', async () => {

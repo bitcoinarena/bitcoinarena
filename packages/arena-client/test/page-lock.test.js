@@ -419,7 +419,8 @@ test('the winner\'s page collects its own payout contract from the signer nodes\
     { kind: 'signer node', pk: '02' + 'aa'.repeat(32), msat: '18000', feeMsat: '1000' },
     { kind: 'qualifier', pk: winnerPk, msat: '978000', feeMsat: '1000' },
   ] } };
-  const signerNodes = async (url) => ({ ok: true, status: 200, json: async () => settled, text: async () => '' });
+  // the body as a seat sends it: since #3834 the collect reads an answer as text up to a bound (readJsonUpTo), not by json()
+  const signerNodes = async (url) => ({ ok: true, status: 200, json: async () => settled, text: async () => JSON.stringify(settled) });
   const asked = [];
   class Wallet {
     static async join(invite, federationId, secret) { asked.push({ join: { invite, federationId, secret } }); return new Wallet(); }

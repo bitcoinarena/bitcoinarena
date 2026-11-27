@@ -39,6 +39,7 @@ import { takesDeposits } from '../../arena-protocol/src/known-federations.js';
 import { splitDonation, donationSetPaysKeys } from '../../arena-protocol/src/donation.js';
 import { namedClaims, namedClaimKeys, arenaLockFor, arenaLockContractId, arenaLockValid, arenaLockFieldsToJson, lockStallBlocks, fallbackAfterFor } from '../../arena-protocol/src/arena-lock.js';
 import { lockClaimDigest } from '../../arena-protocol/src/lock-claim.js';
+import { readJsonUpTo } from './item-buy.js';   // kanban #3834
 
 const namesNothing = (b) => !(b instanceof Uint8Array) || b.every((x) => x === 0);
 
@@ -237,6 +238,10 @@ export const PAYOUT_GRACE_MS = 600000;
 // A SEAT THAT NEVER ANSWERS IS A SEAT THAT SAID NOTHING (measured 2026-10-27: a market bot's collect waited 13 min on one
 // seat that took the connection and never answered): the reads collect makes of every seat give up after 15 s
 const SEAT_READ_MS = 15000;
+// ONE SEAT'S ANSWER IS READ UP TO A BOUND (kanban #3834, audit #1489 r40 client-2): findLock, settlementOf, federationSettlementsOf,
+// forfeitOf and redeemSlashPayout took `r.json()` whole - one seat's gzip answer inflating to ~100 MB was held and parsed on every collect
+// pass and killed a phone's tab. Honest answers are a few KB; a longer one is that seat's refusal, inside its own try.
+const SEAT_ANSWER_BYTES_MAX = 1024 * 1024;
 // BLOCKS AS TIME (kanban #827, 2026-10-31: "Sag wann das ist, in Xh 3m ETA"): nobody reads a block height as a moment
 export const blocksAsTime = (blocks, secondsPerBlock = 600) => {
   const m = Math.max(1, Math.ceil((Number(blocks) * Number(secondsPerBlock)) / 60));
@@ -2590,7 +2595,7 @@ export async function findLock({ roundId, playerPubkey, nodes, fetcher = fetch }
     try {
       const r = await fetcher(`${base}/stake-lock?round=${toHex(roundId)}&refund=${refund}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${name} ${r.status}`, got: [] };
-      const raw = await r.json();
+      const raw = await readJsonUpTo(r, SEAT_ANSWER_BYTES_MAX);   // kanban #3834
       // ONE SEAT'S MALFORMED ANSWER STAYS ITS OWN (kanban #1489, audit WF1489 CLIENT-1): `{}` or `[null]` from one seat threw for the
       // whole look, outside this try, and every honest seat's lock was dropped - no payout, stake or refund collected while it answered so.
       // A seat's answer must be a list; an item that is not a lock (an object, a txid:index outpoint, fields the lock client reads) is skipped
@@ -2772,7 +2777,7 @@ export async function forfeitOf({ roundId, entryId, nodes, fetcher = fetch, lock
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/forfeit?round=${toHex(roundId)}&entry=${entryId}${lock === 'fee' ? '&lock=fee' : ''}`, { signal: signal() });
       if (!r.ok) return { said: `${node}: ${r.status} ${(await r.text()).trim()}` };
-      const j = await r.json();
+      const j = await readJsonUpTo(r, SEAT_ANSWER_BYTES_MAX);   // kanban #3834
       if (!/^[0-9a-f]{128}$/.test(String(j.signature))) return { said: `${node}: answered no signature` };
       let got;
       if (named) {
@@ -2933,7 +2938,7 @@ export async function settlementOf({ roundId, nodes, fetcher = fetch, needed = 1
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
       if (!r.ok) return { said: `${node}: ${r.status}` };
-      const j = await r.json();
+      const j = await readJsonUpTo(r, SEAT_ANSWER_BYTES_MAX);   // kanban #3834
       if (j && j.state === 'ACCEPTED' && j.moved && Array.isArray(j.moved.payouts)) {
         // EVERY PAYOUT WELL FORMED, OR THE ANSWER IS NOT COUNTED (kanban #1489, audit WF1489 CLIENT-1): a `null` payout threw in keyOf for
         // every seat's answer, and the honest seats' agreeing settlement was lost with it
@@ -3081,27 +3086,64 @@ const noteKeyOf = (prefix, roundId, mineHex, order, extra = '') => `${prefix}${t
 
 /**
  * A ROUND THAT TAKES ANY FEDERATION'S SETTLEMENTS (2026.0.3 step 7): one transaction per federation, listed by the
- * seats' /lock-settlement as `federations` [{ federation, state, txid, moved: { payouts } }]. The first node that holds them all
- * ACCEPTED answers; else why not.
+ * seats' /lock-settlement as `federations` [{ federation, state, txid, moved: { payouts } }].
+ * ONE SEAT'S WORD NEVER FINALISES IT (kanban #3859, audit r41 client-1; the #1163/#2748 rule of settlementOf): the first seat that answered
+ * all ACCEPTED was the round's settlement - one seat listed first named a made-up txid, the collect found nothing there, read it as "already
+ * spent", noted the payout collected and was final; the real payout the other seats named was never asked for. Now every seat is asked at
+ * once (seatsOf / seatVoice: one vote per seat), and each federation's settlement is grouped by its txid and payouts as settlementOf's is:
+ * a group of `needed` seats is the answer; short of that, a group that pays `payee` is handed back `short` (the federation checks it at the
+ * spend, and nothing at its outpoint is no proof of a spend); a federation no group settles is `pending`.
  */
-export async function federationSettlementsOf({ roundId, nodes, fetcher = fetch } = {}) {
-  const said = [];
-  for (const node of [...new Set(nodes || [])]) {
+export async function federationSettlementsOf({ roundId, nodes, fetcher = fetch, needed = 1, payee = null, keys = [], verify = null, advertised, bound = false } = {}) {
+  const seats = await seatsOf(nodes, { keys, verify, fetcher, advertised, bound });
+  const asked = seats.flatMap((seat) => seat.urls.map((node) => ({ seat, node })));
+  const answers = await Promise.all(asked.map(async ({ node }) => {
     try {
       const r = await fetcher(`${String(node).replace(/\/+$/, '')}/lock-settlement?round=${toHex(roundId)}`, { signal: AbortSignal.timeout(SEAT_READ_MS) });
-      if (!r.ok) { said.push(`${node}: ${r.status}`); continue; }
-      const j = await r.json();
-      // (kanban #1489) a null federation or payout is a malformed answer, not a throw: the next seat is asked
+      if (!r.ok) return { said: `${node}: ${r.status}` };
+      const j = await readJsonUpTo(r, SEAT_ANSWER_BYTES_MAX);   // kanban #3834
+      // (kanban #1489) a null federation or payout is a malformed answer, not a throw
       if (j && j.state === 'ACCEPTED' && Array.isArray(j.federations) && j.federations.length
         && j.federations.every((f) => f && f.state === 'ACCEPTED' && f.moved && wellFormedPayouts(f.moved.payouts)
           // (kanban #1671) the federation and txid are read with String() by the collect, outside any try: text only
-          && typeof f.federation === 'string' && wellFormedTxid(f.txid)))
-        // (kanban #2014) each federation's payouts and txid normalised as settlementOf's are
-        return { ok: true, federations: j.federations.map((f) => ({ ...f, txid: f.txid.toLowerCase(), moved: { ...f.moved, payouts: normalPayouts(f.moved.payouts) } })), from: node };
-      said.push(`${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}`);
-    } catch (e) { said.push(`${node}: ${e.message}`); }
+          && typeof f.federation === 'string' && wellFormedTxid(f.txid))) {
+        // (kanban #2014) each federation's payouts and txid normalised as settlementOf's are; each keyed by its txid and payouts
+        const federations = j.federations.map((f) => {
+          const payouts = normalPayouts(f.moved.payouts), txid = f.txid.toLowerCase(), fid = f.federation.toLowerCase();
+          return { ...f, federation: fid, txid, moved: { ...f.moved, payouts }, key: `${txid}|${JSON.stringify(payouts.map((p) => [p.kind, p.pk, p.msat]))}` };
+        });
+        return { ok: true, federations, from: node, key: JSON.stringify(federations.map((f) => [f.federation, f.key])) };
+      }
+      return { said: `${node}: ${j && typeof j.state === 'string' ? j.state : 'malformed'}` };
+    } catch (e) { return { said: `${node}: ${e.message}` }; }
+  }));
+  // (kanban #3574) one answer per seat: the one its URLs agree on, none when they disagree
+  const bySeat = new Map(seats.map((seat) => [seat, []]));
+  asked.forEach((q, i) => bySeat.get(q.seat).push(answers[i]));
+  const voices = [];
+  for (const said of bySeat.values()) { const v = seatVoice(said, (a) => (a.ok ? a.key : null)); if (v) voices.push(v); }
+  const said = answers.filter((a) => !a.ok).map((a) => a.said);
+  if (!voices.length) return { ok: false, why: `no seat holds every federation's settlement of this round accepted yet (${said.join('; ')})` };
+  const urls = distinctSeats(nodes).length;
+  const need = Math.max(1, seats.length < urls ? Math.min(Number(needed) || 1, seats.length) : Number(needed) || 1);
+  // per federation: its seats' answers grouped by txid and payouts, the largest group first
+  const byFed = new Map();
+  for (const v of voices) for (const f of v.federations) {
+    if (!byFed.has(f.federation)) byFed.set(f.federation, new Map());
+    const g = byFed.get(f.federation); if (!g.has(f.key)) g.set(f.key, []); g.get(f.key).push({ ...f, from: v.from });
   }
-  return { ok: false, why: `no seat holds every federation's settlement of this round accepted yet (${said.join('; ')})` };
+  const pays = (f) => !!payee && f.moved.payouts.some((p) => isQualifierTo(p, payee));
+  const federations = [], pending = [];
+  for (const [fid, groups] of byFed) {
+    const ranked = [...groups.values()].sort((x, y) => y.length - x.length);
+    const agreed = ranked.find((g) => g.length >= need);
+    const paying = agreed ? null : ranked.find((g) => g.some(pays));
+    const g = agreed || paying;
+    if (!g) { pending.push({ federation: fid, why: `only ${ranked[0].length} of the ${need} seats needed agree on this federation's settlement yet` }); continue; }
+    const { key, ...f } = g[0];
+    federations.push({ ...f, agreeing: g.length, needed: need, ...(agreed ? {} : { short: true }) });
+  }
+  return { ok: true, federations, pending, needed: need, from: voices[0].from };
 }
 
 /**
@@ -3116,9 +3158,11 @@ export async function redeemPayoutsAcross({ round, roundId, seed, curve, storage
   const player = playerFor({ ...round, id: roundId }, { seed, curve, order });
   const mine = toHex(refundKeyOf(player.pubkey));
   onStep('asking the seats for the round\'s settlements');
-  const s = await federationSettlementsOf({ roundId, nodes, fetcher });
+  // (kanban #3859) every seat asked, the round's settlement threshold of seats must agree per federation
+  const s = await federationSettlementsOf({ roundId, nodes, fetcher, needed: settlementAgreement(round, nodes), payee: mine, ...seatProofs(round, curve) });
   if (!s.ok) return { ok: false, final: false, collected: [], waiting: [], why: s.why };
-  const collected = [], waiting = [];
+  // (kanban #3859) a federation no threshold of seats settles yet is waited for, never read as paying this key nothing
+  const collected = [], waiting = (s.pending || []).map((p) => ({ federation: p.federation, why: p.why }));
   for (const f of s.federations) {
     const at = f.moved.payouts.findIndex((p) => isQualifierTo(p, mine));
     if (at < 0) continue;
@@ -3131,12 +3175,16 @@ export async function redeemPayoutsAcross({ round, roundId, seed, curve, storage
     let said;
     try { said = JSON.parse(await (await clientFor(fid)).refund(f.txid, at, JSON.stringify(fields), toHex(player.secret))); }
     catch (e) { waiting.push({ federation: fid, why: e.message }); continue; }
-    const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined);
+    // (kanban #3859, the #2748 rule) below the threshold (f.short) nothing at the outpoint is no proof of a spend - one seat may have made
+    // the txid up - so it is waited for, not noted, not final
+    const spent = said.accepted !== true && (said.stored_before === null || said.stored_before === undefined) && !f.short;
     if (said.accepted === true || spent) {
       const got = { federation: fid, txid: f.txid, outIdx: at, amountMsat: BigInt(p.msat), spent };
       collected.push(got);
       if (storage) try { storage.setItem(noted, JSON.stringify({ ...got, amountMsat: String(got.amountMsat) })); } catch { /* a reload asks again */ }
-    } else waiting.push({ federation: fid, why: said.error || 'the federation did not accept the refund' });
+    } else waiting.push({ federation: fid, why: f.short && (said.stored_before === null || said.stored_before === undefined)
+      ? `only ${f.agreeing} of the ${f.needed} seats needed name this settlement yet, and its payout is not at its outpoint: waiting for them`
+      : (said.error || 'the federation did not accept the refund') });
   }
   if (!collected.length && !waiting.length) return { ok: false, final: true, collected, waiting, why: 'the round\'s settlements pay this seed\'s key nothing: no payout to collect' };
   return { ok: !waiting.length, final: !waiting.length, collected, waiting,
@@ -3165,7 +3213,7 @@ export async function redeemSlashPayout({ round, roundId, invite, seed, curve, L
   if (!listed) try {
     const r = await fetcher(`${String(arbiter).replace(/\/+$/, '')}/slash-payouts?round=${toHex(roundId)}`);
     if (!r.ok) return { ok: false, final: false, why: `the arbitration service answered ${r.status}` };
-    listed = await r.json();
+    listed = await readJsonUpTo(r, SEAT_ANSWER_BYTES_MAX);   // kanban #3834
   } catch (e) { return { ok: false, final: false, why: `the arbitration service did not answer: ${e.message}` }; }
   const p = (listed.payouts || []).find((x) => String(x.refundPk).toLowerCase() === mine);
   if (!p) return { ok: false, final: true, why: 'no slash payout of this round names this seed\'s key' };

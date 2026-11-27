@@ -14,14 +14,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
+const sha3881 = (b) => createHash('sha256').update(String(b ?? '')).digest('hex');   // kanban #3881: a POST sign-in names its body's SHA-256 (payload) and each sign-in is taken once
 import { eventId } from '../src/nostr-relay.js';
 import { HTTP_AUTH_KIND } from '../src/feedback-store.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
 const BASE = 'https://stage.example/api/faucet/feedback';
 const auth = () => { const secret = randomBytes(32); const e = { pubkey: hex(schnorr.getPublicKey(secret)), created_at: Math.floor(Date.now() / 1000), kind: HTTP_AUTH_KIND,
-  tags: [['u', `${BASE}/link`], ['method', 'POST']], content: '' }; e.id = eventId(e); e.sig = hex(schnorr.sign(Buffer.from(e.id, 'hex'), secret));
+  tags: [['u', `${BASE}/link`], ['method', 'POST'], ['payload', sha3881('{}')]], content: '' }; e.id = eventId(e); e.sig = hex(schnorr.sign(Buffer.from(e.id, 'hex'), secret));
   return `Nostr ${Buffer.from(JSON.stringify(e)).toString('base64')}`; };
 
 test('audit-faucet-a6-2-2: thirty /64s of one stranger\'s /48 do not take every reporter\'s link code for the hour', async () => {

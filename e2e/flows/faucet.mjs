@@ -48,7 +48,8 @@ async function signEv(ctx, key, { kind, tags = [], content = '', created_at = Ma
 const words = (marker, n = 0) => `E2E #2642 ${marker}: the order strip froze after I pressed Play and the balance stayed the same for a minute (${n}).`;
 const report = (ctx, key, { marker, type = 'bug', extraTags = [], body = {}, created_at } = {}) =>
   signEv(ctx, key, { kind: 27842, created_at, tags: [['t', type], ['source', 'frontend'], ['build', 'e2e-2642'], ...extraTags], content: JSON.stringify({ happened: words(marker), expected: 'the round to start', ...body }) });
-const nip98 = async (ctx, key, url, method = 'GET', created_at) => `Nostr ${Buffer.from(JSON.stringify(await signEv(ctx, key, { kind: 27235, tags: [['u', url], ['method', method]], created_at }))).toString('base64')}`;
+// a POST names its body's SHA-256 (kanban #3881: the faucet takes a POST sign-in only for that body, and each sign-in once)
+const nip98 = async (ctx, key, url, method = 'GET', created_at, body) => `Nostr ${Buffer.from(JSON.stringify(await signEv(ctx, key, { kind: 27235, tags: [['u', url], ['method', method], ...(method === 'POST' ? [['payload', sha256(body ?? '')]] : [])], created_at }))).toString('base64')}`;
 
 // ---- THE DEVNET BITCOIND, ANY WALLET ----
 async function rpcOn(dn, wallet, method, params = []) {
@@ -597,8 +598,9 @@ async function season2(ctx) {
   check(pot.season === 2 && pot.potSats === 100000, 'Week 2\'s pot: 100,000 sat', pot);
   const base = `${f.url}/feedback`;
   const call = async (p, key, body, { url } = {}) => {
-    const h = key ? { authorization: await nip98(ctx, key, url || `${base}${p}`, 'POST') } : {};
-    const r = await fetch(`${base}${p}`, { method: 'POST', headers: { 'content-type': 'application/json', ...h }, body: body ? JSON.stringify(body) : undefined });
+    const text = body ? JSON.stringify(body) : undefined;
+    const h = key ? { authorization: await nip98(ctx, key, url || `${base}${p}`, 'POST', undefined, text) } : {};
+    const r = await fetch(`${base}${p}`, { method: 'POST', headers: { 'content-type': 'application/json', ...h }, body: text });
     return { status: r.status, body: await r.json() };
   };
   const l0 = await call('/link', null);

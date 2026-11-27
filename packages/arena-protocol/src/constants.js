@@ -201,6 +201,21 @@ export const DISJOINT_RULES_VERSION = 33;
 /** Whether a round of protocol version `v` runs the 2026.0.33 rules (kanban #3257, #3260, #2983). */
 export const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERSION;
 /**
+ * 2026.0.35 - POOL FIRST (kanban #3854, audit #1489 r41-entry-1; spec ruling 2026-11-27, comment 11620). Below this version a market round is
+ * an order book as soon as a certified batch holds an order (#1417 option B), so a losing plain-pick holder's one minimum order seconds before
+ * the close refunded every plain pick of the pool. From 35 a market is a BOOK only if a certified batch holds an order AND the round has no
+ * backed plain pick (one whose stake the seat saw, the set its settlement counts); with any backed plain pick it is a POOL - its orders are no
+ * entries of it (never filled, their locks back as an unfilled order's), its picks settle as if no order was posted. Inputs: the backed-entry
+ * and certified-batch sets only; the doors and what a seat signs stay as they are. Rounds below 35 keep option B byte for byte. 34 is the
+ * bound identity proof's on 1.9. ON 2.0 (kanban #1489 port) 34 is also the signed draw (#3743, sortition.js SIGNED_DRAW_VERSION) and the
+ * genesis run (#3762), not spoken yet (they join with #3612/#3680); versions are cumulative, so a round at 35 would run all of them - a 35
+ * round's census assigns no keys on this build. So 2.0 does not speak 35 until it speaks 34: the rule is here, and rounds below 35 keep option B,
+ * as on 1.9. Round creators write 35 only once every seat of the network lists it.
+ */
+export const POOL_FIRST_VERSION = 35;
+/** Whether a market round of protocol version `v` is a pool once it holds a backed plain pick, orders or not (kanban #3854). */
+export const poolsFirst = (v) => Number.isInteger(v) && v >= POOL_FIRST_VERSION;
+/**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
  * and the beacon ... Thresholds count the 7 seated nodes"). Measured 2026-10-13 00:28Z: with federation B's 7 bonds the

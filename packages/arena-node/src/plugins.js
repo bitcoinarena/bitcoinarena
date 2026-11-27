@@ -13,8 +13,9 @@
 // adapter it is handed (start, eventsOf, step, stateHash, result, picture, runTicksFits).
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { networkOf } from '../../arena-protocol/src/constants.js';
-import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf, payoutRuleForRound, attestorsBondedFor } from '../../arena-protocol/src/manifest.js';
+import { manifestStands, roundFitsManifest, isAttested, isHeadToHead, gameIdOf, payoutRuleForRound, attestorsBondedFor, encodeManifest } from '../../arena-protocol/src/manifest.js';
 import { sharedWorldOf } from '../../arena-protocol/src/known-game.js';
+import { MAX_MANIFEST_BYTES } from './plugin-check.js';   // kanban #3847
 import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { verifyEd25519 } from './ed25519.js';
 import { gameInfoStands, gameInfoJson } from '../../arena-protocol/src/game-info.js';
@@ -58,6 +59,9 @@ export function hostedPlugins(registrations = [], { verify = verifyEd25519, log 
     if (!p || !p.manifest || !(p.cores instanceof Map)) throw new Error('a game is handed to a node as { name, manifest, gameId, cores }');
     const stands = manifestStands(p.manifest, { verify, parentOf: (id) => byId.get(toHex(id)) || null });
     if (!stands.ok) throw new Error(`that game is not one this node can host: ${stands.why}`);
+    // kanban #3847: a manifest past MAX_MANIFEST_BYTES is not hosted (nor listed in GET /games, where it hid every other game of the seat)
+    const mBytes = encodeManifest(p.manifest).length;
+    if (mBytes > MAX_MANIFEST_BYTES) throw new Error(`game "${p.manifest.gameName}": its manifest is ${mBytes} bytes, more than the ${MAX_MANIFEST_BYTES} a seat hosts for one game`);
     const id = toHex(stands.gameId);
     if (p.gameId !== undefined && toHex(p.gameId) !== id) throw new Error(`game "${p.manifest.gameName}" is registered as ${toHex(p.gameId).slice(0, 16)}, and its manifest is ${id.slice(0, 16)}`);
     // THE GAME DEV'S DONATION SET (§0A.8): the recipients its manifest names by id - a registration whose set

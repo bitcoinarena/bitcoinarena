@@ -200,9 +200,15 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     if (!boundRecord(r) || !body || others.some((o) => !boundRecord(o) || bodyHexOf(o) !== body)) return null;   // #1840: void
     return [r, ...others];
   };
+  // A TWIN KEPT LATE IS NOT IN ITS GROUP'S COUNT (kanban #3871, audit census r20-3): a twin's id covers its signature, so votes under
+  // it could sit in the voting blocks while only the proposer knew that id; posting the twin after the activation recounted the group
+  // with those votes and rewrote the config live at heights already passed. A twin is held to the #2432 / #2700 rule by its own id:
+  // until bonds holding more than half of the census weight signed that they held THAT twin before its voting ended, it neither
+  // stands for its group nor are votes under its id counted, and taking it does not reopen a decided group (add, vouch)
+  const counting = (g) => g.filter((r) => !isLate(r));
   const standsFor = (id) => {
     const g = groupOf(id); if (!g) return null;
-    return g.slice().sort((a, b) => rankOf(a) - rankOf(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0].id;
+    return g.slice().sort((a, b) => Number(isLate(a)) - Number(isLate(b)) || rankOf(a) - rankOf(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0].id;
   };
   /** COUNTED: the only kept proposal its deposit backs (kanban #1840), or the twin that stands for its group (#2607) - and not kept late (#2432). */
   const counts = (id) => standsFor(id) === id && !isLate(held.get(id));
@@ -410,7 +416,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         return { ok: false, status: 409, why: `that deposit already backs ${SAME_DEPOSIT_KEPT} proposals of this proposer: no more are kept (kanban #1840, #2607)` };
       // A TWIN OF A TEXT HELD IN TIME (kanban #2607, #2432): the same body over the same deposit is the same proposal - its text was held
       // before its voting ended when a twin kept here (not late) was, so a re-signed twin taken later is not late
-      if (lateWhy) { const body = toHex(bytes).slice(0, -128); if (sameDeposit(depositHex, id).some((r) => boundRecord(r) && bodyHexOf(r) === body && !isLate(r))) lateWhy = null; }
+      // kanban #3871: no longer - a twin's id is new, so votes under it are only fair once a census majority held THAT twin in time
       const kept = { id, proposal: toHex(bytes), networkId: net, parent: toHex(p.parent), configHash: toHex(p.configHash), class: stands.class,
         proposer: toHex(p.proposer), publishedAt: dep.publishedAt, depositSats: String(dep.depositSats), votingFrom: stands.votingFrom,
         votingUntil: stands.votingUntil, activationHeight: stands.activationHeight, repeal: stands.repeal, depositTxid: depositHex,
@@ -441,7 +447,8 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // twin of the group is undecided BEFORE the new one is kept (its outcome held in force through the recount, #1635), and
       // the group is counted again over every twin it holds: the outcome is one function of the chain and the twins held, the
       // same at every seat. Undecided first: a crash between the two writes only recounts to the outcome it had.
-      if (bound) {
+      // kanban #3871: only a twin counted at once reopens it; one kept late does so once vouched for (vouch)
+      if (bound && !lateWhy && !(was && was.late)) {
         const body = toHex(bytes).slice(0, -128);
         for (const r of sameDeposit(depositHex, id)) {
           const st = stateOf(r);
@@ -469,7 +476,7 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
     /** The twin that stands for `id`'s group (kanban #2607): `id` itself when it has none; null when its deposit is void (#1840). */
     twinOf: standsFor,
     /** The ids of `id`'s twins, `id` first ([id] alone when it has none, [] when void). */
-    twins: (id) => { const g = groupOf(id); return g ? g.map((r) => r.id) : []; },
+    twins: (id) => { const g = groupOf(id); return g ? [g[0], ...counting(g.slice(1))].map((r) => r.id) : []; },   // kanban #3871: late twins left out
     /** THE TIP add() reads (kanban #1608), handed by the tally when none was given here. */
     useTip(fn) { if (!tipOf && typeof fn === 'function') tipOf = fn; },
     /** How many kept records of `net` (any network: none given) wait for their proposer check (kanban #1670). */
@@ -612,12 +619,27 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // OLDEST PUBLICATION FIRST (kanban #1842): a peer lists newest first, and a repeal taken before the proposal it repeals
       // read a history without it (an ordinary schedule here, a repeal at every other seat); oldest first, the earlier one is
       // held when the later one is checked (and 503s it until decided here). Bounded first, in the peer's order, as before.
-      const asked = (Array.isArray(records) ? records : []).slice(0, 256)
-        .map((r, i) => ({ r, i, at: r && Number.isFinite(Number(r.publishedAt)) ? Number(r.publishedAt) : Infinity }))
+      // ONE PROPOSER CANNOT FILL THE WINDOW (kanban #3826, audit r40 census-1): the window was the first 256 of a newest-first listing, so
+      // one bonded node publishing 256 cheap proposals after an honest one pushed it out of every seat's pull for good (never learned,
+      // its sightings never spread, FAILED everywhere). The window is still 256 records, now taken in turns per proposer key (read from
+      // the signed body, not the listing's word): each proposer's first record, then each one's second, ... - in the peer's order within
+      // a turn. Which records a seat checks is its own business; each one is still checked by add as before.
+      const listed = (Array.isArray(records) ? records : []).slice(0, 4096);
+      const proposerOf = (r) => { try { const b = fromHex(String(r.proposal)); return toHex(decodeConfigProposalBody(b.subarray(0, b.length - 64)).proposer); } catch { return ''; } };
+      const turnOf = new Map();
+      const inTurns = listed.map((r, i) => { const k = r && typeof r.proposal === 'string' ? proposerOf(r) : ''; const t = turnOf.get(k) || 0; turnOf.set(k, t + 1); return { r, i, t }; })
+        .sort((a, b) => a.t - b.t || a.i - b.i).slice(0, 256).map(({ r, i }) => ({ r, i }));
+      const asked = inTurns
+        .map(({ r, i }) => ({ r, i, at: r && Number.isFinite(Number(r.publishedAt)) ? Number(r.publishedAt) : Infinity }))
         .sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.r);
       // ONE RECORD ONCE PER LISTING (kanban #3373, audit census a6-3-1, gap in #3040): a seat listing one late record 256 times, each copy with
       // junk sightings by every census key, cost 256 x K signature checks per pull (vouch's one-check-per-key holds within one call only)
       const seenHere = new Set();
+      // ONE VOUCH PER PROPOSAL PER PULL, KEYED BY THE ID THIS SEAT COMPUTED (kanban #3840, bypass of #3373): the key above is the peer's own
+      // unsigned `id` field, so 256 copies of one late proposal under 256 made-up ids each ran vouch (K signature checks) again. A proposal
+      // this seat keeps is vouched for at most once in one pull, under mine.id / add()'s got.id - the proposal id of the decoded bytes.
+      const vouchedHere = new Set();
+      const vouchOnce = async (pid, r) => { if (vouchedHere.has(pid)) return; vouchedHere.add(pid); await api.vouch(pid, r); };
       for (const r of asked) {
         if (!r || typeof r.proposal !== 'string' || typeof r.blockHash !== 'string') continue;
         const once = typeof r.id === 'string' ? `id:${r.id.toLowerCase()}` : `p:${r.proposal.toLowerCase()}`;
@@ -625,11 +647,11 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         seenHere.add(once);
         const mine = typeof r.id === 'string' ? held.get(r.id.toLowerCase()) : null;
         // kept here: only its signed sightings are news (kanban #2432) - who listed it proves nothing
-        if (mine && stateOf(mine) !== S.ORPHANED) { if (isLate(mine)) { try { await api.vouch(mine.id, r); } catch { /* the next pull */ } } continue; }
+        if (mine && stateOf(mine) !== S.ORPHANED) { if (isLate(mine)) { try { await vouchOnce(mine.id, r); } catch { /* the next pull */ } } continue; }
         try {
           const got = await api.add({ proposal: r.proposal, blockHash: r.blockHash }, { own: 'peer' });   // kanban #2840
           if (got.ok && got.status === 201) took++;
-          if (got.ok && isLate(held.get(got.id))) await api.vouch(got.id, r);
+          if (got.ok && isLate(held.get(got.id))) await vouchOnce(got.id, r);
         } catch { /* not one */ }
       }
       return took;
@@ -681,6 +703,12 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         by: sightings.map((x) => x.by), at: sightings.length ? Math.min(...sightings.map((x) => x.at)) : null } } } : {}) };
       if (held.get(had.id) !== had) return false;                       // moved meanwhile: asked again on the next pull
       try { commit(next); } catch { return false; }
+      // A TWIN VOUCHED FOR REOPENS ITS DECIDED GROUP (kanban #3871, as #2629 did on taking it): a census majority held it in time, so a seat
+      // that decided before it counted joins the seats that counted it - the outcome one function of the chain and the twins counted
+      if (agreed) {
+        const g = groupOf(had.id) || [];
+        for (const r of g) { const st = stateOf(r); if (r.id !== had.id && (st === S.PASSED || st === S.FAILED)) api.undecide(r.id, `its twin ${had.id.slice(0, 16)} was vouched for after its outcome: counted again over every twin (kanban #2629, #3871)`); }
+      }
       return agreed;
     },
   };

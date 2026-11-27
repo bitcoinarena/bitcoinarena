@@ -50,6 +50,15 @@ export const STEP_MS = 1000;
 export const KEPT_MISSES_MAX = 2;
 /** Everything else the node asks a core (meta, run length, decide, a pose): a moment. */
 export const ASK_MS = 2000;
+/** kanban #3883 (bypass of #3556): A WARM GHOST THAT ANSWERS JUST INSIDE ITS DEADLINE never missed, and held the seat's thread ~650 ms
+ *  per picture without end. Now, misses or not, what each of one core's KEPT asks held the seat's thread beyond KEPT_FREE_MS counts,
+ *  at most KEPT_SLOW_MS of it in any KEPT_WINDOW_MS: an ask's deadline is cut to what is left (plus KEPT_FREE_MS), and asks are
+ *  refused while nothing is left. Measured, an honest truck's ghost: 3880 asks, p99 4 ms, the longest 119 ms (its first open).
+ *  (A cap on the total share was tried and refused an honest catch-up burst - a viewer arriving late - so many short asks are not
+ *  bounded here; each is bounded by KEPT_FREE_MS.) */
+export const KEPT_FREE_MS = 100;
+export const KEPT_SLOW_MS = ASK_MS;
+export const KEPT_WINDOW_MS = 60000;
 /** Loading a core: its thread started and its modules' top level evaluated. */
 export const LOAD_MS = 10000;
 // ITS MEMORY (spec §0A.6): time alone did not bound it - measured, a core that allocated in a loop took the node
@@ -136,17 +145,33 @@ export function coreFiles(core) {
 /** THE LONGEST BIGINT a core may answer, in characters (kanban #3558): BigInt() of a core's digits runs in this thread, where no limit
  *  of the core's applies - 4 MB of them cost the seat about 1 s per decide (measured 854 ms). A 256-bit number is 78 digits. */
 export const BIG_DIGITS_MAX = 256;
+/** THE MOST BYTES one core answer may carry as {"$u8": hex}, all its $u8 values together (kanban #3841, bypass of #3558): the
+ *  sibling of BIG_DIGITS_MAX. The revive ran match(/../g) and parseInt over the core's hex in this thread with no bound - a decide
+ *  answering 4 MB of hex held the seat 168 ms (measured, 2 MB of bytes nobody asked for). A state hash is 32 bytes and a replay's
+ *  answer a few kB; past this budget the answer is refused, and the hex is read natively (Buffer), never pair by pair. */
+export const U8_BYTES_MAX = 256 * 1024;
+const HEX = /^(?:[0-9a-fA-F]{2})*$/;
 /** Reads back a driver answer: tagged bigints and bytes restored. */
-const revive = (s) => JSON.parse(s, (k, x) => {
-  if (x && typeof x === 'object' && !Array.isArray(x)) {
-    if (typeof x.$big === 'string' && Object.keys(x).length === 1) {
-      if (x.$big.length > BIG_DIGITS_MAX) throw new Error(`the core answered a $big of ${x.$big.length} characters, and a core's bigint has at most ${BIG_DIGITS_MAX} digits`);
-      return BigInt(x.$big);
+const revive = (s) => {
+  let u8Bytes = 0; // kanban #3841: $u8 bytes revived so far in THIS answer
+  return JSON.parse(s, (k, x) => {
+    if (x && typeof x === 'object' && !Array.isArray(x)) {
+      if (typeof x.$big === 'string' && Object.keys(x).length === 1) {
+        if (x.$big.length > BIG_DIGITS_MAX) throw new Error(`the core answered a $big of ${x.$big.length} characters, and a core's bigint has at most ${BIG_DIGITS_MAX} digits`);
+        return BigInt(x.$big);
+      }
+      if (typeof x.$u8 === 'string' && Object.keys(x).length === 1) {
+        // kanban #3841: bounded (all of this answer's $u8 together) before any work on it, and only whole hex pairs taken
+        u8Bytes += x.$u8.length / 2;
+        if (u8Bytes > U8_BYTES_MAX) throw new Error(`the core answered more than ${U8_BYTES_MAX} bytes as $u8 in one answer`);
+        if (!HEX.test(x.$u8)) throw new Error('the core answered a $u8 that is not whole hex bytes');
+        const b = Buffer.from(x.$u8, 'hex');
+        return new Uint8Array(b.buffer, b.byteOffset, b.length).slice();
+      }
     }
-    if (typeof x.$u8 === 'string' && Object.keys(x).length === 1) return Uint8Array.from(x.$u8.match(/../g) || [], (h) => parseInt(h, 16));
-  }
-  return x;
-});
+    return x;
+  });
+};
 
 /** A JSON-able copy of what the node hands in: bytes as arrays of numbers, bigints refused (the core takes integers). */
 const plain = (v) => JSON.stringify(v === undefined ? null : v, (k, x) => (ArrayBuffer.isView(x) ? Array.from(x) : typeof x === 'bigint' ? Number(x) : x));
@@ -385,6 +410,14 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   let last = kept;
   const memo = new Map();
   let keptMisses = 0;   // kanban #3556
+  // kanban #3883: [end time, ms held] of each slow KEPT ask in the last KEPT_WINDOW_MS - a fresh kept thread's load and a heap death included
+  const keptHeld = [];
+  const heldNow = (now) => {
+    while (keptHeld.length && keptHeld[0][0] <= now - KEPT_WINDOW_MS) keptHeld.shift();
+    let slow = 0;
+    for (const [, ms] of keptHeld) slow += Math.max(0, ms - KEPT_FREE_MS);
+    return slow;
+  };
   const end = (why) => { ended = why; kept.end(why); };
   const call = (op, input = {}, within = null) => {
     if (ended) throw new Error(ended);
@@ -398,11 +431,29 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
       // core made every later signed call on this seat throw "it is not run again" while seats that never drew that ghost answered.
       // The next KEPT call gets a fresh kept thread (the open runs went with the old one: the ghosts open them again). Only the
       // plugin trial (`oneThread`), which watches one thread across calls, still ends the core.
-      if (!oneThread && kept.ended()) kept = startThread({ files, entry }, opts);
-      last = kept;
-      try { return revive(kept.call(op, input, within)); }
-      catch (e) { if (!oneThread && /did not stop within \d+ ms/.test(String(e && e.message))) keptMisses++; throw e; }
-      finally { if (oneThread && kept.ended()) ended = kept.ended(); }
+      // kanban #3883: A WARM GHOST THAT ANSWERS JUST INSIDE ITS DEADLINE IS BOUNDED TOO (KEPT_SLOW_MS above). A cut ask that
+      // runs out is not a miss (the core kept its own deadline): the ghost pauses until the window frees it. Pictures nobody signs;
+      // seats need not agree on them.
+      const t0 = oneThread ? 0 : performance.now();
+      let cut = false;
+      if (!oneThread) {
+        const slow = heldNow(t0);
+        if (slow >= KEPT_SLOW_MS)
+          throw new Error(`this core's warm ghost held this seat's thread ${Math.round(slow)} ms past ${KEPT_FREE_MS} ms an ask in the last ${KEPT_WINDOW_MS / 1000} s: it is not asked again here for now`);
+        const left = Math.floor(KEPT_SLOW_MS - slow + KEPT_FREE_MS);
+        const own = Math.min({ callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'], Number.isFinite(within) ? within : Infinity);
+        if (left < own) { within = left; cut = true; }
+      }
+      try {
+        if (!oneThread && kept.ended()) kept = startThread({ files, entry }, opts);
+        last = kept;
+        return revive(kept.call(op, input, within));
+      }
+      catch (e) { if (!oneThread && !cut && /did not stop within \d+ ms/.test(String(e && e.message))) keptMisses++; throw e; }
+      finally {
+        if (oneThread && kept.ended()) ended = kept.ended();
+        if (!oneThread) { const now = performance.now(); if (now - t0 > KEPT_FREE_MS) keptHeld.push([now, now - t0]); }
+      }
     }
     const key = PURE.has(op) ? `${op}\0${plain(input)}` : null;
     if (key !== null && memo.has(key)) return revive(memo.get(key));
@@ -469,7 +520,10 @@ export function sandboxFor(core, options) {
       // for the thread's life left every later close of that game - a head-to-head decide's retry too - failing until a restart
       // kanban #2710 (#1489 r4-hosting-6): nor one whose META ASK ran out of time - a seat busy at a core's first load (at start, or the
       // first ask after an idle sweep) missed ASK_MS there and the game was refused until a restart: every round of it unsigned
-      if (/did not stop within \d+ ms \((loading|meta)\)/.test(e.message)) throw e;
+      // kanban #3843 (#1489 r30-hosting-1): nor one whose COMPILE APART (#3389, core-compile-apart.js) ran out of time - that child is
+      // bounded by the same loadMs (TRIAL_MS 1.5 s at registration), compileApart keeps no verdict for a timeout, and a refusal kept
+      // here left that game version unhostable on the seat until a restart after one slow child spawn at a busy start
+      if (/did not stop within \d+ ms \((loading|meta)\)|did not compile within \d+ ms in a process of its own/.test(e.message)) throw e;
       // kanban #2549 (refute of #1695): a refusal kept for the thread's life is bounded - whatever path built its text
       s = { refused: String(e && e.message).slice(0, WHY_MAX) };
     }

@@ -6,7 +6,7 @@
 // Each case is that scenario or one of its guards, run through the page's own ARENA_EXCHANGE_INTO (ecash-1149-rig.js) or ecash-transfer.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { exchangeRig, payingSeat, refusingSeat, encodeEcash, A, B } from './ecash-1149-rig.js';
+import { exchangeRig, SITE, payingSeat, refusingSeat, encodeEcash, A, B } from './ecash-1149-rig.js';
 import { ecashTransferStep, moveEcashTransfer, readEcashTransfer, sendKeptEcash, recoverEcashIntent, receiveKeptEcash, advanceEcashExchange,
   ecashFaceValue, ecashTransferMsatInFlight, ECASH_HANDED_RECLAIM_MS } from '../src/ecash-transfer.js';
 
@@ -14,7 +14,7 @@ const NEED = 100000n;
 const total = (r) => r.bal.get(A) + r.bal.get(B) + r.unreceived();
 
 test('THE SCENARIO: three seats, the first offers nothing, the second refuses - each bearer string reaches exactly one seat, and none is left with a copy', async () => {
-  const r = exchangeRig({ seats: { 'http://s1': refusingSeat({}), 'http://s2': refusingSeat({ [B]: '500000' }), 'http://s3': payingSeat({ [B]: '500000' }) } });
+  const r = exchangeRig({ siteSeats: SITE, seats: { 'http://s1': refusingSeat({}), 'http://s2': refusingSeat({ [B]: '500000' }), 'http://s3': payingSeat({ [B]: '500000' }) } });
   const before = total(r);
   const said = await r.exchange({ to: B, needMsat: NEED, nodes: ['http://s1', 'http://s2', 'http://s3'] });
   assert.equal(said.ok, true, said.why);
@@ -28,7 +28,7 @@ test('THE SCENARIO: three seats, the first offers nothing, the second refuses - 
 });
 
 test('the browser refuses the write after the send (storage full): the notes are taken back into the wallet, never lost', async () => {
-  const r = exchangeRig({ seats: { 'http://s1': payingSeat({ [B]: '500000' }) }, failWrite: (k, v) => k.startsWith('arena.ecash.exchange.') && v.includes('fedimint') });
+  const r = exchangeRig({ siteSeats: SITE, seats: { 'http://s1': payingSeat({ [B]: '500000' }) }, failWrite: (k, v) => k.startsWith('arena.ecash.exchange.') && v.includes('fedimint') });
   const before = r.bal.get(A);
   let said; try { said = await r.exchange({ to: B, needMsat: NEED, nodes: ['http://s1'] }); } catch (e) { said = { ok: false, threw: e.message }; }
   assert.equal(said.ok, false);
@@ -38,7 +38,7 @@ test('the browser refuses the write after the send (storage full): the notes are
 });
 
 test('a browser that cannot write the intent sends nothing', async () => {
-  const r = exchangeRig({ seats: { 'http://s1': payingSeat({ [B]: '500000' }) }, failWrite: (k) => k.startsWith('arena.ecash.exchange.') });
+  const r = exchangeRig({ siteSeats: SITE, seats: { 'http://s1': payingSeat({ [B]: '500000' }) }, failWrite: (k) => k.startsWith('arena.ecash.exchange.') });
   const said = await r.exchange({ to: B, needMsat: NEED, nodes: ['http://s1'] });
   assert.equal(said.ok, false);
   assert.match(said.why, /nothing sent/);
@@ -47,7 +47,7 @@ test('a browser that cannot write the intent sends nothing', async () => {
 
 test('a seat that pays less than it was handed: received, and the record stays as the evidence (short) - never dropped as done', async () => {
   for (const msatInReceive of [false, true]) {
-    const r = exchangeRig({ seats: { 'http://s1': payingSeat({ [B]: '500000' }, 30000n) }, msatInReceive });
+    const r = exchangeRig({ siteSeats: SITE, seats: { 'http://s1': payingSeat({ [B]: '500000' }, 30000n) }, msatInReceive });
     const said = await r.exchange({ to: B, needMsat: NEED, nodes: ['http://s1'] });
     assert.equal(r.bal.get(B), NEED - 30000n);
     const kept = r.kept();
@@ -71,7 +71,7 @@ test('a seat that took the notes and did not answer: asked again later, the same
     if (n) return { status: 200, body: { ok: true, msat: String(n.msat), ecash: tools.mint(b.to, n.msat) } };
     return post(b, tools);
   };
-  const r = exchangeRig({ seats: { 'http://s1': flaky, 'http://s2': payingSeat({ [B]: '500000' }) } });
+  const r = exchangeRig({ siteSeats: SITE, seats: { 'http://s1': flaky, 'http://s2': payingSeat({ [B]: '500000' }) } });
   const first = await r.exchange({ to: B, needMsat: NEED, nodes: ['http://s1', 'http://s2'] });
   assert.equal(first.ok, false);
   assert.equal(r.kept().length, 1);
