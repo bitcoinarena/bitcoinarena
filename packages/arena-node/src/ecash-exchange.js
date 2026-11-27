@@ -78,6 +78,9 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
   if (!db.prepare('PRAGMA table_info(ecash_exchanges)').all().some((c) => c.name === 'receive_asked')) db.exec('ALTER TABLE ecash_exchanges ADD COLUMN receive_asked INTEGER');
   // kanban #1637: when the payout was named (TAKEN -> SENDING) - the hour counts a payout in the hour it is named, not the hour its row was made
   if (!db.prepare('PRAGMA table_info(ecash_exchanges)').all().some((c) => c.name === 'pay_ms')) db.exec('ALTER TABLE ecash_exchanges ADD COLUMN pay_ms INTEGER');
+  // kanban #3816: the player's e-cash string, kept while the row is RECEIVING so the seat can ask the reissue again itself (settleStale);
+  // cleared when the row leaves RECEIVING (its notes are spent then, at the seat or by the player)
+  if (!db.prepare('PRAGMA table_info(ecash_exchanges)').all().some((c) => c.name === 'in_ecash')) db.exec('ALTER TABLE ecash_exchanges ADD COLUMN in_ecash TEXT');
   const markAsked = db.prepare("UPDATE ecash_exchanges SET receive_asked = 1 WHERE id = ? AND state = 'receiving'");
   const get = db.prepare('SELECT * FROM ecash_exchanges WHERE id = ?');
   // an hour's spend counts what is out or on its way out, by the time its payout was named (kanban #1637; a row from before: when it was made)
@@ -89,6 +92,8 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
   // and reissues asked whose answer never came (kanban #2143): a RECEIVING row that asked may hold the player's notes - a new exchange paid
   // out of the seat's notes meanwhile left that player's retry with notes taken and nothing to pay him with. Counted at want_msat
   const owedRows = db.prepare(`SELECT state, in_msat, want_msat, pay_msat FROM ecash_exchanges WHERE to_fed = ? AND id != ? AND (state IN ('taken', 'sending') OR ${ASKED_RECEIVING})`);
+  // kanban #3816: asked RECEIVING rows into `to` the page has given up on (ECASH_HANDED_RECLAIM_MS, 10 min, plus a margin), oldest first
+  const staleAsked = db.prepare(`SELECT id, from_fed, in_ecash, want_msat FROM ecash_exchanges WHERE to_fed = ? AND id != ? AND state = 'receiving' AND receive_asked = 1 AND in_ecash IS NOT NULL AND made_ms <= ? ORDER BY made_ms LIMIT 8`);
   let queue = Promise.resolve();
   const hex64 = /^[0-9a-f]{64}$/;
   const refuse = (status, why) => ({ ok: false, status, why });
@@ -104,7 +109,9 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
       c = db.prepare(`INSERT OR IGNORE INTO ecash_exchanges (id, state, made_ms${cols.map((k) => `, ${k}`).join('')}) VALUES (@id, @state, @made_ms${cols.map((k) => `, @${k}`).join('')})`)
         .run({ ...fields, id, state: to, made_ms: now() });
     } else {
-      c = db.prepare(`UPDATE ecash_exchanges SET state = @state${cols.map((k) => `, ${k} = @${k}`).join('')} WHERE id = @id AND state = @from`).run({ ...fields, id, state: to, from });
+      // kanban #3816: the kept e-cash string goes with the RECEIVING state
+      const clear = from === EXCHANGE.RECEIVING && !cols.includes('in_ecash') ? ', in_ecash = NULL' : '';
+      c = db.prepare(`UPDATE ecash_exchanges SET state = @state${cols.map((k) => `, ${k} = @${k}`).join('')}${clear} WHERE id = @id AND state = @from`).run({ ...fields, id, state: to, from });
     }
     return c.changes === 1 ? { ok: true, state: to } : refuse(409, `that exchange is no longer ${from || 'new'} here: not moved to ${to}`);
     });
@@ -124,6 +131,35 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     const run = queue.then(() => step({ id, from, to, ecash: ecash.trim(), want }));
     queue = run.catch(() => {});
     return run;
+  }
+
+  // A RECEIVING ROW THE PLAYER TOOK BACK IS NOT OWED FOR GOOD (kanban #3816, state audit #1489 sm1 federation-6): a reissue that failed
+  // before it reached a guardian (the client directory busy, the guardians not reachable) left the row RECEIVING / receive_asked 1, and
+  // #2143 counted it as owed at want_msat - with no end, since only the player's retry moved it on, and the page gives a silent seat up
+  // after ECASH_HANDED_RECLAIM_MS (10 min) and takes its notes back. Each such row pinned up to maxMsat of the seat's notes in `to` for
+  // good (honest exchanges 409 "holds 0 sat free"). Before counting what it owes, the seat asks such a row's reissue again itself, once
+  // the page's reclaim window is past: Success or its own AlreadyReceived -> TAKEN (owed, paid on the player's retry); Rejected or Invalid
+  // (spent by the player, or never notes) -> REFUSED 'reclaimed by the player', no longer owed; no answer, a federation being liquidated,
+  // no client, or an amount it cannot read back -> left as it was, still owed. Runs inside the queue, so never beside the row's own retry.
+  const STALE_ASKED_MS = 600_000 + 5 * 60_000;
+  async function settleStale(to, id) {
+    for (const s of staleAsked.all(to, id, now() - STALE_ASKED_MS)) {
+      try {
+        let h = null; try { h = halted(String(s.from_fed).toLowerCase()); } catch { h = true; }
+        if (h) continue;   // kanban #1579: after a halt only the row's own retry finishes it
+        const p = await portOf(s.from_fed);
+        if (!p || typeof p.ecashReceive !== 'function') continue;
+        const got = await p.ecashReceive(s.in_ecash);
+        const carried = got && got.carriedMsat !== undefined && got.carriedMsat !== null ? BigInt(got.carriedMsat) : null;
+        if (got && (got.state === 'Success' || (got.state === 'AlreadyReceived' && (!got.earlier || got.earlier === 'Success'))) && carried !== null && carried > 0n) {
+          transition(s.id, EXCHANGE.RECEIVING, EXCHANGE.TAKEN, { in_msat: String(carried), why: null });
+          log(`[exchange] ${s.id.slice(0, 12)}: a held reissue asked again by the seat - taken, ${carried} msat, paid on the player's retry`);
+        } else if (got && (got.state === 'Rejected' || got.state === 'Invalid')) {
+          transition(s.id, EXCHANGE.RECEIVING, EXCHANGE.REFUSED, { why: `reclaimed by the player: the federation said ${got.state} when the seat asked again` });
+          log(`[exchange] ${s.id.slice(0, 12)}: a held reissue asked again by the seat - ${got.state}, reclaimed by the player, no longer owed`);
+        }
+      } catch (e) { note(s.id, EXCHANGE.RECEIVING, `asked again by the seat, no answer: ${String(e && e.message ? e.message : e).slice(0, 200)}`); }
+    }
   }
 
   const paidAnswer = (r, again) => ({ ok: true, ...(again ? { again: true } : {}), msat: String(r.out_msat), ecash: r.out_ecash, federation: r.to_fed });
@@ -181,6 +217,7 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
       let no = null;
       if (paidHour + w > perHourMsat) no = refuse(429, `this seat's exchanges for this hour are spent (${perHourMsat / 1000n} sat an hour)`);
       else {
+        await settleStale(to, id);   // kanban #3816
         const owed = owedRows.all(to, id).reduce((t, x) => {
           if (x.state === EXCHANGE.SENDING) return t + BigInt(x.pay_msat || 0);
           if (x.state === EXCHANGE.RECEIVING) return t + BigInt(x.want_msat || 0);   // kanban #2143: an asked reissue, at what it asked
@@ -203,7 +240,7 @@ export function createEcashExchange({ db, portOf, maxMsat = 1_000_000n, perHourM
     }
     if (!r) {
       // THE RECORD FIRST (kanban #1160): the exchange exists before the player's notes are reissued
-      const t = transition(id, null, EXCHANGE.RECEIVING, { from_fed: from, to_fed: to, want_msat: String(want), receive_asked: 0 });
+      const t = transition(id, null, EXCHANGE.RECEIVING, { from_fed: from, to_fed: to, want_msat: String(want), receive_asked: 0, in_ecash: ecash });   // in_ecash: kanban #3816
       if (!t.ok) return t;
       r = get.get(id);
     }
