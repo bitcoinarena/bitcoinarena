@@ -73,7 +73,9 @@ export const AUTH_AGE_MOST_S = 60;
 const WALLET_KEYS = Object.freeze([
   /\b(nsec|ncryptsec)1[0-9a-z]{20,}\b/gi,
   /\b[xtyzuvXYZUV]prv[1-9A-HJ-NP-Za-km-z]{100,112}\b/g,
-  /(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])/gi,
+  // kanban #3821 (a bypass of #1472): any hex run of 32 or more digits, not only exactly 64 - the lookarounds never matched inside a 128-hex BIP39
+  // seed, and a 12-word seed's 128-bit entropy is 32 hex. Glued to non-hex ("0x" + hex) it still counts, as before.
+  /(?<![0-9a-f])[0-9a-f]{32,}(?![0-9a-f])/gi,
   /\b[5KLc9][1-9A-HJ-NP-Za-km-z]{50,51}\b/g,
 ]);
 /**
