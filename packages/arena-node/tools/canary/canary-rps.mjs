@@ -6,6 +6,7 @@
 import { chromium } from 'playwright-core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 
 const U = (process.argv[2] || process.env.CANARY_URL || 'https://testnet.bitcoinarena.io').replace(/\/+$/, '');
 const DIR = process.env.CANARY_DIR || `${homedir()}/arena-canary`;
@@ -135,7 +136,16 @@ try {
   const isVoid = (signed && signed.word === 'NOT PLAYED') || (pay && /VOID/.test(pay)) || (!signed && !pay && alone);
   rec.played = !isVoid && !!((signed && /^(WON|LOST|DRAW)$/.test(signed.word)) || (pay && /DELIVERED|FAILED|FORFEIT/.test(pay)));
   if (!rec.result && rec.played) rec.result = rec.verdict || (/DELIVERED/.test(pay) ? 'DELIVERED' : 'LOST');
-  if (isVoid) {
+  // OPPONENT-BROKE, NOT VOID (kanban #3893, 2026-11-27: the bot ran out at 16:32Z and three hours of rounds said only "void"): a void round the
+  // bot never entered asks the Beelink what the bot logged for it (canary-beelink.py bot <round>, its run.log on the old Mac)
+  let bot = null;
+  if (isVoid && !(them > 0) && rec.round && process.env.CANARY_BEELINK) {
+    try { bot = JSON.parse(execFileSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', process.env.CANARY_BEELINK, 'python3', 'arena-canary/canary-beelink.py', 'bot', r8], { timeout: 60000 }).toString().trim().split('\n').pop()); }
+    catch (e) { bot = { ok: false, why: String(e.message || e).slice(0, 120) }; }
+    rec.bot = bot;
+  }
+  if (isVoid && bot && bot.ok && !bot.entered && (bot.broke || bot.low)) rec.fail.push('opponent-broke');
+  else if (isVoid) {
     if (rec.walletNew || !rec.keyRounds) rec.countable = false; // a fresh key's first round: the bot comes only for a key it knows (#2901)
     rec.fail.push('void');
   } else if (!rec.played) rec.fail.push('no-result-60s');

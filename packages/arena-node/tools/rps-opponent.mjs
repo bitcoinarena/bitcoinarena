@@ -24,7 +24,8 @@ import { lockFieldsToJson } from '../src/stake-lock-signer-node.js';
 import { attestedClaimKey } from '../../arena-client/src/join.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { hiddenMove, moveCommitment } from '../../arena-client/src/head-to-head.js';
-import { revealAsPage } from './h2h-reveal.mjs';   // kanban #2658: from protocol 28 the reveal waits for the certified lock set
+import { revealAsPage } from './h2h-reveal.mjs';
+import { gatewaysOf, topUp } from './bot-topup.mjs';   // kanban #3893: the next working gateway   // kanban #2658: from protocol 28 the reveal waits for the certified lock set
 import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../../arena-protocol/src/contracts.js';
 import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
@@ -377,22 +378,48 @@ const ahead = async () => {
 };
 setInterval(() => { ahead().catch(() => {}); }, 15000);
 // ITS OWN TOP-UP (kanban #947): a stake waits in a lock until its round settles, so a wallet under REFILL_BELOW sat asks the faucet for REFILL_SATS, one wallet and one ask at a time
-const REFILL_BELOW = Number(env.REFILL_BELOW || 500), REFILL_SATS = Number(env.REFILL_SATS || 3000), refilling = new Set();
+// OVER THE NEXT WORKING GATEWAY, EARLY (kanban #3893, 2026-11-27: gw-a's LND was down for ten hours, every top-up failed and the bot ran out): the
+// invoice is made at GATEWAYS in turn (./bot-topup.mjs - the last one that worked first) until the faucet pays one; the default threshold is
+// 3000 sat (several stakes, not the last one). DIR/balance.json says each wallet's balance and the last top-up and failure, every pass, for the
+// health watcher (kanban #3893: a Signal alert when a bot cannot top up)
+const REFILL_BELOW = Number(env.REFILL_BELOW || 3000), REFILL_SATS = Number(env.REFILL_SATS || 6000), refilling = new Set();
+const GATEWAYS = gatewaysOf(env), topState = { lastOk: null, lastFail: null, gateway: {} };   // gateway: the one that worked last, per federation
+const balanceFile = env.DIR ? join(env.DIR, 'balance.json') : null;
+// A WALLET WHOSE TOP-UP FAILED AT EVERY GATEWAY WAITS (measured 2026-11-27 20:00Z: in federation 4dc88be7 the faucet paid gw-a's and gw-b's
+// invoices and no claim came - asked again every 30 s, each pass would have put two more payments in flight): 5 min, doubled, at most 60 min
+const backoff = new Map(), BACKOFF_FIRST_MS = Number(env.REFILL_BACKOFF_MS || 300000), BACKOFF_MOST_MS = 3600000;
 const refill = async () => {
-  if (!env.REFILL_URL || !env.REFILL_TOKEN_FILE) return;
-  const token = readFileSync(env.REFILL_TOKEN_FILE, 'utf8').trim();
+  const token = env.REFILL_URL && env.REFILL_TOKEN_FILE ? readFileSync(env.REFILL_TOKEN_FILE, 'utf8').trim() : null;
+  const seen = {};
   for (const [fed, w] of wallets) {
-    if (refilling.has(fed)) continue;
     const have = BigInt(await w.lc.balanceMsat());
+    seen[fed.slice(0, 8)] = String(have);
+    if (!token || refilling.has(fed)) continue;
     if (have >= BigInt(REFILL_BELOW) * 1000n) continue;
+    const wait = backoff.get(fed);
+    if (wait && Date.now() < wait.untilMs) continue;
     refilling.add(fed);
     try {
-      const rcv = JSON.parse(await w.lc.receive(String(BigInt(REFILL_SATS) * 1000n), env.GATEWAY || ''));
-      const r = await (await fetch(env.REFILL_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ invoice: rcv.invoice, token }), signal: AbortSignal.timeout(90000) })).json();
-      log({ step: 'top-up asked', federation: fed.slice(0, 8), haveMsat: String(have), ok: r.ok, why: r.why });
-      if (r.ok) log({ step: 'topped up', federation: fed.slice(0, 8), final: await w.lc.awaitReceive(rcv.operation), balanceMsat: String(await w.lc.balanceMsat()) });
-    } catch (e) { log({ step: 'top-up failed', federation: fed.slice(0, 8), why: String(e.message).slice(0, 160) }); }
+      const r = await topUp({ gateways: GATEWAYS, prefer: topState.gateway[fed.slice(0, 8)],
+        receive: async (gw) => JSON.parse(await w.lc.receive(String(BigInt(REFILL_SATS) * 1000n), gw)),
+        ask: async (invoice) => (await fetch(env.REFILL_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ invoice, token }), signal: AbortSignal.timeout(90000) })).json(),
+        awaitReceive: (op) => w.lc.awaitReceive(op),
+        listed: async () => JSON.parse(await w.lc.gateways()),   // kanban #3893b: only gateways joined to this federation; none when its guardians are out of reach
+        log: (x) => log({ ...x, federation: fed.slice(0, 8) }) });
+      if (r.ok) {
+        topState.lastOk = { at: new Date().toISOString(), gateway: r.gateway }; topState.gateway[fed.slice(0, 8)] = r.gateway; backoff.delete(fed);
+        const after = String(await w.lc.balanceMsat()); seen[fed.slice(0, 8)] = after;
+        log({ step: 'topped up', federation: fed.slice(0, 8), haveMsat: String(have), gateway: r.gateway, skipped: r.tried.length, final: r.final, balanceMsat: after });
+      } else {
+        topState.lastFail = { at: new Date().toISOString(), why: r.tried.map((t) => `${t.gateway.replace(/^https?:\/\//, '').split('.')[0]} ${t.step}: ${t.why}`).join('; ').slice(0, 300) };
+        const ms = Math.min(BACKOFF_MOST_MS, wait ? wait.ms * 2 : BACKOFF_FIRST_MS); backoff.set(fed, { ms, untilMs: Date.now() + ms });
+        log({ step: 'top-up failed', federation: fed.slice(0, 8), haveMsat: String(have), why: topState.lastFail.why, nextTryMin: Math.round(ms / 60000) });
+      }
+    } catch (e) { topState.lastFail = { at: new Date().toISOString(), why: String(e.message).slice(0, 160) }; log({ step: 'top-up failed', federation: fed.slice(0, 8), why: topState.lastFail.why }); }
     refilling.delete(fed);
+  }
+  if (balanceFile) {
+    try { writeFileSync(balanceFile + '.tmp', JSON.stringify({ at: new Date().toISOString(), belowSat: REFILL_BELOW, refillSat: REFILL_SATS, gateways: GATEWAYS, balanceMsat: seen, ...topState })); renameSync(balanceFile + '.tmp', balanceFile); } catch { /* next pass */ }
   }
 };
 setInterval(() => { refill().catch(() => {}); }, 30000);
