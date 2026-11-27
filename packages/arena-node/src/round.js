@@ -52,6 +52,7 @@ import { PRICE_SCALE, TICK, SHARE_MSAT, MIN_SHARES, MIN_ORDER_MSAT, MAX_ORDER_MS
 import { OPEN, CLOSED, nodeIdentity } from './store.js';
 import { receiptsNeeded } from '../../arena-protocol/src/genesis.js';
 import { decodeHandout } from '../../arena-protocol/src/handout.js';
+import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
 import { stakePointIsTheHandouts } from '../../arena-protocol/src/contracts.js';
 import { lockClaimDigest, lockClaimKeyOf, LOCK_CLAIM_BYTES } from '../../arena-protocol/src/lock-claim.js';
 import { firstMarkOutcome, startDeadlineOf, roundEndMs } from '../../arena-protocol/src/first-mark.js';
@@ -1022,10 +1023,62 @@ export class Round {
    * behind for a second attempt to inherit.
    */
   rememberHandout({ id, roundId, bytes }) {
-    this.db.prepare(
+    const took = this.db.prepare(
       'INSERT OR IGNORE INTO handouts (handout_id, round_id, bytes, accepted_ms) VALUES (?, ?, ?, ?)')
-      .run(id, roundId, bytes, this.now());
+      .run(id, roundId, bytes, this.now()).changes === 1;
+    // kanban #3846: a round whose keys are already indexed takes the new row at its end (rowid order, as handoutsOf reads it)
+    if (took) this.#keysIndexAdd(roundId, id, bytes);
     return id;
+  }
+
+  /**
+   * THE HANDOUTS OF ONE ROUND BY THEIR A0 AND THEIR PLAYER'S REFUND KEY, DECODED ONCE (kanban #3846, audit r30 entry-1, #1605 regressed):
+   * POST /refused-lock decoded every handout of the round per ask - a stranger's free loose handouts reach HANDOUTS_LOOSE_CEILING
+   * (8192, #2136/#2481), 19.9 ms per unauthenticated ask with a made-up lock. Each handout is decoded once, when it is stored or when
+   * the round is first asked for, and kept here as its id, A0 (hex), refund key (hex) and player key, in rowid order (the order
+   * handoutsOf answers, so the first match stays the one it was). Only the rounds last asked for are kept (HANDOUT_KEYS_ROUNDS).
+   * Memory only, nothing a seat agrees on: the same rows, the same matches, read without decoding.
+   */
+  #handoutKeys = new Map();
+  static HANDOUT_KEYS_ROUNDS = 32;
+  static #handoutKeyOf(id, bytes) {
+    let d; try { d = decodeHandout(new Uint8Array(bytes)); } catch { return null; }
+    let refund = null; try { refund = toHex(refundKeyOf(d.playerPubkey)); } catch { /* no refund key: matches no lock */ }
+    return { id: new Uint8Array(id), a0: d.commitments && d.commitments[0] ? toHex(d.commitments[0]) : null, refund, playerPubkey: d.playerPubkey };
+  }
+  #keysIndexOf(roundIdBytes) {
+    const key = toHex(roundIdBytes);
+    let ix = this.#handoutKeys.get(key);
+    if (ix) { this.#handoutKeys.delete(key); this.#handoutKeys.set(key, ix); return ix; }
+    ix = { rows: [], at: new Map() };
+    for (const r of this.db.prepare('SELECT handout_id, bytes FROM handouts WHERE round_id = ? ORDER BY rowid').all(Buffer.from(roundIdBytes))) {
+      ix.at.set(toHex(r.handout_id), ix.rows.length); ix.rows.push(Round.#handoutKeyOf(r.handout_id, r.bytes));
+    }
+    this.#handoutKeys.set(key, ix);
+    while (this.#handoutKeys.size > Round.HANDOUT_KEYS_ROUNDS) this.#handoutKeys.delete(this.#handoutKeys.keys().next().value);
+    return ix;
+  }
+  #keysIndexAdd(roundIdBytes, id, bytes) {
+    const ix = this.#handoutKeys.get(toHex(roundIdBytes));
+    if (!ix || ix.at.has(toHex(id))) return;
+    ix.at.set(toHex(id), ix.rows.length); ix.rows.push(Round.#handoutKeyOf(id, bytes));
+  }
+  #keysIndexReplace(roundIdBytes, oldId, id, bytes) {
+    const ix = this.#handoutKeys.get(toHex(roundIdBytes));
+    if (!ix) return;
+    const i = ix.at.get(toHex(oldId));
+    if (i === undefined) { this.#handoutKeys.delete(toHex(roundIdBytes)); return; }
+    ix.at.delete(toHex(oldId)); ix.at.set(toHex(id), i); ix.rows[i] = Round.#handoutKeyOf(id, bytes);
+  }
+
+  /** kanban #3846: the round's handouts whose A0 is `a0Hex`, in handoutsOf's order: { id, a0, refund, playerPubkey } (decoded ones only). */
+  handoutsWithA0(roundIdBytes, a0Hex) {
+    return this.#keysIndexOf(roundIdBytes).rows.filter((h) => h && h.a0 !== null && h.a0 === a0Hex);
+  }
+
+  /** kanban #3846: the round's handouts whose player's refund key is `refundHex`, in handoutsOf's order (decoded ones only). */
+  handoutsRefundingTo(roundIdBytes, refundHex) {
+    return this.#keysIndexOf(roundIdBytes).rows.filter((h) => h && h.refund !== null && h.refund === refundHex);
   }
 
   /** An accepted handout by its id, or nothing. */
@@ -2969,8 +3022,11 @@ export class Round {
    * bounded and nothing is dropped beside it. Answers whether the row was taken (false when that old one is gone or now named).
    */
   replaceHandout(oldId, { id, roundId, bytes }) {
-    return this.db.prepare('UPDATE OR IGNORE handouts SET handout_id = ?, bytes = ?, accepted_ms = ? WHERE handout_id = ? AND round_id = ?')
+    const took = this.db.prepare('UPDATE OR IGNORE handouts SET handout_id = ?, bytes = ?, accepted_ms = ? WHERE handout_id = ? AND round_id = ?')
       .run(Buffer.from(id), Buffer.from(bytes), this.now(), Buffer.from(oldId), Buffer.from(roundId)).changes === 1;
+    // kanban #3846: the row keeps its rowid, so its indexed keys are replaced in place
+    if (took) this.#keysIndexReplace(roundId, oldId, id, bytes);
+    return took;
   }
 
   /** Every handout this signer node accepted for one round: its id and bytes. */
