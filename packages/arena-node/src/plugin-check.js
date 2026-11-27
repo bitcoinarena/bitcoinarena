@@ -361,12 +361,21 @@ export const boundedAncestors = (ancestors) => { const w = packageWindow(ancesto
  * [{ check, ok, detail }], findings, why }. Every check is listed, passed or not, so the page shows the whole report.
  */
 export const MAX_PACKAGE_CORES = 32;   // kanban #2824
+// A BOUNDED MANIFEST (kanban #3847, #1489 r41-hosting-1): clients[] and each core's configs[] are u16 vecs of 32-byte hashes, so a developer could
+// sign a version naming 65535 client hashes (2 MiB of manifest) that it never ships. Every hosting seat took it by the update sweep, and its GET /games
+// (each manifest's hex) then passed PEER_LISTING_BYTES: every other seat dropped that seat's whole listing, every honest game on it. A seat hosts
+// and takes only a manifest of at most MAX_MANIFEST_BYTES encoded - 512 hashes' room; the largest real one (Next Block, 5 cores) is far below it.
+export const MAX_MANIFEST_BYTES = 16384;
 export function checkPackage(pkg, { verify, want = null, parentOf = () => null } = {}) {
   const checks = [], findings = [];
   const add = (check, ok, detail = '') => { checks.push({ check, ok, detail }); return ok; };
   const out = (why, extra = {}) => ({ ok: !why, why: why || null, checks, findings, ...extra });
   if (!add('a package of this store', !!pkg && pkg.format === 'arena-plugin/v1')) return out('that is not an arena-plugin/v1 package');
   let manifest;
+  // kanban #3847: the size first, before it is decoded
+  const manifestBytes = String(pkg.manifest).length / 2;
+  if (!add('its manifest is of a bounded size', manifestBytes <= MAX_MANIFEST_BYTES, `${manifestBytes} of at most ${MAX_MANIFEST_BYTES} bytes`))
+    return out(`its manifest is ${manifestBytes} bytes, more than the ${MAX_MANIFEST_BYTES} a seat hosts for one game`);
   try { manifest = decodeManifest(fromHex(String(pkg.manifest))); add('the manifest reads', true); }
   catch (e) { add('the manifest reads', false, e.message); return out(`its manifest does not decode: ${e.message}`); }
   const gameId = toHex(gameIdOf(manifest));
