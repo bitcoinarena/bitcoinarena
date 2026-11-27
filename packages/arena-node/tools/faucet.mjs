@@ -307,6 +307,9 @@ const PAYERS = String(env.FAUCET_PAYERS || '').split(',').filter(Boolean).map((p
 const lncli = (payer, args, timeoutMs = 20000) => new Promise((res) => execFile(payer.lncli || env.FAUCET_LNCLI, [`--lnddir=${payer.dir}`, `--network=${payer.network || 'testnet4'}`, `--rpcserver=${payer.rpcserver}`, ...args],
   // NO 1 MB CAP ON WHAT LNCLI PRINTS (kanban #1785, state audit 2026-11-12, SM-22): node's default maxBuffer failed a listpayments of a few hundred payments
   { timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024 }, (e, out, err) => res({ ok: !e, timedOut: !!(e && e.killed), out: String(out), err: String(err) })));
+// AN INVOICE READ BY ANY PAYER THAT ANSWERS (kanban #3893, 2026-11-27): decodepayreq asked only the first payer (LND A); with LND A down every
+// refill and every welcome by invoice was "that invoice cannot be read", though LND B could have read and paid it
+const decodeAny = async (invoice) => { let last = { ok: false, out: '', err: 'no payer' }; for (const p of PAYERS) { last = await lncli(p, ['decodepayreq', invoice]); if (last.ok) return last; } return last; };
 // LNCLI'S STATUS LINE, NEVER THE PAYEE'S WORDS (kanban #2416, #2482, #1489 a44-refute-84 s2): without --json lncli 0.21 prints the payment as a table
 // whose ROUTE column holds the hops' node ALIASES - chosen by the payee. An alias "not found" or "Unknown Payment" made trackpayment read as NONE
 // while lnd said IN_FLIGHT, the sweep dropped the welcome, and the account was paid a second one. A status is read only from a line that BEGINS with
@@ -576,7 +579,7 @@ const wholeSatsOf = (inv) => { const m = inv && inv.num_msat !== undefined && in
   return /^\d+$/.test(m) && BigInt(m) % 1000n === 0n && BigInt(m) / 1000n === BigInt(String(Number(inv.num_satoshis) || 0)) ? Number(inv.num_satoshis) : null; };
 async function grant(ask) {
   if (!/^lntb[0-9a-z]{20,1500}$/.test(String(ask.invoice || ''))) return { ok: false, why: 'that is not a testnet invoice' };
-  const read = await lncli(PAYERS[0], ['decodepayreq', ask.invoice]);
+  const read = await decodeAny(ask.invoice);
   if (!read.ok) return { ok: false, why: 'that invoice cannot be read' };
   const inv = JSON.parse(read.out);
   const book = readBook();
@@ -819,7 +822,7 @@ createServer((req, res) => {
         const b = JSON.parse(raw || '{}'), want = readFileSync(env.FAUCET_REFILL_TOKEN_FILE, 'utf8').trim(), got = Buffer.from(String(b.token || ''));
         if (got.length !== want.length || !timingSafeEqual(got, Buffer.from(want))) return send(403, { ok: false, why: 'no' });
         if (!/^lntb[0-9a-z]{20,1500}$/.test(String(b.invoice || ''))) return send(200, { ok: false, why: 'that is not a testnet invoice' });
-        const read = await lncli(PAYERS[0], ['decodepayreq', b.invoice]);
+        const read = await decodeAny(b.invoice);
         if (!read.ok) return send(200, { ok: false, why: 'that invoice cannot be read' });
         const inv = JSON.parse(read.out);
         if (wholeSatsOf(inv) === null) return send(200, { ok: false, why: 'the invoice must be for whole sats' });   // kanban #2857

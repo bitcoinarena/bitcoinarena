@@ -42,6 +42,7 @@ import { roundSeating, NOW_ROUNDS } from '../../../src/arena-ui/health/network.j
 import { readGateway } from '../src/hosts.js';
 import { netMoves } from '../src/gateway-loss.js';
 import { openWindows, applyPlanned, autoWindow, rollsIn } from './health-watcher-planned.mjs';
+import { botsConfig, gatherBots, botProblems, signalSend, BOT_KEYS } from './health-watcher-bots.mjs';   // kanban #3893
 import { pubsConfig, gatherPubs, assessPubs, pubMemTxs, doResend, doCpfp, doPublicMine, lookScript, parseLook, callsScript, parseCalls, opsPublished, esploraCalls } from './health-watcher-pubs.mjs';
 
 const H = process.env.HOME || '/home/arena';
@@ -87,7 +88,8 @@ export function config(env = process.env, argv = []) {
     chat: { url: env.HW_CHAT_URL || 'https://seat.example.com/arenachat/api/channels/1/messages', tokenFile: env.HW_CHAT_TOKEN_FILE || `${H}/.config/blwp/arenachat-token`,
       mention: env.HW_MENTION || '@owner' },
     probeCensus: env.HW_PROBE_CENSUS !== '0',
-    pubs: pubsConfig(env, H),                           // f. the round publications on both chains (./health-watcher-pubs.mjs)
+    pubs: pubsConfig(env, H),
+    bots: botsConfig(env),                              // g. the testnet LNDs and the test bots' top-ups (./health-watcher-bots.mjs, kanban #3893)                           // f. the round publications on both chains (./health-watcher-pubs.mjs)
     // g. "name,base,password file[,dead-notes file]" per gateway, separated by ";" (kanban #2773)
     gateways: String(env.HW_GATEWAYS || '').split(';').map((x) => x.trim()).filter(Boolean).map((x) => { const [name, base, passwordFile, deadFile] = x.split(',').map((y) => y.trim());
       return { name, base: String(base || '').replace(/\/+$/, ''), passwordFile, ...(deadFile ? { deadFile } : {}) }; }),
@@ -532,6 +534,11 @@ export async function pass(io, cfg, prev) {
   await recheckSeats(io, problems, f, cfg);
   combineSeatsDown(problems, nowMs, state);
   if (f.censusProbe) state.census = { atMs: f.censusProbe.atMs, answering: f.censusProbe.answering };
+  // g. the testnet LNDs and the test bots' top-ups (kanban #3893): their own pass counts in state.bots (assess() clears unknown streak keys)
+  if (cfg.bots && (cfg.bots.lnds.length || cfg.bots.bots.length)) {
+    try { f.bots = await gatherBots(io, cfg.bots); problems.push(...botProblems(f.bots, state.bots = state.bots || {}, cfg.bots, cfg, nowMs)); }
+    catch (e) { problems.push({ key: 'bots-unread', ticket: '3893', title: 'bots and LNDs not read', lines: [String(e.message).slice(0, 160)], tried: [], needs: '-', alert: false }); }
+  }
   const did = [];
   for (const x of fixes.filter((y) => y.allowed)) {
     if (cfg.dry) { did.push({ ...x, dry: true, why: x.kind === 'cpfp' ? (await doCpfp(io, state, cfg.pubs, x.txid, nowMs, { plan: true }).catch((e) => ({ text: e.message }))).text : null }); continue; }
@@ -548,8 +555,13 @@ export async function pass(io, cfg, prev) {
   }
   const alerts = alertsDue(problems, state, cfg, nowMs), posted = [];
   for (const a of alerts) {
-    if (cfg.dry) { posted.push({ ...a, dry: true }); markAlerted(state, a, problems, nowMs); continue; }
-    try { await io.post(a.text); markAlerted(state, a, problems, nowMs); posted.push({ ...a, ok: true }); } catch (e) { posted.push({ ...a, ok: false, why: e.message }); }
+    const sig = BOT_KEYS.test(a.key) && !!io.signal;   // kanban #3893: a bot that cannot top up, a testnet LND down - to Signal too
+    if (cfg.dry) { posted.push({ ...a, dry: true, signal: sig }); markAlerted(state, a, problems, nowMs); continue; }
+    let chat = null, signal = null;
+    try { await io.post(a.text); chat = true; } catch (e) { chat = e.message; }
+    if (sig) { try { await io.signal(a.text); signal = true; } catch (e) { signal = e.message; } }
+    if (chat === true || signal === true) { markAlerted(state, a, problems, nowMs); posted.push({ ...a, ok: true, signal: sig ? signal : undefined, why: chat === true ? undefined : `chat: ${chat}` }); }
+    else posted.push({ ...a, ok: false, why: `${chat}${sig ? `; signal: ${signal}` : ''}` });
     // the money alerts also reach the owner's phone (kanban #2773): new, again and resolved; a failed Signal send is said in the log
     if (/^(gateway|no-open):/.test(a.key) && io.signal && cfg.signal.to) {
       try { await io.signal(a.text); posted.push({ ...a, kind: `${a.kind} signal`, ok: true }); } catch (e) { posted.push({ ...a, kind: `${a.kind} signal`, ok: false, why: e.message }); }
@@ -673,6 +685,9 @@ export function realIo(cfg) {
       if (!r.ok) throw new Error(`signal HTTP ${r.status}`);
       const j = await r.json().catch(() => ({})); if (j.error) throw new Error(`signal: ${j.error.message || 'error'}`);
     },
+    // kanban #3893: a bot's balance file, here ('-') or over one ssh; a Signal message through the local signal-cli
+    readBotFile: async (b) => (b.host === '-' ? readFileSync(b.path, 'utf8') : run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', b.host, `cat ${b.path}`], { timeout: 30000 })),
+    signal: cfg.bots && cfg.bots.signal.toFile ? (text) => signalSend(cfg.bots, text, { readFile: (f) => readFileSync(f, 'utf8') }) : undefined,
     // a PLAIN channel message as bot claude: no thread_id, no reply_to (memory arena-chat-mandatory)
     post: async (text) => {
       const token = readFileSync(cfg.chat.tokenFile, 'utf8').trim();
@@ -705,7 +720,7 @@ export function report(r, cfg) {
     ...(r.planned && r.planned.length ? { planned: r.planned.map((w) => `${w.what} until ${new Date(Number(w.untilMs)).toISOString().slice(11, 16)}${w.auto ? ' (roll seen)' : ''}`) } : {}),
     fixes: r.fixes.map((x) => `${x.allowed ? (cfg.dry ? 'would' : 'do') : 'held'} ${x.kind} ${x.unit || (x.txid ? x.txid.slice(0, 8) : `${x.chain ? `${x.chain} ` : ''}${(x.txids || []).length} txid(s)`)}${x.blocked.length ? ` (${x.blocked.join('; ')})` : ''}`),
     did: r.did.map((x) => `${x.kind} ${x.unit || x.chain || (x.txid || '').slice(0, 8)}${x.txids ? ` ${x.txids.map((t) => t.slice(0, 8)).join(',')}` : ''}${x.dry ? ' (dry)' : x.ok ? ' ok' : ' FAILED'}${x.why ? `: ${x.why}` : ''}`),
-    alerts: r.alerts.map((a) => `${a.kind} ${a.key}${a.dry ? ' (dry: not posted)' : a.ok ? ' posted' : ` NOT POSTED ${a.why}`}`) })];
+    alerts: r.alerts.map((a) => `${a.kind} ${a.key}${a.dry ? ` (dry: not posted${a.signal ? ', would signal' : ''})` : a.ok ? ` posted${a.signal === true ? ' + signal' : a.signal ? ` (signal failed: ${a.signal})` : ''}` : ` NOT POSTED ${a.why}`}`) })];
   if (cfg.dry) {
     for (const p of r.problems) out.push(`--- detected ${p.key}${p.alert ? '' : ' (no alert yet)'}\n${alertText(p, cfg, null)}`);
     for (const a of r.alerts) out.push(`--- would post (${a.kind}):\n${a.text}`);
