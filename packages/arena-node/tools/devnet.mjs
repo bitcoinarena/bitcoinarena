@@ -655,9 +655,11 @@ async function runner() {
           const windowMs = Math.max(60000, Math.min(Number(u.searchParams.get('windowMs') || PAID_WINDOW_MS), 3600000));
           // &game= a hosted game's round (kanban #1412: a head-to-head RPS round); &objectionMs= its objection window (under 600 s: the H2H short window)
           const g = u.searchParams.get('game'), om = u.searchParams.get('objectionMs');
+          // &censusHeight= (kanban #3896): a census at a later height than the first round's - bonds posted after `up` (the audit-only nodes, `devnet.mjs auditors`) are in it
+          const ch = u.searchParams.get('censusHeight');
           // a game whose plugin names its round fields (RPS_ROUND_FIELDS: run length, start deadline, min score) gets them
           const own = g === 'rock-paper-scissors' ? (await import('../../rock-paper-scissors/plugin/rock-paper-scissors.js')).RPS_ROUND_FIELDS : {};
-          const fields = { ...(g ? { ...fieldsOf(g), ...own } : {}), ...(om ? { objectionWindowMs: BigInt(Math.max(5000, Math.min(Number(om), 3600000))) } : {}) };
+          const fields = { ...(g ? { ...fieldsOf(g), ...own } : {}), ...(om ? { objectionWindowMs: BigInt(Math.max(5000, Math.min(Number(om), 3600000))) } : {}), ...(ch ? { censusHeight: Number(ch) } : {}) };
           const id = await open('paid', { stakeMsat: BigInt(u.searchParams.get('stakeMsat') || stake), entryAfterStartMs: windowMs, ...(Object.keys(fields).length ? { fields } : {}) });
           return send(201, state.rounds.find((r) => r.id === id));
         }

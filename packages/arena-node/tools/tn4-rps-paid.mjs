@@ -42,6 +42,7 @@ import { decodeRoundContract, roundId, encodeEntryContract, entryId } from '../.
 import { markBot, entryKeys } from './mark-bot.mjs';   // kanban #2035: every live entry marked bot in the explorer
 import { seatingCloseMs } from '../../arena-protocol/src/seating.js';
 import { clientSettlementSignerNodes } from '../../arena-client/src/committee.js';
+import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
@@ -97,6 +98,13 @@ const invite = readFileSync(env.INVITE_FILE, 'utf8').replace(/["\s]/g, '');
 // A PRIVATE CHAIN'S OWN GENESIS (as tn4-live-run.mjs, kanban #1412: the head-to-head audit regtest): ANCHOR_HASH=<block hash hex, display order>
 // on a devnet, where no compiled-in anchor names the chain
 const anchorAt = env.ANCHOR_HASH ? { hash: Uint8Array.from(Buffer.from(env.ANCHOR_HASH, 'hex')).reverse(), height: Number(env.ANCHOR_HEIGHT || 0) } : null;
+// CENSUS KEY 0 OF A PRIVATE CHAIN (as tn4-live-run.mjs, kanban #972/#3896): a devnet that slashes (DEVNET_SLASH=1) bonds on template 3 under the key its seats
+// were started with; without it this client counts none of those bonds and builds no committee. Regtest only.
+const regtestKey0 = (() => {
+  if (!env.ARENA_REGTEST_CENSUS_KEY_0 || (env.ARENA_TN4_NETWORK || 'testnet4') !== 'regtest') return null;
+  const k = JSON.parse(readFileSync(env.ARENA_REGTEST_CENSUS_KEY_0, 'utf8'));
+  return { ...genesisFor('regtest'), censusKey0: { publicKey: fromHex(k.publicKey), holders: k.holders.map(fromHex), threshold: k.threshold } };
+})();
 // THE VERSION THE GRID POSTS (kanban #2642, measured 2026-11-14 ~20:30Z: the live grid posts RPS 769a4754 (v9) only, and this tool's v5
 // default found "no RPS round held whose entry closes more than 270 s ahead" for 45 min beside 280 such v9 rounds): RPS_GAME_ID=<hex>,
 // or RPS_GAME_ID=listed - the RPS version with the most rounds open far enough ahead in the seat's own listing
@@ -273,7 +281,7 @@ try {
   // none 11 s after the close, all 7 seats holding it a minute later) - asked again every 5 s, until 150 s before entry close
   let seated = null;
   for (;;) {
-    try { seated = await clientSettlementSignerNodes(roundHex, c, nodes, { curve: pageCurve, ...(anchorAt ? { anchorAt } : {}) }); break; }
+    try { seated = await clientSettlementSignerNodes(roundHex, c, nodes, { curve: pageCurve, ...(anchorAt ? { anchorAt } : {}), ...(regtestKey0 ? { genesis: regtestKey0 } : {}) }); break; }
     catch (e) { if (!/no certificate/.test(e.message) || Date.now() > Number(c.entryCloseMs) - 150000) throw e; log({ step: 'certificate not yet', why: e.message.slice(0, 120) }); await new Promise((r) => setTimeout(r, 5000)); }
   }
   log({ step: 'seated', signerNodes: seated.signerNodes.length, agreed: seated.agreed });
