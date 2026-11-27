@@ -121,7 +121,7 @@ export function inForceOf(bonds) {
   return best ? best.b : null;
 }
 
-export async function addBondFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, addSats, post = false, blockMs = 600000, now = Date.now(), key = null, journal = null }) {
+export async function addBondFromWallet({ cli, wallet, network = 'testnet4', secret, pubkey, addSats, post = false, blockMs = 600000, now = Date.now(), key = null, journal = null, waitFor = null }) {
   let add; try { add = BigInt(String(addSats)); } catch { return { ok: false, why: 'name the sat to add as a whole number' }; }
   if (add < MIN_ADD) return { ok: false, why: `add at least ${MIN_ADD} sat` };
   const { regtest } = await import('../tools/regtest-bond.mjs');
@@ -141,7 +141,13 @@ export async function addBondFromWallet({ cli, wallet, network = 'testnet4', sec
       // never sent (kanban #1423): built and sent anew below
     }
   }
-  const newest = inForce;   // the advertisement in force, as the census reads it (kanban #1836), not bonds[0]
+  // THE ADDED OUTPUT CARRIES THE NEWEST ADVERTISEMENT SENT (state audit sm1-node-1, kanban #3815, gap in #2182): its body came from inForceOf -
+  // mined markers only - with a new timestamp, so an Add to bond sent while the owner's roles change (custody off, a role dropped) sat in the
+  // mempool put the old roles and guardian_capable back under a newer timestamp; mined a block later, the census read it and the owner's change
+  // was undone, "already" for 30 min. Built on advertInForce as the roles door and the seat's own check are; refused while the seat's own
+  // advertisement update (.advert-self.json, `waitFor`) is unconfirmed, as the roles door is
+  if (waitFor && inMempool(cli, waitFor)) return { ok: false, why: `this node's own advertisement update ${String(waitFor).slice(0, 16)} is not confirmed yet: add to the bond once it is mined` };
+  const newest = { ...inForce, advert: advertInForce(cli, rt, inForce, journal ? journal.last('roles') : null) };   // in force as the census reads it (kanban #1836), not bonds[0]
   const versions = [...new Set([...(newest.advert.protocolVersions || []), ...SUPPORTED_PROTOCOL_VERSIONS])].sort((a, b) => a - b);
   let fundingHex = null, fundingFee = 0n, made;
   try { made = rt.postBond(secret, { advert: { ...newest.advert, protocolVersions: versions }, bondSats: add, utxo: (spk) => {
