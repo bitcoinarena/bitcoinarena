@@ -1754,6 +1754,10 @@ export class Round {
     const key = `${toHex(roundIdBytes)}:${toHex(entryIdBytes)}`;
     const head = this.db.prepare('SELECT batch_id FROM batches WHERE round_id = ? AND entry_id = ? ORDER BY seq DESC LIMIT 1').get(roundIdBytes, entryIdBytes);
     const now = { n: this.db.prepare('SELECT COUNT(*) AS n FROM batches WHERE round_id = ? AND entry_id = ?').get(roundIdBytes, entryIdBytes).n, last: head ? toHex(new Uint8Array(head.batch_id)) : '' };
+    // A PAIR WITH NO BATCHES TAKES NO KEY (kanban #3827, #1489 r40-play-1): any stranger may name any (round, entry) pair, and each
+    // made-up one used to take one of the 256 keys and push a long run's answer out, so ~257 cheap asks bought a whole rebuild of it.
+    // An empty chain costs nothing to build, so it is built per ask and never kept.
+    if (now.n === 0) return this.#handOverBuilt(roundIdBytes, entryIdBytes);
     if (!this.handedOver) this.handedOver = new Map();
     const kept = this.handedOver.get(key);
     if (kept && kept.n === now.n && kept.last === now.last) return kept.out;
