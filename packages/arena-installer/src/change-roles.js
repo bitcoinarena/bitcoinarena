@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { walletOf, payoutKeyOf, coinsOf, broadcast, txSeen } from './wallet.js';
 import { onchainAction, resumeOpen } from './onchain-action.js';
-import { advertFor, advertRoles, buildAdvertUpdate, EMERGENCY_IN_ADVERT, NEXTBLOCK_GAME_ID } from './bond.js';
+import { advertFor, advertRoles, buildAdvertUpdate, EMERGENCY_IN_ADVERT, NEXTBLOCK_GAME_ID, MARKER_SATS } from './bond.js';
 import { emergencyOf } from './seed.js';
 import { nodeState, guardianSetupOf } from './state.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
@@ -206,4 +206,34 @@ export async function refreshEndpoint({ home, release, post = false, chainKit = 
   if (!r.ok) return r;
   if (r.already) { st.save({ advertEndpoint: endpoint }); return { ok: true, unchanged: true }; }
   return { ok: true, plan: r.result.plan, update: { txid: r.result.txid } };
+}
+
+/**
+ * CAN THE NODE WALLET PAY THE UPDATE? (kanban #3888, node operators 2026-11: an update failed again and again on an empty wallet and the page
+ * said only "not posted"). The advertisement update naming `reach.url` built from the wallet's coins as refreshEndpoint would build it, nothing
+ * sent. Answers { ok, enough: true, feeSats, haveSats, deposit } or { ok, enough: false, haveSats, needSats, deposit, why } - the amount the
+ * update needs (the marker output and both fees) and the wallet's address to send it to; { ok: false, why } when it cannot be told.
+ */
+export async function advertFeeCheck({ home, release, chainKit = { coinsOf, broadcast, seen: txSeen }, state = null, nowMs = Date.now() }) {
+  const st = state || nodeState(home);
+  const s = st.read();
+  if (!s.bond || !s.bond.txid || !s.reach || !s.reach.url) return { ok: false, why: 'no bond or no address to update yet' };
+  const seedHex = st.readSecret('seed.hex');
+  if (!seedHex) return { ok: false, why: 'the wallet seed is not in this node\'s home' };
+  const deposit = walletOf(fromHex(seedHex)).address;
+  let have = 0n;
+  const counted = { ...chainKit, coinsOf: async (...a) => { const r = await chainKit.coinsOf(...a); have = (r.coins || []).reduce((n, c) => n + BigInt(c.sats), 0n); return r; } };
+  const built = await advertUpdateOf({ st, s, release, roles: s.roles || [], nowMs, chainKit: counted });
+  if (built.ok) return { ok: true, enough: true, feeSats: String(built.update.fees.funding + built.update.fees.update), haveSats: String(have), deposit };
+  const short = /holds (\d+) sat: an advertisement update needs at least (\d+) sat/.exec(built.why || '');
+  if (!short && !/holds no coins/.test(built.why || '')) return { ok: false, why: built.why };
+  let need;
+  if (short) need = BigInt(short[2]);
+  else {   // an empty wallet: what the same update would need, built over one coin that stands in for a deposit
+    const probe = await advertUpdateOf({ st, s, release, roles: s.roles || [], nowMs, chainKit: { ...chainKit, coinsOf: async () => ({ tip: null, coins: [{ txid: '00'.repeat(32), vout: 0, sats: 100000 }] }) } });
+    need = probe.ok ? MARKER_SATS + probe.update.fees.funding + probe.update.fees.update : MARKER_SATS + 2000n;
+  }
+  const send = need > have ? need - have : 0n;
+  return { ok: true, enough: false, haveSats: String(have), needSats: String(need), sendSats: String(send), deposit,
+    why: `the node wallet holds ${have} sat, the advertisement update needs ${need} sat: send at least ${send} sat to ${deposit}` };
 }
