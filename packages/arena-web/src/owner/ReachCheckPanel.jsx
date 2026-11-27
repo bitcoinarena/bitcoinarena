@@ -35,6 +35,17 @@ export function whyNot(r) {
   }
 }
 
+const about = (m) => (m >= 90 ? `about ${Math.round(m / 60)} hours` : m > 0 ? `about ${m} minutes` : 'a few minutes');
+/** The advertisement update's progress as one line (reach-follow.js progressOf). */
+export function updateLine(pr) {
+  const tx = pr.txid ? `${String(pr.txid).slice(0, 12)}…` : '';
+  const title = 'Address update on chain';
+  if (pr.step === 'taken') return { id: 'update', level: 'ok', title, says: 'Taken: the census names your new address. Players and nodes go there now.', fix: null };
+  if (pr.step === 'sent') return { id: 'update', level: 'warn', title, says: `Sent (${tx}), waiting for its first confirmation.`, fix: `The census takes the new address in ${about(pr.minutesLeft)}. Nothing to do meanwhile.` };
+  if (pr.step === 'confirming') return { id: 'update', level: 'warn', title, says: `${pr.depth} of ${pr.need} confirmations (${tx}).`, fix: `The census takes the new address in ${about(pr.minutesLeft)}. Nothing to do meanwhile.` };
+  return { id: 'update', level: 'warn', title, says: `${pr.depth} of ${pr.need} confirmations (${tx}): deep enough.`, fix: `The census takes it at its next step, in ${about(pr.minutesLeft)}.` };
+}
+
 /** The most common failure among results (for one sentence of advice). */
 const commonFailure = (rs) => {
   const by = new Map();
@@ -75,6 +86,9 @@ export function diagnose({ reach = null, pageBase = null, probes = [], rounds = 
     else fix = 'No update naming your new address has been sent yet. Your node sends one by itself within 10 minutes; if this stays red, restart the node.';
     lines.push({ id: 'census', level: f && f.update && f.update.txid ? 'warn' : 'bad', title: 'Address the network has', says: `The network still sends players to ${old}, not to your current address.`, fix });
   }
+  // THE UPDATE'S PROGRESS (kanban #3889): sent -> n of 6 confirmations -> the census's next step -> taken
+  const pr = f && f.progress;
+  if (pr) lines.push(updateLine(pr));
   // 3 REACHABLE FROM OUTSIDE: each seat's results for the address now (the census one when the seat holds no other)
   const all = answered.flatMap((p) => (p.body.results || []).map((r) => ({ ...r, seat: p.seat })));
   const forCurrent = current ? all.filter((r) => norm(r.url) === norm(current)) : [];
