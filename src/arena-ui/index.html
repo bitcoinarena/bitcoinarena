@@ -9047,7 +9047,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             let signers = [];
             try {
               const keys = new Set(((row && row.contract && row.contract.nodes) || []).map((k) => ARENACLIENT.toHex(k)));
-              signers = [...new Set(((row && row.said) || []).filter((c) => c && c.node && keys.has(c.key)).map((c) => c.node))];
+              // ONLY A LISTING THAT COUNTS, ONE URL PER SIGNER KEY (kanban #3879, audit bypass of #3023): `key` is the /rounds answer's own
+              // word, kept for every listing signed or not, so one box under six paths claiming signer keys unsigned was six "signer seats"
+              // and its padded book outvoted the honest ones. A row fetchLobby built marks each listing `counts` (fresh, signed by that key,
+              // open and assigned there); only those are read, and each key once (as lobby.js does for `played`, kanban #2555)
+              const said = (row && row.said) || [];
+              const fromLobby = said.some((c) => c && typeof c.counts === 'boolean');
+              const seen = new Set();
+              signers = said.filter((c) => c && c.node && keys.has(c.key) && (!fromLobby || c.counts === true) && !seen.has(c.key) && seen.add(c.key)).map((c) => c.node);
             } catch { signers = []; }
             const nodes = signers.length ? signers : (window.ARENA_ROW_NODES ? window.ARENA_ROW_NODES(id) : []);
             // the round on screen: its next order's stake dealt ahead (kanban #601)
