@@ -13160,7 +13160,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           const book = orderBook.isBook(rid);
           let bookRow = null;
           if (book && out && out.state === 'ATTESTED') {
-            const L = orderBook.ledger(rid);
+            const L = orderBook.ledger(rid, null, { read: true });   // kanban #3836: GET /standing is a public read
             if (L.ok) {
               const plugin = attestedOf(c);
               const scalar = isScalar(plugin.manifest) && out.value !== undefined ? { value: BigInt(out.value), bounds: marketOfRound(plugin.manifest, c).scalar } : null;
