@@ -21329,7 +21329,7 @@ async function lockStake(ask = {}) {
 }
 async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
   storage, donationMsat = 0n, donationRecipients = null, onStep = () => {}, onSubmitted = () => {}, onSubmitting = () => {}, submitTag = '',
-  relockUntilMs = undefined } = {}) {
+  onRelocking = () => {}, relockUntilMs = undefined } = {}) {
   paysIntoALock(round, invite, LockClient);
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
@@ -21445,7 +21445,12 @@ async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, pla
         acc.catch(() => {});
         break;
       }
-      cur = await submitOn(owner, submitTag ? `${submitTag}.r${tries}` : '');
+      // THE RELOCK MARKED BEFORE IT IS MADE, AS THE FIRST SUBMISSION IS (kanban #3813, #2459): the intent named the refused transaction while
+      // the relock was handed on, so a tab closed before lockSubmit answered left the relock's accepted stake named nowhere and the next PLAY
+      // never asked the operation log; onRelocking puts the refused one aside in the intent and names the relock's tag (a throw: no relock)
+      const relockTag = submitTag ? `${submitTag}.r${tries}` : '';
+      onRelocking(relockTag, cur.submitted);
+      cur = await submitOn(owner, relockTag);
       onSubmitted(cur.submitted);
     }
     const made = { ...cur.lock, client, feeLock: cur.feeLock, feeGate, donations: cur.donations, walletBeforeMsat: before, walletAfterMsat: null,
@@ -21783,13 +21788,22 @@ async function keptLockStake(ask) {
           const outputs = ((sub && sub.outputs) || []).filter((o) => o && (o.role === 'stake' || o.role === 'fee'))
             .map((o) => ({ role: o.role, outIdx: Number(o.out_idx), amountMsat: String(o.amount_msat), expiration: Number(o.computed_expiration) }));
           const more = { txid: String((sub && sub.txid) || ''), operation: String((sub && sub.operation) || ''), outputs, claimPk: ask.claimKey && ask.claimKey.claimPk ? toHex(ask.claimKey.claimPk) : null };
-          storage.setItem(iKey, JSON.stringify({ ...r, room: '-'.repeat(Math.max(0, LOCK_RECORD_ROOM - 200 - JSON.stringify(more).length)), ...more }));
+          storage.setItem(iKey, JSON.stringify({ ...r, room: '-'.repeat(Math.max(0, LOCK_RECORD_ROOM - 200 - JSON.stringify(more).length - JSON.stringify(r.refused || []).length)), ...more }));
         } catch { /* the intent without it */ }
+      }, onRelocking: (relockTag) => {
+        // kanban #3813: a relock (#3665) is handed on from here - the refused transaction goes to `refused` (named in the orphan copy), the
+        // intent is `submitting` again with no txid under the relock's tag, so a tab closed now is found again by keptLockStake (lockSubmittedBy)
+        const r = readJson(storage, iKey);
+        if (!r) throw new Error('the stake lock\'s intent is gone from this browser: no relock is submitted');
+        const refused = [...(r.refused || []), { txid: r.txid, operation: r.operation || '', submitTag: r.submitTag || '' }];
+        storage.setItem(iKey, JSON.stringify({ ...r, room: '-'.repeat(Math.max(0, LOCK_RECORD_ROOM - 250 - JSON.stringify(refused).length)), refused,
+          txid: null, operation: '', outputs: [], submitting: true, submitTag: relockTag }));
       } });
     } catch (e) {
       // nothing submitted: the intent failed, and the next PLAY writes over it; submitted and then refused by this page: it stays, for the collect
       const r = readJson(storage, iKey);
-      if (r && !r.txid) { try { storage.setItem(iKey, JSON.stringify({ ...r, failed: String((e && e.message) || e).slice(0, 200) })); } catch { storage.removeItem(iKey); } }
+      // a relock in flight (kanban #3813: `refused` names the refused one) is not failed: the next PLAY asks the operation log for its tag
+      if (r && !r.txid && !(r.refused && r.refused.length)) { try { storage.setItem(iKey, JSON.stringify({ ...r, failed: String((e && e.message) || e).slice(0, 200) })); } catch { storage.removeItem(iKey); } }
       throw e;
     }
     let kept = true;
@@ -23883,8 +23897,15 @@ const pendingCreditKeys = (storage, federationId) => {
   const pre = `${PENDING_CREDIT_PREFIX}${toHex(federationId).slice(0, 16)}.`;
   return storageKeys(storage).filter((k) => k.startsWith(pre));
 };
-/** Writes each waiting row whose transactions this wallet no longer issues notes for; answers how many it wrote. */
-async function landPendingCredits({ client, storage, federationId } = {}) {
+/**
+ * ONLY THE WALLET THAT MADE THE REFUND LANDS ITS ROW (kanban #3812, state audit 2026-11-12): the waiting row was keyed by federation only, so
+ * the pass that went on to the current phrase's round asked THAT wallet's issuingDetail, which never lists a kept phrase's refund txid, and
+ * wrote '+X sat' while the kept phrase's notes were still being issued. Each waiting row now names its wallet (sha256 of the wallet secret,
+ * 16 hex); landPendingCredits, handed `wallet`, lands only the rows of that wallet. A row written before this (no wallet named) lands as before.
+ */
+const walletTagOf = (seed, federationId) => { try { return toHex(sha256(walletSecretFor(seed, federationId))).slice(0, 16); } catch { return null; } };
+/** Writes each waiting row of this wallet whose transactions it no longer issues notes for; answers how many it wrote. */
+async function landPendingCredits({ client, storage, federationId, wallet = null } = {}) {
   if (!storage || !client || !(federationId instanceof Uint8Array)) return 0;
   const keys = pendingCreditKeys(storage, federationId);
   if (!keys.length) return 0;
@@ -23893,6 +23914,7 @@ async function landPendingCredits({ client, storage, federationId } = {}) {
   for (const k of keys) {
     let p; try { p = JSON.parse(storage.getItem(k)); } catch { continue; }
     if (!p || !p.rowId) continue;
+    if (p.wallet && p.wallet !== wallet) continue;   // kanban #3812: another phrase's wallet - landed in its own record's pass
     if (issuing && (p.txids || []).some((t) => issuing.has(String(t).toLowerCase()))) continue;
     if (ledgerAppend(storage, federationId, p.row, p.rowId) || storage.getItem(`${ledgerKey(federationId)}.${String(p.rowId).toLowerCase()}`) !== null) {
       try { storage.removeItem(k); } catch { /* landed again next pass, the row id keeps it one row */ }
@@ -23905,7 +23927,7 @@ async function landPendingCredits({ client, storage, federationId } = {}) {
 async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, curve, LockClient, storage, nodes, fetcher, order = 0 } = {}) {
   // kanban #3783: rows waiting for their notes are looked at on every pass, also after the round owes nothing more
   if (storage && round && round.federationId instanceof Uint8Array && pendingCreditKeys(storage, round.federationId).length) {
-    try { await landPendingCredits({ client: await playerWallet({ round, invite, seed, LockClient, storage }), storage, federationId: round.federationId }); } catch { /* the next pass */ }
+    try { await landPendingCredits({ client: await playerWallet({ round, invite, seed, LockClient, storage }), storage, federationId: round.federationId, wallet: walletTagOf(seed, round.federationId) }); } catch { /* the next pass */ }
   }
   if (!look || !(look.payoutMsat > 0n || look.stakeMsat > 0n || look.refundMsat > 0n)) return { collected: false, creditedMsat: 0n };
   const client = await playerWallet({ round, invite, seed, LockClient, storage });
@@ -23930,7 +23952,7 @@ async function collectIntoPlayerWallet({ look, round, roundId, invite, seed, cur
   if (creditedMsat > 0n) ledgerAppend(storage, round.federationId, { kind, msat: String(creditedMsat), round: toHex(roundId) }, rowId);
   else if (arriving.length && brought > 0n && storage) {
     try { storage.setItem(`${PENDING_CREDIT_PREFIX}${toHex(round.federationId).slice(0, 16)}.${rowId}`,
-      JSON.stringify({ rowId, txids: arriving, row: { kind, msat: String(brought), round: toHex(roundId) } })); } catch { /* a full browser: no row, the money is not touched */ }
+      JSON.stringify({ rowId, wallet: walletTagOf(seed, round.federationId), txids: arriving, row: { kind, msat: String(brought), round: toHex(roundId) } })); } catch { /* a full browser: no row, the money is not touched */ }
   }
   // COLLECTED ONLY WHEN SOMETHING WAS (kanban #593: this said `collected: true` whatever came of the redeems - the record of round
   // 8464c5fd was marked done with its 100 sat still in the federation, the redeem never tried): a payout, stake or refund the
