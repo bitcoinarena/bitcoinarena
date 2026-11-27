@@ -5159,8 +5159,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       const key = toHex(rid);
       if ((already || []).includes(key)) continue;
       if (!round.signerNodes(rid).some((s) => toHex(s) === self)) continue;
-      const short = round.entriesOf(rid).filter(({ entryId }) => !voidStands(rid, entryId) && !round.noQuorum(entryId)
+      const held = round.entriesOf(rid);
+      const short = held.filter(({ entryId }) => !voidStands(rid, entryId) && !round.noQuorum(entryId)
         && resultFinality(round, rid, entryId).state !== 'FINAL');
+      // A HEAD-TO-HEAD ROUND CLOSED HERE WITH NO ENTRY HELD, STILL INSIDE ITS RESULT WINDOW (kanban #3811): the close write (rounds.state = CLOSED)
+      // lands before membersKnown pulls the entries from the peers, so a seat killed in between came back with nothing "short of final" here and
+      // never learned the members nor signed. Such a round's close logic runs again - not awaited, since membersKnown may wait on slow peers up to
+      // the window's end; afterClose runs one close per round at a time, and membersKnown answers at once for a free round with nothing held.
+      if (!held.length) {
+        if (!headToHeadReady) await headToHeadReadyAt;
+        let inWindow = false;
+        try { const c = headToHeadRound(rid); inWindow = !!c && c.stakeMsat !== 0n && BigInt(round.now()) < BigInt(windowsOf(c).finalAfterMs); } catch { inWindow = false; }
+        if (inWindow) {
+          console.log(`[close] ${key.slice(0, 16)} closed with no entry held inside its result window: running its close logic again (kanban #3811)`);
+          picked.push(key);
+          afterClose(rid);
+        }
+        continue;
+      }
       if (!short.length) continue;
       console.log(`[close] ${key.slice(0, 16)} closed with ${short.length} run(s) short of final here: running its close logic again`);
       picked.push(key);
