@@ -5342,6 +5342,16 @@ FederationRecord {
 }
 ```
 
+**Whose entry a guardian row is (2026.0.34, kanban #3801).** A guardian's
+row (`node_pubkey`, `operator_id`, `bond_outpoint`, `guardian_endpoint`)
+comes from a census entry under its node key. From one census height `H`
+per network, named by the release that sets it once every seat runs 34,
+a body at census height `>= H` takes rows only from entries whose body
+the node signed. A stranger's own bond to the node's key under another
+operator id is never one of them. A body below `H` is built as before,
+byte for byte. The record carries no version of its own, so the switch is
+by height, and federations that already exist switch at `H` too.
+
 Every guardian serves the newest record at its endpoint; **every seat
 mirrors** the newest record of every federation its census knows at
 `GET /federations`; the record also goes to the round's

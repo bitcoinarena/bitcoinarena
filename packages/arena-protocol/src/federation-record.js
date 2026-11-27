@@ -16,8 +16,34 @@
 // every signature. No curve here: `verify` (BIP-340) is the caller's.
 import { Writer, Reader } from './encode.js';
 import { taggedHash, toHex } from './hash.js';
-import { TAG, TYPE_FEDERATION_RECORD, PROTOCOL_VERSION, speaksVersion } from './constants.js';
+import { TAG, TYPE_FEDERATION_RECORD, PROTOCOL_VERSION, speaksVersion, networkOf } from './constants.js';
 import { exposureCap } from './federation-slash.js';
+
+/**
+ * 2026.0.34 - THE BODY LISTS EACH GUARDIAN'S OWN NODE-SIGNED ENTRY (kanban #3801, RULED 2026-11-26 on PR #95's open point 1 of #3743). A
+ * stranger's own bond to a guardian's node key, under another operator id, stands in the census with a body the node did not sign (census.js
+ * `nodeSigned` false). The body seats sign took the key's first entry in census order, so such a bond could set the guardian's bondTxid/vout,
+ * operatorId and guardianEndpoint. From the activation below the body is built only from entries whose body the node signed (an entry
+ * without the mark counts as signed, as dialEntryOf reads it), and an unsigned one never.
+ *
+ * WHEN (ruled 2026-11-26): the record carries no protocol version of its own (it always writes PROTOCOL_VERSION), its founding names none,
+ * and a seat with no round builds it from the chain's census, with no round contract. So the switch is one census height H per network: a
+ * body at census height >= H lists signed entries only; a body below H is today's, byte for byte. A federation formed before H switches at
+ * H too. Every guardian of a federation must build the same body at a height, so nobody may switch alone: H is named here by the release
+ * that sets it, once every seat of the network runs protocol 34 (null: not named, today's body everywhere).
+ */
+export const SIGNED_GUARDIAN_VERSION = 34;
+export const SIGNED_GUARDIAN_HEIGHT = Object.freeze({ mainnet: null, testnet4: null, regtest: null });
+let signedGuardianHeightsGiven;   // a test's own heights; undefined: the table above
+/** A test's own heights ({ network: height | null } or null); undefined goes back to the table. Answers the one it replaced. */
+export function setSignedGuardianHeightsForTests(h) { const was = signedGuardianHeightsGiven; signedGuardianHeightsGiven = h; return was; }
+/** Whether a federation record body of network `networkId` (32 bytes) at census height `height` lists node-signed entries only (#3801). */
+export function listsSignedGuardians(networkId, height) {
+  const heights = signedGuardianHeightsGiven !== undefined ? signedGuardianHeightsGiven : SIGNED_GUARDIAN_HEIGHT;
+  const name = networkOf(networkId);
+  const from = heights && name ? heights[name] : null;
+  return Number.isInteger(from) && Number.isInteger(Number(height)) && Number(height) >= from;
+}
 
 export const FEDERATION_STATUS = Object.freeze({ OPEN: 1, DRAINING: 2, CRITICAL: 3, CLOSED: 4, HALTED: 5 });
 export const GONE = Object.freeze({ DEPARTED: 1, ABANDONED: 2 });
