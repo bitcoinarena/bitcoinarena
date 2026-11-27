@@ -148,8 +148,19 @@ export function keptEvent(e) {
   // (kanban #2676) and the content's strings read as one text, with no JSON key between them
   let joined = ''; try { joined = stringsOf(JSON.parse(content)).join(' '); } catch { joined = String(content); }
   if (!seedRunSpans(JSON.stringify([kept.tags, kept.content])).length && !seedRunSpans(joined).length) return kept;
-  const plain = tags.filter((t) => hexTagValue(t, t[1], 1) || (STRICT_TAG[t[0]] && typeof t[1] === 'string' && STRICT_TAG[t[0]].test(t[1]))).map((t) => [t[0], t[1]]);
-  return { ...kept, tags: plain, content: JSON.stringify({ removed: 'a seed phrase was found in this report: its content is not kept' }) };
+  let plain = tags.filter((t) => hexTagValue(t, t[1], 1) || (STRICT_TAG[t[0]] && typeof t[1] === 'string' && STRICT_TAG[t[0]].test(t[1]))).map((t) => [t[0], t[1]]);
+  // THE CHECKED ADDRESS SURVIVES THE DROP (kanban #3845, a way round #2468 / #1677): POST /feedback checks reportAddress(e) - the content's lnAddress
+  // when it names one. Dropping the content left only the signed lud16 tag, so the payout read an address never checked. A content that names an
+  // lnAddress keeps that one address (well-formed, and no seed run in it read word by word); when it cannot be kept, the lud16 tag goes too.
+  const removed = { removed: 'a seed phrase was found in this report: its content is not kept' };
+  let c = null; try { c = JSON.parse(e.content); } catch { c = null; }
+  const named = c && typeof c === 'object' && !Array.isArray(c) ? c.lnAddress : undefined;
+  if (named !== undefined && named !== null && named !== '') {
+    const own = reportAddress(e);
+    if (own && !seedRunSpans(own).length && !seedRunSpans(own.replace(/[^a-z0-9]+/gi, ' ')).length) removed.lnAddress = own;
+    else plain = plain.filter((t) => t[0] !== 'lud16');
+  }
+  return { ...kept, tags: plain, content: JSON.stringify(removed) };
 }
 const tag = (e, k) => { const t = e.tags.find((x) => x[0] === k); return t ? String(t[1] ?? '') : ''; };
 const said = (x, re) => (re.test(String(x || '')) ? String(x) : '');
