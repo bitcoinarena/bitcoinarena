@@ -28,6 +28,8 @@
 //     seasonRoundOf: FINAL results, the amounts its settlement paid, each entry under its identity), into a small ledger
 //     (nostr_badge_rounds), and the game's ledger is handed to badgesEarned. The ledger is what keeps that cheap: reading a
 //     round verifies every result signature it holds, and a game's history is read once, never on every settlement.
+//     (kanban #3857: and each ledger round is marked once with what it counts for per player - nostr_badge_marks - so a
+//     settlement hands badgesEarned only its players' earliest marked rounds, never the game's whole ledger again.)
 //   - THE BOARD BADGE (season top 3) once a whole UTC week has closed and BOARD_GRACE_MS + BOARD_NETWORK_GRACE_MS more have
 //     passed (a round started at Sunday 23:59 settles after midnight, at every seat of its committee): THE NETWORK'S season
 //     of each game this seat hosts for that week, as GET /season?scope=network builds it - this seat's rounds and every
@@ -202,6 +204,10 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
   if (!cat.ok) throw new Error(cat.why);
   db.exec(`CREATE TABLE IF NOT EXISTS nostr_badge_rounds (round_id TEXT PRIMARY KEY, game TEXT, round TEXT, made_ms INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS nostr_badge_rounds_game ON nostr_badge_rounds (game);
+    CREATE TABLE IF NOT EXISTS nostr_badge_marks (game TEXT NOT NULL, player TEXT NOT NULL, d TEXT NOT NULL, at INTEGER NOT NULL, round_id TEXT NOT NULL,
+      PRIMARY KEY (game, player, d, round_id));
+    CREATE INDEX IF NOT EXISTS nostr_badge_marks_first ON nostr_badge_marks (game, player, d, at, round_id);
+    CREATE TABLE IF NOT EXISTS nostr_badge_marked (round_id TEXT PRIMARY KEY);
     CREATE TABLE IF NOT EXISTS nostr_badge_weeks (game TEXT NOT NULL, from_ms INTEGER NOT NULL, awarded INTEGER NOT NULL, made_ms INTEGER NOT NULL,
       PRIMARY KEY (game, from_ms));
     CREATE TABLE IF NOT EXISTS nostr_badges (d TEXT NOT NULL, player TEXT NOT NULL, scope TEXT NOT NULL, game TEXT NOT NULL, evidence TEXT NOT NULL,
@@ -212,7 +218,12 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
       published_ms INTEGER, attempts INTEGER NOT NULL DEFAULT 0, next_ms INTEGER NOT NULL DEFAULT 0, relays TEXT NOT NULL DEFAULT '{}', why TEXT);`);
   const q = {
     putRound: db.prepare('INSERT OR IGNORE INTO nostr_badge_rounds (round_id, game, round, made_ms) VALUES (?, ?, ?, ?)'),
-    ledger: db.prepare('SELECT round FROM nostr_badge_rounds WHERE game = ? AND round IS NOT NULL ORDER BY round_id'),
+    ledgerRow: db.prepare('SELECT round FROM nostr_badge_rounds WHERE round_id = ? AND round IS NOT NULL'),
+    unmarked: db.prepare(`SELECT round_id, game, round FROM nostr_badge_rounds WHERE round IS NOT NULL
+      AND round_id NOT IN (SELECT round_id FROM nostr_badge_marked) ORDER BY round_id`),
+    putMark: db.prepare('INSERT OR IGNORE INTO nostr_badge_marks (game, player, d, at, round_id) VALUES (?, ?, ?, ?, ?)'),
+    putMarked: db.prepare('INSERT OR IGNORE INTO nostr_badge_marked (round_id) VALUES (?)'),
+    firstMarks: db.prepare('SELECT round_id FROM nostr_badge_marks WHERE game = ? AND player = ? AND d = ? ORDER BY at, round_id LIMIT ?'),
     week: db.prepare('SELECT 1 FROM nostr_badge_weeks WHERE game = ? AND from_ms = ?'),
     putWeek: db.prepare('INSERT OR IGNORE INTO nostr_badge_weeks (game, from_ms, awarded, made_ms) VALUES (?, ?, ?, ?)'),
     award: db.prepare(`INSERT OR IGNORE INTO nostr_badges (d, player, scope, game, evidence, event, made_ms) VALUES (?, ?, ?, ?, ?, ?, ?)`),
@@ -255,24 +266,68 @@ export function nostrBadges({ db, secret, on = false, relays = [], roundOf, sett
     return made;
   };
 
-  /** 1. THE ROUND BADGES: each newly ACCEPTED round into the ledger, then each game it touched handed to badgesEarned. */
+  // kanban #3857: THE MARKS - what each ledger round counts for, per player, kept once when the round goes into the ledger, so a
+  // settled round never makes the book read the game's whole history again (it did: every round of the game, JSON-parsed and run
+  // through season(), synchronously, on every tick that settled one - 0.4 s at 20,000 rounds, growing for ever). A round's marks
+  // are badgesEarned itself over that ONE round with each round rule asking for one round: a `rounds-played` mark is a round
+  // the player played, a `first-win` mark one it won, a `delivered-score` mark a run at the badge's score - read per round,
+  // as badgesEarned reads every round on its own (season() of that round alone). Each round rule's evidence is the EARLIEST
+  // rounds under its own predicate, so the earliest `rounds` (or 1) marks of a player per badge hold every round its award can
+  // name: badgesEarned over those rounds names the same awards, with the same evidence, as over the whole ledger.
+  const markRules = roundRules.map((b) => (b.rule === 'rounds-played' ? { ...b, rounds: 1 } : b));
+  const marksNeeded = new Map(roundRules.map((b) => [b.d, b.rule === 'rounds-played' ? b.rounds : 1]));
+  /** Mark one ledger round: answers the players it marked. */
+  const markRound = (rid, name, round) => {
+    const players = new Set();
+    const id = String(round && round.gameId || '').toLowerCase();
+    const v = round && round.startMs;
+    const at = typeof v === 'bigint' ? (v >= 0n && v <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(v) : null) : Number.isSafeInteger(v) && v >= 0 ? v : null;
+    if (at !== null) {
+      const earned = badgesEarned({ game: { name, ids: [id] }, rounds: [round] }, markRules);
+      if (earned.ok) for (const a of earned.awards) { q.putMark.run(name, a.player, a.d, at, rid); players.add(a.player); }
+    }
+    q.putMarked.run(rid);
+    return players;
+  };
+  // A LEDGER KEPT BEFORE THE MARKS (a seat upgraded past kanban #3857): each of its rounds marked once, here, at the start
+  if (on) {
+    const old = q.unmarked.all();
+    if (old.length) {
+      let tx = false;
+      try { db.exec('BEGIN'); tx = true; } catch {}
+      for (const r of old) { try { markRound(r.round_id, r.game, ledgerRound(r.round)); } catch (e) { log(`[badges] ${r.round_id}: ${e.message}`); } }
+      if (tx) db.exec('COMMIT');
+      log(`[badges] ${old.length} ledger round${old.length === 1 ? '' : 's'} marked (kanban #3857)`);
+    }
+  }
+
+  /** 1. THE ROUND BADGES: each newly ACCEPTED round into the ledger, then its players' marked rounds handed to badgesEarned. */
   const awardRounds = () => {
-    const touched = new Set();
+    const touched = new Map();                     // game -> the players a new round of it marked
     for (const rid of nextAccepted(startedMs - lookbackMs)) {
       if (!settled(rid)) continue;
       let got;
       try { got = roundOf(rid); } catch (e) { got = { ok: false, why: e.message }; }
       // A ROUND THIS SEAT SAYS NOTHING OF (a game it does not host, a free market): kept with no game, never read again
       if (!got || !got.ok || !got.round) { q.putRound.run(rid, null, null, now()); continue; }
-      q.putRound.run(rid, got.game.name, ledgerJson(got.round), now());
-      touched.add(got.game.name);
+      const text = ledgerJson(got.round);
+      q.putRound.run(rid, got.game.name, text, now());
+      const name = got.game.name;
+      if (!touched.has(name)) touched.set(name, new Set());
+      // marked from the ledger's own form, as a restart would read it back
+      for (const p of markRound(rid, name, ledgerRound(text))) touched.get(name).add(p);
     }
     let made = 0;
-    for (const name of [...touched].sort()) {
-      const rounds = q.ledger.all(name).map((r) => ledgerRound(r.round));
+    for (const name of [...touched.keys()].sort()) {
+      const players = touched.get(name);
+      if (!players.size) continue;
+      const rids = new Set();
+      for (const player of players) for (const [d, n] of marksNeeded) for (const r of q.firstMarks.all(name, player, d, n)) rids.add(r.round_id);
+      const rounds = [...rids].sort().map((rid) => q.ledgerRow.get(rid)).filter(Boolean).map((r) => ledgerRound(r.round));
       const ids = [...new Set(rounds.map((r) => String(r.gameId)))];
       const earned = badgesEarned({ game: { name, ids }, rounds }, roundRules);
-      if (earned.ok) made += keepAwards(earned.awards);
+      // the awards of these players only: another player's rounds here are only those it shares with them, not its earliest
+      if (earned.ok) made += keepAwards(earned.awards.filter((a) => players.has(a.player)));
       else log(`[badges] ${name}: ${earned.why}`);
     }
     return made;
