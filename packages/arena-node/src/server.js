@@ -14581,14 +14581,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const announceAddress = async () => {
     const list = await censusForAddresses();
     await pullAddresses(list);
-    await followReachNow(list);   // kanban #3565
-    if (!publicEndpoint) return null;
+    if (!publicEndpoint) { await followReachNow(list); return null; }   // kanban #3565
     const a = addressBook.own({ node: toHex(round.pubkey), endpoint: publicEndpoint, sign: (d) => schnorr.sign(d, round.identity.secret) });
     const post = async (u, body) => (await fetch(u, { method: 'POST', body: JSON.stringify(body), signal: AbortSignal.timeout(15000) })).ok;
     const r = await announceOwn({ announcement: a, entries: list || [], book: addressBook, ownKey: toHex(round.pubkey), post });
     if (r.took) console.log(`[address] ${publicEndpoint} announced to ${r.took} of ${r.roots} seat(s)`);
     // kanban #3565: what the owner page says of it - how many seats took the address it is reached at now
     lastAnnounce = { endpoint: publicEndpoint, took: r.took, roots: r.roots, atMs: Date.now() };
+    // kanban #3565, after the announcement since #3886: the seats checking the new address from outside know it by then
+    await followReachNow(list);
     return r;
   };
   // A NEW WAY IN, FOLLOWED THROUGH (kanban #3565, reach-follow.js): on an installed node, on the address clock - the switch's progress finished,
@@ -14612,7 +14613,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     try {
       const { followReach } = await import('../../arena-installer/src/reach-follow.js');
       const release = fileURLToPath(new URL('../../../', import.meta.url));
-      const f = await followReach({ home, publicEndpoint, censusRead: !!(list && list.length), ownEndpoints: mine, startedMs: SEAT_STARTED_MS, adoptUrl,
+      // kanban #3886: no update names an address other seats cannot reach this node's key at (address-check.js, their GET /reach-probe)
+      const { outsideCheck, checkSeats } = await import('./address-check.js');
+      const accept = process.env.ARENA_OUTSIDE_CHECK === '0' ? null : async (u) => {
+        const c = await outsideCheck({ url: u, node: own, seats: checkSeats({ entries: list || [], ownKey: own, seed: Math.floor(Date.now() / 600000) }) });
+        console.log(`[address] outside check of ${u}: ${c.ok ? `reached by ${c.reached} of ${c.asked} seats` : c.why}`);
+        return { ok: c.ok, why: c.why, detail: c };
+      };
+      const f = await followReach({ home, publicEndpoint, censusRead: !!(list && list.length), ownEndpoints: mine, startedMs: SEAT_STARTED_MS, adoptUrl, accept,
         refresh: async (o) => (await import('../../arena-installer/src/change-roles.js')).refreshEndpoint({ ...o, release }),
         removeTunnel: async () => (await import('../../arena-installer/src/service.js')).removeProgram({ id: 'tunnel', home }) });
       for (const d of f.did) console.log(`[address] ${d}`);

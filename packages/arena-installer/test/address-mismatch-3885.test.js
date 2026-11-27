@@ -77,3 +77,23 @@ test('followReach: accept() is the gate for taking it by itself - refused, it is
   f = await go(12 * 60000);
   assert.equal(asked, 2); assert.deepEqual(n.posted, [NEW]);
 });
+
+test('kanban #3886: the outside check gates every update - a switched address other seats cannot reach is not posted, and why', async () => {
+  const n = node({ mode: 'tailscale', port: 8470, url: NEW });
+  let pass = false, asked = 0;
+  const accept = async () => { asked++; return pass ? { ok: true } : { ok: false, why: '2 of 2 seats could not reach it: its certificate is not valid', detail: { asked: 2 } }; };
+  const go = (nowMs) => followReach({ home: n.home, state: n.state, publicEndpoint: NEW, censusRead: true, ownEndpoints: [OLD], refresh: n.refresh, removeTunnel: n.removeTunnel, nowMs, accept });
+  let f = await go(1000);
+  assert.equal(asked, 1); assert.equal(n.posted.length, 0, 'not posted');
+  assert.match(f.view.update.why, /checked from outside first: 2 of 2 seats could not reach it/);
+  assert.deepEqual(f.view.update.outside, { asked: 2 });
+  await go(2000); assert.equal(asked, 1, 'tried again only after 10 min');
+  pass = true;
+  f = await go(11 * 60000);
+  assert.equal(asked, 2); assert.deepEqual(n.posted, [NEW]);
+  // the adopt path and the update in one pass: checked once
+  const m = node({ mode: 'tailscale', port: 8470, url: OLD });
+  let once = 0;
+  await followReach({ home: m.home, state: m.state, publicEndpoint: NEW, censusRead: true, ownEndpoints: [OLD], refresh: m.refresh, removeTunnel: m.removeTunnel, nowMs: 1, accept: async () => { once++; return { ok: true }; } });
+  assert.equal(once, 1); assert.deepEqual(m.posted, [NEW]);
+});

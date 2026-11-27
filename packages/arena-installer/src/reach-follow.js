@@ -41,14 +41,19 @@ export async function followReach({ home, state = null, publicEndpoint, censusRe
   const did = [];
   let s = st.read();
   let r = s.reach || {};
+  // THE OUTSIDE CHECK (kanban #3886): `accept(url)` - other seats reach this node's key at the address - before any update names it; once a pass
+  const checked = new Map();
+  const gate = async (url) => {
+    if (!checked.has(url)) { let g; try { g = await accept(url); } catch (e) { g = { ok: false, why: e.message }; } checked.set(url, g || { ok: false, why: 'not checked' }); }
+    return checked.get(url);
+  };
   // PUBLIC_URL EDITED BY HAND (kanban #3885): taken as the node's address once asked for (`adoptUrl`, the owner page's button) or once
   // `accept(url)` passes it (the outside check) - then the update below names it like a switched one
   const m = addressMismatch({ s, publicEndpoint, censusRead, ownEndpoints, switching: switchRunning(st.home, nowMs) });
   if (m && m.adoptable && (norm(adoptUrl) === norm(m.conf) || accept)) {
     const tried = s.addressAdopt && norm(s.addressAdopt.url) === norm(m.conf) && !s.addressAdopt.ok && nowMs - Number(s.addressAdopt.atMs || 0) < retryMs;
     if (!tried || norm(adoptUrl) === norm(m.conf)) {
-      let g;
-      try { g = accept ? await accept(m.conf) : { ok: true }; } catch (e) { g = { ok: false, why: e.message }; }
+      const g = accept ? await gate(m.conf) : { ok: true };
       if (g && g.ok) {
         st.update((n) => ({ reach: { ...(n.reach || {}), url: m.conf, adopted: { from: m.installer, atMs: nowMs } }, addressAdopt: { url: m.conf, ok: true, atMs: nowMs } }));
         did.push(`public_url ${m.conf} taken as this node's address (was ${m.installer})`);
@@ -85,10 +90,14 @@ export async function followReach({ home, state = null, publicEndpoint, censusRe
       const onItsWay = same && !!u.txid;
       const failedLately = same && !u.txid && nowMs - Number(u.atMs || 0) < retryMs;
       if (!onItsWay && !failedLately) {
-        let res;
-        try { res = await refresh({ home: st.home, state: st, post: true }); } catch (e) { res = { ok: false, why: e.message }; }
-        if (res && res.ok) did.push(`advertisement update ${res.update ? res.update.txid : '(already sent)'}`);
-        else st.save({ endpointUpdate: { endpoint: r.url, why: (res && res.why) || 'not posted', pending: !!(res && res.pending), atMs: nowMs } });
+        const g = accept ? await gate(r.url) : { ok: true };
+        if (!g.ok) st.save({ endpointUpdate: { endpoint: r.url, why: `checked from outside first: ${g.why || 'not reached'}`, outside: g.detail || null, atMs: nowMs } });
+        else {
+          let res;
+          try { res = await refresh({ home: st.home, state: st, post: true }); } catch (e) { res = { ok: false, why: e.message }; }
+          if (res && res.ok) did.push(`advertisement update ${res.update ? res.update.txid : '(already sent)'}`);
+          else st.save({ endpointUpdate: { endpoint: r.url, why: (res && res.why) || 'not posted', pending: !!(res && res.pending), atMs: nowMs } });
+        }
       }
     }
   }
