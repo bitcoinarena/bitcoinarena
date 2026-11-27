@@ -77,8 +77,9 @@ test('#2607-1: a twin of a passed bound proposal posted after its vote is taken,
   assert.equal(proposals.counts(a.id), true, 'the decided twin stands for both');
   assert.equal(proposals.counts(b.id), false, 'the twin is not counted twice');
   assert.equal(proposals.twinOf(b.id), a.id);
-  // kanban #2629: the twin reopens the count over both ids (its outcome held in force meanwhile); the chain's votes pass it again
-  assert.equal(proposals.list().find((r) => r.id === a.id).undecided.outcome.passed, true, 'its outcome is held through the recount');
+  // kanban #3871 (was #2629 here): a twin first held after its voting ended is kept late by its own id - it does not reopen the decided
+  // count until a census majority signed they held THAT twin in time (then vouch reopens it); A stays decided and passed
+  assert.equal(stateOf(proposals.list().find((r) => r.id === a.id)), 'PASSED', 'a late twin does not reopen the decided count');
   for (let i = 0; i < 3; i++) await tally.pass();
   assert.equal(stateOf(proposals.list().find((r) => r.id === a.id)), 'PASSED');
   assert.equal(liveAt(300), toHex(configHashOf(X)), 'X stays live');
