@@ -2333,6 +2333,8 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           const freed = ARENACLIENT.packWallets(S);
           if (window.ARENA_TIDY_STORAGE) window.ARENA_TIDY_STORAGE(800000);
           console.log('[arena] fix it: wallets packed, ' + freed + ' characters free again');
+          // NO RELOAD INTO THE SAME BANNER (kanban #3802, feedback #588): Compress that freed too little says so, it does not loop
+          if (tight && !full && !window.ARENA_MONEY_ALERT.room()) { el.textContent = 'Compressing did not make enough room for a deposit in this browser. Old wallet data that still holds money is kept; a deposit can be made from another browser.'; return; }
           el.textContent = 'Room made, reading your wallet again \u2026'; location.reload();
         } catch (e) { el.textContent = 'This could not be fixed here: ' + (e && e.message ? e.message : e); console.error('[arena] fix it: ' + (e && e.message ? e.message : e)); }
       };
@@ -2358,8 +2360,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           el.onclick = close;
           el.classList.add('show'); clearTimeout(okTimer); okTimer = setTimeout(close, 30000); },
         // ROOM BEFORE A DEPOSIT (2026-10-31: "Vor einem Deposit prüfst du ob der Fehler auftreten kann ... dass erst der Storage komprimiert werden muss bevor der Deposit erlaubt wird"): a claim writes up to some 100 KB, Safari gives 5 million characters
-        room: () => { try { const S = store(); let used = 0; for (let i = 0; i < S.length; i++) { const k = S.key(i); if (k) used += k.length + String(S.getItem(k) || '').length; }
-          if (used > 3500000) return false; S.setItem('arena.room.probe', 'x'.repeat(300000)); S.removeItem('arena.room.probe'); return true; } catch { try { store().removeItem('arena.room.probe'); } catch { /* none */ } return false; } },
+        // THE PROBE IS THE TEST (kanban #3802, feedback #588): a total over 3.5M characters refused every deposit although the probe fitted, and
+        // Compress cannot remove kept wallets, so the claim looped on this banner for ever; what counts is whether 300,000 more characters fit
+        room: () => { try { const S = store();
+          S.setItem('arena.room.probe', 'x'.repeat(300000)); S.removeItem('arena.room.probe'); return true; } catch { try { store().removeItem('arena.room.probe'); } catch { /* none */ } return false; } },
         needRoom: () => { tight = true; paint(); },
         creditedHas: (sats) => creditedSats.has(String(sats)),
         settled: (ops) => { for (const o of ops) lost.delete(String(o)); paint(); },
