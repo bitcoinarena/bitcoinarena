@@ -65,6 +65,12 @@ export function ownAdvertDue({ entries, pubkey, mine = [], hostedGames = [], las
   };
   const lacks = own.map((e) => names(e.advert, e)).sort((a, b) => a.length - b.length)[0];
   if (!lacks.length) return { due: false, want, why: 'it names every guardian and game' };
+  // kanban #3831: a lack of hosted games only waits for READ_AGAIN_MS after the last paid update. Auto-update takes every next version a
+  // game's developer signs (free for him), each a new hosted id, so without this every version was one bond-wallet update (~1.8k sat) per
+  // 10-min check. Versions arriving meanwhile go out together in one update; a missing guardian is still posted at once.
+  if (last && last.txid && nowMs - Number(last.atMs || 0) < READ_AGAIN_MS && lacks.every((x) => x.startsWith('game '))) {
+    return { due: false, want, why: `it lacks ${lacks.join(', ')}; games wait for ${Math.round((READ_AGAIN_MS - (nowMs - Number(last.atMs || 0))) / 60000)} min after update ${String(last.txid).slice(0, 16)}` };
+  }
   return { due: true, want, why: `it lacks ${lacks.join(', ')}` };
 }
 
