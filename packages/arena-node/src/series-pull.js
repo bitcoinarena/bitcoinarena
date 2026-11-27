@@ -17,6 +17,7 @@
  *   held()          the ids (hex) of the series this node holds
  *   take(t)         -> { ok, why } for a parsed series line
  *   parse(line)     series-line.js parseSeriesLine;  idOf(t) -> the series id, hex
+ *   seatOf(root)    optional: the census key of the seat at that root (hex), or null - roots of one key count as one peer (kanban #3832)
  */
 export const PULL_EVERY_MS = 120000;
 export const PULL_PEERS = 4;
@@ -33,7 +34,7 @@ export const PULL_LINE_BYTES = 256 * 1024;
 
 export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fetch, say = () => {}, now = Date.now,
   perPass = PULL_PER_PASS, askPeers = PULL_PEERS, retryMs = RETRY_MS, timeoutMs = 15000,
-  passMs = PULL_PASS_MS, listingBytes = PULL_LISTING_BYTES, lineBytes = PULL_LINE_BYTES, peerStrikes = PULL_PEER_STRIKES }) {
+  passMs = PULL_PASS_MS, listingBytes = PULL_LISTING_BYTES, lineBytes = PULL_LINE_BYTES, peerStrikes = PULL_PEER_STRIKES, seatOf = () => null }) {
   const refusedAt = new Map();         // series id hex -> { atMs, why }
   let busy = false, start = 0, last = null;
   // the listing read up to listingBytes (kanban #2424): a body without a stream reader (a test double) is read as it is
@@ -49,6 +50,15 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
     }
     const body = Buffer.concat(chunks.map((x) => Buffer.from(x.buffer, x.byteOffset, x.byteLength))).toString('utf8');
     return asText ? body : JSON.parse(body);
+  };
+  // ONE SEAT IS ONE PEER, WHATEVER ROOTS IT IS REACHED AT (kanban #3832, #1489 r40-gossip-1, bypass of #2811): listing peers were told apart by
+  // their root URL string, so one seat under two roots (its advert moved between the round's census and the chain's newest, or two paths or
+  // spellings of one box) made each of its 40 made-up ids a 2-peer id - past the #2424 solo share and strikes, tied with a real 2-seat series
+  // and ahead of it on insertion order. A root counts as its census key when seatOf names one, else as its box (host name and port).
+  const seatKeyOf = (u) => {
+    let k = null; try { k = seatOf(u); } catch { k = null; }
+    if (k) return `key:${String(k).toLowerCase()}`;
+    try { const x = new URL(u); return `box:${x.hostname.toLowerCase().replace(/\.$/, '')}:${x.port}`; } catch { return `root:${u}`; }
   };
   const json = async (u) => { const r = await fetchFn(u, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? capped(r) : null; };
 
@@ -66,6 +76,7 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
       out.asked = ask.length;
       const have = new Set(held());
       const from = new Map();          // id -> [peer roots that list it]
+      const seatsOf = new Map();       // id -> Set of the seats (seatKeyOf) that list it (kanban #3832)
       await Promise.all(ask.map(async (u) => {
         let got = null; try { got = await json(`${u}/series`); } catch { got = null; }
         if (!got || !Array.isArray(got.series)) return;
@@ -78,7 +89,8 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
           // posting confirmed, every second-host seat listing them with ahead 0 - pulled only after their committee time)
           const notBegun = Number(s.startTimeMs) > now();
           if (!/^[0-9a-f]{64}$/.test(id) || have.has(id) || !(Number(s.ahead) > 0 || notBegun)) continue;
-          if (!from.has(id)) from.set(id, []);
+          if (!from.has(id)) { from.set(id, []); seatsOf.set(id, new Set()); }
+          seatsOf.get(id).add(seatKeyOf(u));
           // ONE PEER COUNTS ONCE FOR AN ID (kanban #2811, #1489 r22-gossip-1): a peer listing 40 made-up ids 4 times each counted as 4 peers per
           // id - sorted ahead of a real series 2 honest peers list, past the #2424 solo share and strikes, and the pass spent its budget on them
           if (!from.get(id).includes(u)) from.get(id).push(u);
@@ -88,20 +100,21 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
       // ONE PEER'S MADE-UP IDS DO NOT TAKE THE PASS (kanban #2424): ids more asked peers list go first, an id only one peer lists
       // spends that peer's share of the pass (perPass / peers asked), a peer whose lines fail peerStrikes times is not asked again
       // this pass for the ids only it lists, and the whole pass ends by passMs - not 15 s for each of 40 reads
-      const order = [...from].map(([id, roots], i) => ({ id, roots, i })).sort((a, b) => (b.roots.length - a.roots.length) || (a.i - b.i));
-      const share = Math.max(1, Math.ceil(perPass / Math.max(1, ask.length)));
+      // kanban #3832: ranked, shared and struck by seat, not by root - an id one seat lists at two roots is that seat's solo id
+      const order = [...from].map(([id, roots], i) => ({ id, roots, seats: seatsOf.get(id), i })).sort((a, b) => (b.seats.size - a.seats.size) || (a.i - b.i));
+      const share = Math.max(1, Math.ceil(perPass / Math.max(1, new Set(ask.map(seatKeyOf)).size)));
       const solo = new Map(), strikes = new Map();
-      const strike = (u) => strikes.set(u, (strikes.get(u) || 0) + 1);
+      const strike = (u) => { const k = seatKeyOf(u); strikes.set(k, (strikes.get(k) || 0) + 1); };
       const endAt = Date.now() + passMs;
       let done = 0;
-      for (const { id, roots } of order) {
+      for (const { id, roots, seats } of order) {
         if (done >= perPass || Date.now() >= endAt) break;
         const r = refusedAt.get(id);
         if (r && now() - r.atMs < retryMs) continue;
-        if (roots.length === 1) {
-          const u = roots[0];
-          if ((solo.get(u) || 0) >= share || (strikes.get(u) || 0) >= peerStrikes) continue;
-          solo.set(u, (solo.get(u) || 0) + 1);
+        if (seats.size === 1) {
+          const k = [...seats][0];
+          if ((solo.get(k) || 0) >= share || (strikes.get(k) || 0) >= peerStrikes) continue;
+          solo.set(k, (solo.get(k) || 0) + 1);
         }
         done++;
         let why = 'no peer answered its line';
