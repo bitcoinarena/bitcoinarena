@@ -126,7 +126,7 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
           // lists alone, so a seat that answered GET /series first (roots[0] of every real id) and held each line to the timeout cost
           // timeoutMs per real series before the honest peer was asked - 6 of 40 a pass live. Its own node-local choice: what is taken
           // is still checked by take() alone.
-          if ((strikes.get(u) || 0) >= peerStrikes) continue;
+          if ((strikes.get(seatKeyOf(u)) || 0) >= peerStrikes) continue;   // struck by seat since #3832
           let line = null;
           try { const res = await fetchFn(`${u}/series-template?id=${id}`, { signal: AbortSignal.timeout(Math.min(timeoutMs, left)) }); line = res.ok ? await capped(res, lineBytes, true) : null; } catch { line = null; }
           if (!line) { strike(u); continue; }
