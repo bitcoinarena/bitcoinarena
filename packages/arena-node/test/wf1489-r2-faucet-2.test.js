@@ -22,7 +22,7 @@ import { openBountySeason } from '../src/bounty-season.js';
 const hex = (b) => Buffer.from(b).toString('hex');
 const STAGE = 'https://stage.example/api/faucet/feedback';
 const key = (n) => { const secret = new Uint8Array(32).fill(n); return { secret, pubkey: hex(schnorr.getPublicKey(secret)) }; };
-const auth = (k, url) => { const e = { pubkey: k.pubkey, created_at: Math.floor(Date.now() / 1000), kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'POST']], content: '' };
+const auth = (k, url) => { const e = { pubkey: k.pubkey, created_at: Math.floor(Date.now() / 1000), kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'POST'], ['payload', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855']], content: '' };   // kanban #3881: a POST sign-in names its body's SHA-256 (payload) and each sign-in is taken once (an empty body's)
   e.id = eventId(e); e.sig = hex(schnorr.sign(Buffer.from(e.id, 'hex'), k.secret)); return `Nostr ${Buffer.from(JSON.stringify(e)).toString('base64')}`; };
 
 test('#1489-r2 a Telegram link is a member only when the account found under its name is the linked account', async () => {

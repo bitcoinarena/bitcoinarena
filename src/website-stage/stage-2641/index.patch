@@ -107,8 +107,8 @@
 +    window.ARENA_SOCIAL_PANEL = () => {
 +      const me = myPubkey(); const S2 = location.origin + '/api/faucet/feedback';
 +      const store = (() => { try { return window.localStorage; } catch (e) { return null; } })();
-+      const post = async (door, body) => { const url = S2 + '/' + door; const auth = await identitySign({ kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'POST']], content: '' });
-+        const r = await fetch(url, { method: 'POST', headers: { authorization: 'Nostr ' + btoa(JSON.stringify(auth)), 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
++      const post = async (door, body) => { const url = S2 + '/' + door, text = JSON.stringify(body || {}), payload = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, '0')).join(''); const auth = await identitySign({ kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'POST'], ['payload', payload]], content: '' });
++        const r = await fetch(url, { method: 'POST', headers: { authorization: 'Nostr ' + btoa(JSON.stringify(auth)), 'content-type': 'application/json' }, body: text });
 +        const j = await r.json().catch(() => ({ ok: false, why: 'try again' })); if (r.status === 429) j.why = j.why || 'one check every 15 seconds'; return j; };
 +      const armadaHref = (document.getElementById('arena-foot-armada') || {}).href || 'https://armada.buzz/';
 +      const ROWS = [
@@ -272,7 +272,7 @@
 +        const S2 = location.origin + '/api/faucet/feedback';
 +        const box = el('div', { cls: 'fb-row' }), out = el('div', { cls: 'fb-text', role: 'status' });
 +        const linkBtn = el('button', { type: 'button', cls: 'off', text: 'Or link with a one-time code' }), checkBtn = el('button', { type: 'button', cls: 'off', text: 'Check again' });
-+        const post = async (door) => { const url = S2 + '/' + door; const auth = await identitySign({ kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'POST']], content: '' });
++        const post = async (door) => { const url = S2 + '/' + door; const auth = await identitySign({ kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'POST'], ['payload', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855']], content: '' });
 +          const r = await fetch(url, { method: 'POST', headers: { authorization: 'Nostr ' + btoa(JSON.stringify(auth)) } }); return r.json(); };
 +        const NAMES = { telegram: 'Telegram', discord: 'Discord', x: 'X' };
 +        const status = (j) => { const ls = (j && j.links) || []; return ls.length ? 'Linked: ' + ls.map((l) => NAMES[l.platform] + ' ' + (l.username || '') + ' - ' + (l.member === true ? (l.platform === 'x' ? 'follows' : 'member') : l.member === false ? (l.platform === 'x' ? 'does not follow' : 'not a member') : 'not checked yet') + (l.checkedMs ? ' (' + new Date(l.checkedMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC)' : '')).join(' · ') : 'Nothing linked yet.'; };

@@ -11,14 +11,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
+const sha3881 = (b) => createHash('sha256').update(String(b ?? '')).digest('hex');   // kanban #3881: a POST sign-in names its body's SHA-256 (payload) and each sign-in is taken once
 import { eventId } from '../src/nostr-relay.js';
 import { HTTP_AUTH_KIND } from '../src/feedback-store.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
 const BASE = 'https://stage.example/api/faucet/feedback';
-const auth = (door) => { const secret = randomBytes(32); const e = { pubkey: hex(schnorr.getPublicKey(secret)), created_at: Math.floor(Date.now() / 1000), kind: HTTP_AUTH_KIND,
-  tags: [['u', `${BASE}/${door}`], ['method', 'POST']], content: '' }; e.id = eventId(e); e.sig = hex(schnorr.sign(Buffer.from(e.id, 'hex'), secret));
+const auth = (door, body = '') => { const secret = randomBytes(32); const e = { pubkey: hex(schnorr.getPublicKey(secret)), created_at: Math.floor(Date.now() / 1000), kind: HTTP_AUTH_KIND,
+  tags: [['u', `${BASE}/${door}`], ['method', 'POST'], ['payload', sha3881(body)]], content: '' }; e.id = eventId(e); e.sig = hex(schnorr.sign(Buffer.from(e.id, 'hex'), secret));
   return `Nostr ${Buffer.from(JSON.stringify(e)).toString('base64')}`; };
 
 test('audit-faucet-a6-2-1: two /64s of one stranger\'s /48 do not refuse every reporter\'s social check', async () => {
@@ -30,7 +31,7 @@ test('audit-faucet-a6-2-1: two /64s of one stranger\'s /48 do not refuse every r
   const origin = `http://127.0.0.1:${port}`;
   try {
     for (let i = 0; i < 80; i++) { try { await fetch(`${origin}/feedback/paid-log`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
-    const ask = async (xff, body, door = 'social') => (await fetch(`${origin}/feedback/${door}`, { method: 'POST', headers: { authorization: auth(door), 'content-type': 'application/json', 'x-forwarded-for': xff },
+    const ask = async (xff, body, door = 'social') => (await fetch(`${origin}/feedback/${door}`, { method: 'POST', headers: { authorization: auth(door, JSON.stringify(body)), 'content-type': 'application/json', 'x-forwarded-for': xff },
       body: JSON.stringify(body) })).json();
     // one stranger, one /48 (2001:db8:aaaa::/48), two of its /64s, two fresh keys each
     const stranger = [];

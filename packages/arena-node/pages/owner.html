@@ -695,8 +695,11 @@ const S2_ROWS = [
 async function s2Post(door, body) {
   const who = await identity(); if (!who || !who.signEvent) throw new Error('sign in first');
   const url = FEEDBACK_URL + '/' + door;
-  const auth = await who.signEvent({ kind: 27235, tags: [['u', url], ['method', 'POST']], content: '' });
-  const r = await fetch(url, { method: 'POST', headers: { authorization: 'Nostr ' + btoa(JSON.stringify(auth)), 'content-type': 'application/json' }, body: JSON.stringify(body || {}) });
+  // the body's SHA-256 in the sign-in (kanban #3881): the faucet takes a POST sign-in only for the body it names, and only once
+  const text = JSON.stringify(body || {});
+  const payload = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const auth = await who.signEvent({ kind: 27235, tags: [['u', url], ['method', 'POST'], ['payload', payload]], content: '' });
+  const r = await fetch(url, { method: 'POST', headers: { authorization: 'Nostr ' + btoa(JSON.stringify(auth)), 'content-type': 'application/json' }, body: text });
   const j = await r.json().catch(() => ({ ok: false, why: 'try again' }));
   if (r.status === 429 && !j.why) j.why = 'one check every 15 seconds';
   return j;
