@@ -1147,8 +1147,9 @@ export function joinFundingPlan({ parts = [], roundFederation, needMsat }) {
   for (const x of parts || []) {
     if (!x || !x.federation) continue;
     const f = p16(x.federation), a = by.get(f) || { own: 0n, merging: 0n };
-    const merging = sat(x.merging), all = sat(x.sats);
-    a.merging += merging; a.own += all > merging ? all - merging : 0n;
+    // kanban #3561: a move on its way (`moving`) is the player's but not spendable yet - neither own nor merging
+    const merging = sat(x.merging), moving = sat(x.moving), all = sat(x.sats);
+    a.merging += merging; a.own += all > merging + moving ? all - merging - moving : 0n;
     by.set(f, a);
   }
   const at = by.get(here) || { own: 0n, merging: 0n };
@@ -4756,11 +4757,12 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
     if (can <= MIGRATE_DUST_MSAT) break;
     const amount = chunkMsat !== null && can > BigInt(chunkMsat) ? BigInt(chunkMsat) : can;
     onState({ state: 'moving', leftMsat: can, chunkMsat: amount, movedMsat: moved });
-    let made = null, unkept = false;
+    let made = null, unkept = false, before = null;
+    try { before = BigInt(await from.balanceMsat()); } catch { before = null; }
     // A LEG THAT DID NOT LAND (kanban #2183: a full store refused it): no invoice, so withdrawCollected pays nothing, and the move stops
     const out = await withdrawCollected({ client: from, amountMsat: amount, gateways: pay.gateways,
       invoiceFor: async (msat) => { made = JSON.parse(await to.receive(String(msat), recv.gateways[0]));
-        if (!moveLegAhead(storage, toFederationId, made, msat, inRow, phrase16)) { unkept = true; return { ok: false, why: MOVE_UNKEPT_WHY }; }
+        if (!moveLegAhead(storage, toFederationId, made, msat, inRow, phrase16, before)) { unkept = true; return { ok: false, why: MOVE_UNKEPT_WHY }; }
         return { ok: true, invoice: made.invoice }; } });
     // A STOP FOR STORAGE IS NOT AN EMPTY FEDERATION (kanban #2427 / #2484): { moved: 0n, chunks: 0 } is what the page reads as "found empty"
     // (ARENA_EVACUATE's evacuatedEmpty - never tried again that page) while `can` msat stay in the DRAINING / CRITICAL federation. This stop
@@ -4768,10 +4770,14 @@ export async function migrateFromDraining({ from, to, record, toFederationId, ch
     if (unkept) { onState({ state: 'unkept', movedMsat: moved, leftMsat: can, why: MOVE_UNKEPT_WHY }); return { moved, movedChunks: chunks, leftMsat: can, state: 'unkept', why: MOVE_UNKEPT_WHY }; }
     // NOTHING PAID (no payment made, or Refunded - the money back in the old wallet): the leg written ahead goes
     if (made && !out.ok && (!out.state || out.state === 'Refunded')) pendingDrop(storage, toFederationId, made.operation);
+    // kanban #3561: the out row, with its fee, as soon as the notes left - not only once the other federation claimed them
+    if (out.ok && made && storage && fromFederationId) {
+      let feeMsat = 0n; try { if (before !== null) { const f = before - BigInt(await from.balanceMsat()) - amount; if (f > 0n) feeMsat = f; } } catch { feeMsat = 0n; }
+      moveOutRowOnce(storage, fromFederationId, made, { kind: 'moved-out', msat: String(amount), feeMsat: String(feeMsat), to: hex(toFederationId) });
+    }
     const final = out.ok && made ? await to.awaitReceive(made.operation) : null;
     if (out.ok && final === 'Claimed') {
       moved += amount; chunks++; failed = 0;
-      if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: 'moved-out', msat: String(amount), to: hex(toFederationId) });
       if (storage) depositEnded(storage, toFederationId, made.operation, final, { invoice: made.invoice, operation: made.operation, amountMsat: amount, row: inRow });
       continue;
     }
@@ -4869,11 +4875,49 @@ export function swapGatewayPairs(named = [], listedTo = [], listedFrom = [], max
 // ANSWERS WHETHER THE LEG IS KEPT (kanban #2183): false only when a store was given and the entry did not land in it (a full store) -
 // the caller then pays nothing. No store or no federation named: nothing could be kept, as before.
 const MOVE_UNKEPT_WHY = 'this browser could not keep the move (storage full) - nothing was sent';
-function moveLegAhead(storage, federationId, made, msat, row, phrase16 = null) {
+// AND THE PAYING WALLET'S BALANCE BEFORE THE PAYMENT (kanban #3561, feedback #406/#598): the page counts the leg as the player's, "moving", once that
+// wallet no longer holds it (movesInFlight) - until the claim lands, the sats were in neither federation's balance and the total dropped
+function moveLegAhead(storage, federationId, made, msat, row, phrase16 = null, beforeMsat = null) {
   if (!storage || !fedHexOf(federationId)) return true;
   if (!made || !made.operation) return false;
   return pendingAdd(storage, federationId, { invoice: made.invoice, operation: made.operation, msat: String(msat), kind: 'move', row,
+    ...(beforeMsat !== null && beforeMsat !== undefined ? { beforeMsat: String(beforeMsat) } : {}),
     ...(phrase16 ? { phrase16: String(phrase16).toLowerCase() } : {}) });
+}
+/**
+ * THE MOVES ON THEIR WAY (kanban #3561, feedback #406/#426/#598: "the balance fell from 2,961 to 205 sat ... no withdrawal, move, stake or fee row"): a
+ * DRAINING / CRITICAL federation's evacuation, a Move or a join's swap pays out of one federation and is claimed in the other; between the two the
+ * sats sat in neither wallet's balance, for as long as the gateway or the claim took (hours, across a seat roll). Every receive leg still pending
+ * (arena.deposit.pending, kind 'move') of `phrase16` (or naming none): { to, from, msat, beforeMsat, operation }. `beforeMsat` is the paying
+ * wallet's balance before the payment - the caller counts the leg only once that wallet reads below `beforeMsat - msat` (the notes left it).
+ */
+export function movesInFlight(storage, phrase16 = null) {
+  if (!storage) return [];
+  const want = phrase16 ? String(phrase16).toLowerCase() : null, out = [], seen = new Set();
+  for (const k of storageKeys(storage)) {
+    if (!k.startsWith(PENDING_PREFIX)) continue;
+    const to = k.slice(PENDING_PREFIX.length).split('.')[0];
+    if (!/^[0-9a-f]{64}$/.test(to)) continue;
+    let list; try { list = readList(storage.getItem(k)); } catch { continue; }
+    for (const p of list) {
+      if (!p || p.kind !== 'move' || !p.operation || seen.has(String(p.operation))) continue;
+      if (want && p.phrase16 && String(p.phrase16).toLowerCase() !== want) continue;
+      let msat; try { msat = BigInt(p.msat); } catch { continue; }
+      if (msat <= 0n) continue;
+      seen.add(String(p.operation));
+      let beforeMsat = null; try { beforeMsat = p.beforeMsat !== undefined ? BigInt(p.beforeMsat) : null; } catch { beforeMsat = null; }
+      out.push({ to, from: String((p.row && p.row.from) || '').toLowerCase(), msat, beforeMsat, operation: String(p.operation), atMs: Number(p.atMs) || 0 });
+    }
+  }
+  return out;
+}
+// THE OUT ROW ONCE THE PAYMENT LEFT (kanban #3561): written when the paying wallet's send ended Success, with the fee it cost, once per invoice -
+// it was written only after the claim in the other federation, so a claim left to a later page (resumeDeposits writes only the in row) never
+// had one, and the fee (feedback #598: 161 sat of a 2,806 sat evacuation) was written nowhere
+function moveOutRowOnce(storage, fromFederationId, made, row) {
+  if (!storage || !fromFederationId) return false;
+  let h = null; try { h = toHex(decodeBolt11(made.invoice).paymentHash); } catch { h = null; }
+  return ledgerAppend(storage, fromFederationId, { ...row, ...(h ? { invoiceHash: h } : {}) }, h ? `out-${h}` : null);
 }
 // `rows`: the history's two kinds - a join's swap, or the player's own Move (movePlayerWallet)
 const MOVE_REFUND_WAIT_MS = 30000;
@@ -4913,7 +4957,7 @@ export async function swapForRound({ from, to, amountMsat, gateways = [], storag
     // and before the claim in `to` kept nothing naming `to` - the next page never opened its wallet and the paid invoice was never claimed.
     // Now the receive is a pending entry of `to` (arena.deposit.pending, as a deposit's): ledgerFederations names it, resumeDeposits claims it
     // A LEG THAT DID NOT LAND (kanban #2183: a full store refused it) is never paid - a tab closed after the payment would name `to` nowhere
-    if (!moveLegAhead(storage, toFederationId, made, amount, inRow, phrase16)) {
+    if (!moveLegAhead(storage, toFederationId, made, amount, inRow, phrase16, before)) {
       onState({ state: 'stopped', why: MOVE_UNKEPT_WHY, tried });
       return { ok: false, state: 'stopped', why: MOVE_UNKEPT_WHY, tried };
     }
@@ -4921,6 +4965,12 @@ export async function swapForRound({ from, to, amountMsat, gateways = [], storag
     if (said.state !== 'Refunded') break;
     pendingDrop(storage, toFederationId, made.operation);   // Refunded: nothing paid into that invoice
     tried.push({ receive: recv, pay, state: said.state });
+  }
+  // kanban #3561: the out row, with its fee, once the payment left - a claim that does not end here is still a move the history names
+  let feeMsat = 0n;
+  if (said.state === 'Success') {
+    try { const f = before - BigInt(await from.balanceMsat()) - amount; if (f > 0n) feeMsat = f; } catch { feeMsat = 0n; }
+    if (storage && fromFederationId) moveOutRowOnce(storage, fromFederationId, made, { kind: rows[0], msat: String(amount), feeMsat: String(feeMsat), to: hex(toFederationId) });
   }
   const final = said.state === 'Success' ? await to.awaitReceive(made.operation) : null;
   // THE RECEIVE ENDED Expired / Failure: its entry goes; Claimed ends below, with its row; anything else keeps it for the next page's resume
@@ -4946,8 +4996,6 @@ export async function swapForRound({ from, to, amountMsat, gateways = [], storag
     onState({ state: 'stopped', why, tried, heldMsat });
     return { ok: false, state: 'stopped', why, tried, heldMsat };
   }
-  const feeMsat = before - BigInt(await from.balanceMsat()) - amount;
-  if (storage && fromFederationId) ledgerAppend(storage, fromFederationId, { kind: rows[0], msat: String(amount), feeMsat: String(feeMsat), to: hex(toFederationId) });
   // the row and the end of the entry written ahead: one transition (depositEnded), the row once per invoice
   if (storage && toFederationId) depositEnded(storage, toFederationId, made.operation, final, { invoice: made.invoice, operation: made.operation, amountMsat: amount, row: inRow });
   onState({ state: 'swapped', amountMsat: amount, feeMsat });
