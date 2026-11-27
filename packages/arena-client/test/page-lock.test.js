@@ -1032,8 +1032,8 @@ test('the page withdraws nothing on a timer: its interval functions look, the pa
   // never on a timer (the timed functions above). Any other call is refused here
   const wc = [...page.matchAll(/ARENACLIENT\.withdrawCollected\(/g)].map((m) => m.index);
   const oprPay = page.indexOf("        pay: async (invoice) => {");
-  assert.ok(wc.length <= 1, 'the page calls withdrawCollected more than once');   // 2.0's page has no Orange Pill Run payment: none
-  if (wc.length) assert.ok(oprPay > 0 && wc[0] > oprPay && wc[0] < page.indexOf('\n        },\n', oprPay), 'withdrawCollected is called outside the Orange Pill Run entry payment');
+  assert.equal(wc.length, 1, 'the page calls withdrawCollected more than once');   // kanban #3892: 2.0's page has the Orange Pill Run payment too
+  assert.ok(oprPay > 0 && wc[0] > oprPay && wc[0] < page.indexOf('\n        },\n', oprPay), 'withdrawCollected is called outside the Orange Pill Run entry payment');
   const calls = [...page.matchAll(/ARENACLIENT\.collectAndWithdraw\(/g)].map((m) => m.index);
   const withdrawAt = page.indexOf('window.ARENA_WITHDRAW = async function');
   assert.equal(calls.length, 1);
