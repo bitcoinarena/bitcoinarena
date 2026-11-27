@@ -136,17 +136,33 @@ export function coreFiles(core) {
 /** THE LONGEST BIGINT a core may answer, in characters (kanban #3558): BigInt() of a core's digits runs in this thread, where no limit
  *  of the core's applies - 4 MB of them cost the seat about 1 s per decide (measured 854 ms). A 256-bit number is 78 digits. */
 export const BIG_DIGITS_MAX = 256;
+/** THE MOST BYTES one core answer may carry as {"$u8": hex}, all its $u8 values together (kanban #3841, bypass of #3558): the
+ *  sibling of BIG_DIGITS_MAX. The revive ran match(/../g) and parseInt over the core's hex in this thread with no bound - a decide
+ *  answering 4 MB of hex held the seat 168 ms (measured, 2 MB of bytes nobody asked for). A state hash is 32 bytes and a replay's
+ *  answer a few kB; past this budget the answer is refused, and the hex is read natively (Buffer), never pair by pair. */
+export const U8_BYTES_MAX = 256 * 1024;
+const HEX = /^(?:[0-9a-fA-F]{2})*$/;
 /** Reads back a driver answer: tagged bigints and bytes restored. */
-const revive = (s) => JSON.parse(s, (k, x) => {
-  if (x && typeof x === 'object' && !Array.isArray(x)) {
-    if (typeof x.$big === 'string' && Object.keys(x).length === 1) {
-      if (x.$big.length > BIG_DIGITS_MAX) throw new Error(`the core answered a $big of ${x.$big.length} characters, and a core's bigint has at most ${BIG_DIGITS_MAX} digits`);
-      return BigInt(x.$big);
+const revive = (s) => {
+  let u8Bytes = 0; // kanban #3841: $u8 bytes revived so far in THIS answer
+  return JSON.parse(s, (k, x) => {
+    if (x && typeof x === 'object' && !Array.isArray(x)) {
+      if (typeof x.$big === 'string' && Object.keys(x).length === 1) {
+        if (x.$big.length > BIG_DIGITS_MAX) throw new Error(`the core answered a $big of ${x.$big.length} characters, and a core's bigint has at most ${BIG_DIGITS_MAX} digits`);
+        return BigInt(x.$big);
+      }
+      if (typeof x.$u8 === 'string' && Object.keys(x).length === 1) {
+        // kanban #3841: bounded (all of this answer's $u8 together) before any work on it, and only whole hex pairs taken
+        u8Bytes += x.$u8.length / 2;
+        if (u8Bytes > U8_BYTES_MAX) throw new Error(`the core answered more than ${U8_BYTES_MAX} bytes as $u8 in one answer`);
+        if (!HEX.test(x.$u8)) throw new Error('the core answered a $u8 that is not whole hex bytes');
+        const b = Buffer.from(x.$u8, 'hex');
+        return new Uint8Array(b.buffer, b.byteOffset, b.length).slice();
+      }
     }
-    if (typeof x.$u8 === 'string' && Object.keys(x).length === 1) return Uint8Array.from(x.$u8.match(/../g) || [], (h) => parseInt(h, 16));
-  }
-  return x;
-});
+    return x;
+  });
+};
 
 /** A JSON-able copy of what the node hands in: bytes as arrays of numbers, bigints refused (the core takes integers). */
 const plain = (v) => JSON.stringify(v === undefined ? null : v, (k, x) => (ArrayBuffer.isView(x) ? Array.from(x) : typeof x === 'bigint' ? Number(x) : x));
