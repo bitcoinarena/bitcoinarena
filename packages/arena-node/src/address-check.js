@@ -11,6 +11,7 @@
 // fetch checks (a broken certificate fails as 'tls'), with no redirect followed. That is all a seat or a page needs of the address: the
 // probe is not widened (it stays a key-for-key check, never an open proxy).
 import { jsonUpTo } from './peer-read.js';
+import { addressRefusal } from './address-rules.js';
 
 export const CHECK_SEATS_MOST = 3;
 export const CHECK_TIMEOUT_MS = 20000;
@@ -53,7 +54,8 @@ export function kindText(r) {
  */
 export async function outsideCheck({ url, node, seats = [], fetchFn = fetch, need = 2, timeoutMs = CHECK_TIMEOUT_MS }) {
   const want = norm(url);
-  if (!/^https:\/\//i.test(String(url || ''))) return { ok: false, url, asked: 0, reached: 0, failed: 0, unknown: 0, results: [], why: `${url || 'no address'} is not an https address: browsers on the https page block it (mixed content)` };
+  const refused = addressRefusal(url);   // kanban #3887: never asked for an address the network cannot use
+  if (refused) return { ok: false, url, asked: 0, reached: 0, failed: 0, unknown: 0, results: [], why: refused.why, howTo: refused.howTo };
   const results = await Promise.all(seats.map(async (seat) => {
     try {
       const r = await fetchFn(`${String(seat).replace(/\/+$/, '')}/reach-probe?node=${node}`, { cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
