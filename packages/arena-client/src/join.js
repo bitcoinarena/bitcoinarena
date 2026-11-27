@@ -32,7 +32,11 @@ import { httpProvider, headerSources, HEADER_SOURCES_ASKED } from './headers.js'
 export { headerSources, HEADER_SOURCES_ASKED };
 import { seedHexFromInput } from './bip39.js';
 import { NO_SHARES, dealHandout, encodeHandout, decodeHandout } from '../../arena-protocol/src/handout.js';
-import { seatsOf, hostOf } from './seat-identity.js';   // kanban #3753 (seat-identity.js reads sourceKey from here, inside its functions only)
+import { seatsOf, hostOf } from './seat-identity.js';
+// kanban #3833: one seat's /bond and /api/round-result answers are read up to a bound (readJsonUpTo, as #2802 / #2816 on other doors), not
+// whole - a gzip body that inflates to ~100 MB held the paid join and froze the tab. Over the bound = that seat said nothing.
+import { readJsonUpTo } from './item-buy.js';
+export const PAID_JOIN_ANSWER_BYTES_MAX = 8 * 1024 * 1024;   // kanban #3753 (seat-identity.js reads sourceKey from here, inside its functions only)
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { worldSeedWord, worldIsShared, worldSlot, slotOfEntryId, WORLD_SLOTS } from '../../arena-protocol/src/seed.js';
 import { playerSecretFor, refundFingerprint } from '../../arena-protocol/src/player-key.js';
@@ -919,7 +923,7 @@ export async function slotsTaken({ round, nodes, fetcher = fetch, waitMs = 700 }
     try {
       const r = await fetcher(node.replace(/\/+$/, '') + '/api/round-result?round=' + id);
       if (!r.ok) return;
-      for (const p of (await r.json()).players || []) taken.add(slotOfEntryId(fromHex(p.entry)));
+      for (const p of (await readJsonUpTo(r, PAID_JOIN_ANSWER_BYTES_MAX)).players || []) taken.add(slotOfEntryId(fromHex(p.entry)));   // kanban #3833: read to a bound
     } catch { /* that seat says nothing */ }
   });
   let timer;
@@ -980,7 +984,7 @@ export async function committeeBonds({ bond, nodes = [], committee = [], fetcher
     try {
       const r = await fetcher(u, { signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return null;
-      const o = await r.json();
+      const o = await readJsonUpTo(r, PAID_JOIN_ANSWER_BYTES_MAX);   // kanban #3833: read to a bound
       const a = o && typeof o.hex === 'string' ? advertInTransaction(fromHex(o.hex)) : null;
       return a && a.nodePubkey instanceof Uint8Array && keys.has(toHex(a.nodePubkey)) ? { where: u, body: o } : null;
     } catch { return null; }
@@ -1004,7 +1008,7 @@ export function bondProvider(where, { fetcher = fetch, body = null } = {}) {
     if (!o) {
       const r = await readWithOneRetry(fetcher, where, opts);
       if (!r.ok) throw new Error(`the bond provider answered ${r.status}`);
-      o = await r.json();
+      o = await readJsonUpTo(r, PAID_JOIN_ANSWER_BYTES_MAX);   // kanban #3833: read to a bound
     }
     const proof = (x) => ({ transaction: fromHex(x.hex), branch: (x.merkle || []).map(fromHex), position: x.pos | 0 });
     // A CARRIED BOND: the ancestor bond, and beside it its re-affirmation and its advertisement update

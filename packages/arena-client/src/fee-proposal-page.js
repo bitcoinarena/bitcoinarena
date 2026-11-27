@@ -9,6 +9,9 @@ import { majorityThenGrace, COMPARE_GRACE_MS, newestCheckedCensus } from './comm
 import { seatsOf, seatVoice } from './seat-identity.js';
 import { FEES, FEES_TODAY, feeProposalStands, encodeFeeProposal, feeProposalId, roundSplitBps, marketBps } from '../../arena-protocol/src/fee-proposal.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
+// kanban #3833: one node's /fees answer is read up to a bound, not whole (a ~100 MB inflated body held the paid join); over it = no vote
+import { readJsonUpTo } from './item-buy.js';
+export const FEES_ANSWER_BYTES_MAX = 8 * 1024 * 1024;
 
 const feesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
 const feesCurveOf = (curve) => { const c = curve || globalThis.ARENA_CURVE; if (!c || typeof c.pointX !== 'function') throw new Error('no curve loaded (arena-curve.js)'); return c; };
@@ -34,7 +37,7 @@ export async function fetchFees({ nodes, height = null, needed = 5, fetcher = (u
   // once, the 14th was restarting): once more than half the nodes answered, the rest get COMPARE_GRACE_MS more
   const got = new Array(asked.length).fill(null);
   await majorityThenGrace(asked.map(async (b, i) => {
-    try { const r = await fetcher(`${b}/fees${q}`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }); got[i] = r.ok ? await r.json() : null; } catch { got[i] = null; }
+    try { const r = await fetcher(`${b}/fees${q}`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) }); got[i] = r.ok ? await readJsonUpTo(r, FEES_ANSWER_BYTES_MAX) : null; } catch { got[i] = null; }
   }), COMPARE_GRACE_MS);
   const setKey = (a) => (a && (q ? a.atHeight : a.inForce) ? JSON.stringify(Object.keys(FEES).map((f) => (q ? a.atHeight : a.inForce)[f])) : null);
   // (kanban #3576) one answer per seat: the one its URLs agree on
