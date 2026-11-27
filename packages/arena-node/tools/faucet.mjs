@@ -504,9 +504,13 @@ async function sweepPayments(nowMs = Date.now()) {
     else if (notPaid(states)) drop.add(r.hash);
   }
   // A REFILL STILL UNSURE (kanban #2130): read the same way; NONE/FAILED at every payer asked takes it out of the day's count
+  // REFILL ROWS BY THE PAYER'S OWN ENTRY TOO (kanban #3810, the #1926 hole at the second door): the refill row still named its payers by index, so a
+  // restart with a payer added in front asked another lnd - "not initiated", the row dropped while the real payer held the HTLC in flight, the day cap
+  // no longer counting it and the same invoice paid again by the other lnd. Rows now carry payerIds and are resolved by them; a row from before (no
+  // payerIds) or a payer no longer listed answers nothing (null), so the row stays pending and is never decided by whichever lnd now has that index
   const keepRefill = new Set(), dropRefill = new Set();
   for (const r of (seen.refills || []).filter((x) => x.pending && !GRANTING.has(x.hash))) {
-    const states = await Promise.all((r.payers || []).map((i) => paymentFinal(PAYERS[i], r.hash).catch(() => null)));
+    const states = await Promise.all((Array.isArray(r.payerIds) ? askedOf(r) : [null]).map((p) => paymentFinal(p, r.hash).catch(() => null)));
     if (states.includes('SUCCEEDED')) keepRefill.add(r.hash);
     else if (notPaid(states)) dropRefill.add(r.hash);
   }
@@ -523,7 +527,7 @@ async function sweepPayments(nowMs = Date.now()) {
   for (const [h, u] of rebook) { const { payers, payerIds, removedMs, ...row } = u; if (!book.players.some((x) => x.hash === h)) { book.players.push(row); console.log(`${new Date().toISOString()} player ${row.kind} ${h.slice(0, 16)}: paid after all - booked again`); } }
   book.unsure = book.unsure.filter((u) => !rebook.has(u.hash) && !forget.has(u.hash));
   book.refills = book.refills || [];
-  for (const r of book.refills) if (r.pending && keepRefill.has(r.hash)) { delete r.pending; delete r.payers; console.log(`${new Date().toISOString()} refill ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
+  for (const r of book.refills) if (r.pending && keepRefill.has(r.hash)) { delete r.pending; delete r.payers; delete r.payerIds; console.log(`${new Date().toISOString()} refill ${r.hash.slice(0, 16)}: SUCCEEDED, kept`); }
   book.refills = book.refills.filter((r) => { const gone = r.pending && dropRefill.has(r.hash); if (gone) console.log(`${new Date().toISOString()} refill ${r.hash.slice(0, 16)}: not paid by any payer - not counted`); return !gone; });
   saveBook(book);
   return true;
@@ -817,26 +821,26 @@ createServer((req, res) => {
         if (GRANTING.has(hash) || book.refills.some((r) => r.hash === hash)) return send(200, { ok: false, why: 'that invoice was already asked' });
         // ONLY ITS OWN ROW (kanban #2375): each row carries its own id; every later change finds the row by that id, never by the hash alone
         const id = randomBytes(8).toString('hex'), mineOf = (bk) => (bk.refills || []).find((r) => r.id === id && r.pending);
-        book.refills.push({ id, sats: d.sats, atMs: Date.now(), hash, pending: true, payers: PAYERS.map((_, i) => i) }); saveBook(book);
+        book.refills.push({ id, sats: d.sats, atMs: Date.now(), hash, pending: true, payers: PAYERS.map((_, i) => i), payerIds: PAYERS.map(payerId) }); saveBook(book);   // kanban #3810
         GRANTING.add(hash);
         try {
-          const askedPayers = [];
+          const askedPayers = [], askedIds = [];
           let unclear = false;
           for (const payer of PAYERS) {
             const paid = await lncli(payer, ['payinvoice', '--force', '--timeout=60s', '--fee_limit=20', b.invoice], 15000);
-            askedPayers.push(PAYERS.indexOf(payer));
+            askedPayers.push(PAYERS.indexOf(payer)); askedIds.push(payerId(payer));   // kanban #3810: by its own entry too
             const paidSays = lnStatus(paid.out);   // kanban #2416: the status line, never a node's alias
             if (paidSays === 'SUCCEEDED' || (paid.timedOut && paidSays !== 'FAILED')) {   // kanban #2206: an IN_FLIGHT update before FAILED, or an exit without SUCCEEDED, is no top-up
               const b2 = readBook(), mine = mineOf(b2);
-              if (mine && paidSays === 'SUCCEEDED') { delete mine.pending; delete mine.payers; saveBook(b2); }
-              else if (mine) { mine.payers = [...askedPayers]; saveBook(b2); }
+              if (mine && paidSays === 'SUCCEEDED') { delete mine.pending; delete mine.payers; delete mine.payerIds; saveBook(b2); }
+              else if (mine) { mine.payers = [...askedPayers]; mine.payerIds = [...askedIds]; saveBook(b2); }
               console.log(`${new Date().toISOString()} refill ${d.sats} sat: ${hash.slice(0, 16)}`); return send(200, { ok: true, sats: d.sats });
             }
             // "already paid" / "in transition" is no proof that nothing moved (kanban #2375): the row stays for the sweep to decide
             if (/already paid|in transition|already exists/i.test(`${paid.err} ${paid.out}`)) unclear = true;
           }
           const after = readBook();
-          if (unclear) { const mine = mineOf(after); if (mine) { mine.payers = [...askedPayers]; saveBook(after); } }
+          if (unclear) { const mine = mineOf(after); if (mine) { mine.payers = [...askedPayers]; mine.payerIds = [...askedIds]; saveBook(after); } }
           else { after.refills = (after.refills || []).filter((r) => !(r.id === id && r.pending)); saveBook(after); }
         } finally { GRANTING.delete(hash); }
         send(200, { ok: false, why: 'could not pay just now' });
