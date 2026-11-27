@@ -37,7 +37,7 @@ export function switchPlan(was, mode, nowMs = Date.now()) {
  * removeProgram for the tunnel; `startedMs` when this seat started. Answers { did: [...], view } - the view for GET /owner/reach.
  */
 export async function followReach({ home, state = null, publicEndpoint, censusRead = false, ownEndpoints = [], refresh, removeTunnel, nowMs = Date.now(),
-  startedMs = null, retryMs = UPDATE_RETRY_MS, adoptUrl = null, accept = null }) {
+  startedMs = null, retryMs = UPDATE_RETRY_MS, adoptUrl = null, accept = null, feeCheck = null }) {
   const st = state || nodeState(home);
   const did = [];
   let s = st.read();
@@ -94,10 +94,14 @@ export async function followReach({ home, state = null, publicEndpoint, censusRe
         const g = accept ? await gate(r.url) : { ok: true };
         if (!g.ok) st.save({ endpointUpdate: { endpoint: r.url, why: `checked from outside first: ${g.why || 'not reached'}`, outside: g.detail || null, atMs: nowMs } });
         else {
+          // kanban #3888: the wallet can pay it - else the amount and the deposit address are said, nothing is sent
+          let fee = null;
+          if (feeCheck) { try { fee = await feeCheck(); } catch (e) { fee = null; } }
           let res;
-          try { res = await refresh({ home: st.home, state: st, post: true }); } catch (e) { res = { ok: false, why: e.message }; }
+          if (fee && fee.ok && fee.enough === false) res = { ok: false, why: fee.why, fee };
+          else { try { res = await refresh({ home: st.home, state: st, post: true }); } catch (e) { res = { ok: false, why: e.message }; } }
           if (res && res.ok) did.push(`advertisement update ${res.update ? res.update.txid : '(already sent)'}`);
-          else st.save({ endpointUpdate: { endpoint: r.url, why: (res && res.why) || 'not posted', pending: !!(res && res.pending), atMs: nowMs } });
+          else st.save({ endpointUpdate: { endpoint: r.url, why: (res && res.why) || 'not posted', pending: !!(res && res.pending), ...(res && res.fee ? { fee: res.fee } : {}), atMs: nowMs } });
         }
       }
     }

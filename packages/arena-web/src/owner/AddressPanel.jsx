@@ -93,6 +93,9 @@ export class AddressPanel extends React.Component {
       else if (f.bonded) {
         lines.push(<p key="c" className="warnline">The census still names {(f.advertised || []).join(', ') || 'another address'}: pages and seats that read it go there until it names this one.</p>);
         if (f.update && f.update.txid) lines.push(<p key="u" className="sub">An advertisement update naming this address is on its way ({String(f.update.txid).slice(0, 12)}…): the census takes it about {f.takesBlocks} blocks after it is sent ({hours(f.takesMinutes)}).</p>);
+        else if (f.update && f.update.fee && f.update.fee.enough === false) lines.push(<div key="u" className="err" data-check="fee">   {/* kanban #3888 */}
+          <p>Your node's wallet cannot pay the advertisement update yet: it holds {f.update.fee.haveSats} sat and the update needs {f.update.fee.needSats} sat.</p>
+          <p>Send at least <b>{f.update.fee.sendSats} sat</b> to <code>{f.update.fee.deposit}</code>. The node posts the update by itself within 10 minutes of the deposit.</p></div>);
         else if (f.update && f.update.why) lines.push(<p key="u" className="err">The advertisement update naming this address could not be posted yet: {f.update.why}. The node tries again every 10 minutes.</p>);
       }
     }

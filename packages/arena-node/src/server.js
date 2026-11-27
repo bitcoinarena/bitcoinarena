@@ -14637,6 +14637,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       };
       const f = await followReach({ home, publicEndpoint, censusRead: !!(list && list.length), ownEndpoints: mine, startedMs: SEAT_STARTED_MS, adoptUrl, accept,
         refresh: async (o) => (await import('../../arena-installer/src/change-roles.js')).refreshEndpoint({ ...o, release }),
+        feeCheck: async () => (await import('../../arena-installer/src/change-roles.js')).advertFeeCheck({ home, release }),   // kanban #3888
         removeTunnel: async () => (await import('../../arena-installer/src/service.js')).removeProgram({ id: 'tunnel', home }) });
       for (const d of f.did) console.log(`[address] ${d}`);
       const mm = f.view && f.view.mismatch;
