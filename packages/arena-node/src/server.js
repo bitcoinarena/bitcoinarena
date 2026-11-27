@@ -14597,10 +14597,16 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const matches = []; let a0Seen = false; let feeTries = 0;
         const feeId = (h) => sha256(new Uint8Array([...h.id, ...new TextEncoder().encode('fee')]));
         const txHex = toHex(outpoint.txid);
-        for (const h of round.handoutsOf(rid)) {
-          let d; try { d = decodeHandout(h.bytes); } catch { continue; }
-          const refunds = toHex(refundKeyOf(d.playerPubkey)) === toHex(fields.refundPk);
-          if (image.kind === 'point' && d.commitments[0] && toHex(d.commitments[0]) === hex) { a0Seen = true; if (refunds) matches.push({ id: h.id, handout: d }); }
+        // ONLY THE HANDOUTS THAT NAME THE LOCK, NEVER EVERY ONE (kanban #3846, audit r30 entry-1, #1605 regressed): this loop decoded all of the
+        // round's handouts per ask - up to HANDOUTS_LOOSE_CEILING (8192) a stranger posts for free, 19.9 ms per unauthenticated ask with a made-up
+        // lock. round.js keeps each handout's A0 and refund key, decoded once; the same handouts match, in the same order, as before.
+        const refundHex = toHex(fields.refundPk);
+        const naming = image.kind === 'point' ? (hex ? round.handoutsWithA0(rid, hex) : [])
+          : image.kind === 'hash' ? round.handoutsRefundingTo(rid, refundHex) : [];
+        for (const h of naming) {
+          const d = { playerPubkey: h.playerPubkey };
+          const refunds = h.refund === refundHex;
+          if (image.kind === 'point' && h.a0 === hex) { a0Seen = true; if (refunds) matches.push({ id: h.id, handout: d }); }
           if (image.kind === 'hash' && refunds) {
             // A FEE LOCK IS THE TRY'S IT WAS LOCKED WITH (kanban #1945): the handout whose kept stake lock is an output of its own lock transaction first
             const stakeKept = round.refusedLock(h.id);
