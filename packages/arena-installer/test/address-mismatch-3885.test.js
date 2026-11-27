@@ -97,3 +97,13 @@ test('kanban #3886: the outside check gates every update - a switched address ot
   await followReach({ home: m.home, state: m.state, publicEndpoint: NEW, censusRead: true, ownEndpoints: [OLD], refresh: m.refresh, removeTunnel: m.removeTunnel, nowMs: 1, accept: async () => { once++; return { ok: true }; } });
   assert.equal(once, 1); assert.deepEqual(m.posted, [NEW]);
 });
+
+test('kanban #3887: a public_url that is http, an IP or another port is said with its reason and never taken', async () => {
+  for (const bad of ['http://203.0.113.9:8470', 'https://203.0.113.9', 'https://arena.example.org:8470']) {
+    const n = node({ mode: 'tailscale', port: 8470, url: OLD });
+    const f = await followReach({ home: n.home, state: n.state, publicEndpoint: bad, censusRead: true, ownEndpoints: [OLD], refresh: n.refresh, removeTunnel: n.removeTunnel, nowMs: 1, adoptUrl: bad, accept: async () => ({ ok: true }) });
+    assert.equal(f.view.mismatch.adoptable, false, bad);
+    assert.ok(f.view.mismatch.refusal && f.view.mismatch.refusal.why, bad);
+    assert.equal(n.posted.length, 0, bad); assert.equal(n.state.read().reach.url, OLD, bad);
+  }
+});

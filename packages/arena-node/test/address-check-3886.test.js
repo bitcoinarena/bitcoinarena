@@ -28,7 +28,7 @@ test('dead, a broken certificate or another node at the new address: not ok, the
     assert.equal(c.ok, false, k); assert.match(c.why, /1 of 2 seats could not reach/); assert.match(c.why, says);
   }
   const h = await outsideCheck({ url: 'http://203.0.113.9:8470', node: NODE, seats: ['https://s1'], fetchFn: async () => { throw new Error('never asked'); } });
-  assert.equal(h.ok, false); assert.match(h.why, /not an https address.*mixed content/);
+  assert.equal(h.ok, false); assert.match(h.why, /not https.*mixed content/);
 });
 
 test('seats that hold no announcement of the address yet, or do not answer: unknown, not ok until two reached it', async () => {

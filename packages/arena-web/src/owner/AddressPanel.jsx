@@ -6,6 +6,7 @@
 // it waits for it. A stable address is the default.
 import React from 'react';
 import { Button } from '../design/components.jsx';
+import { addressRefusal, ADDRESS_HOW_TO } from '../../../arena-node/src/address-rules.js';   // kanban #3887
 
 /** Each way in: its name and icon. */
 export const MODE = Object.freeze({ quick: ['Quick tunnel', '⚡'], permanent: ['Your own domain', '🏷️'], workers: ['workers.dev name', '☁️'], tailscale: ['Tailscale Funnel', '🔗'], direct: ['Direct (open port)', '🔌'], tor: ['Tor', '🧅'] });
@@ -38,6 +39,7 @@ export class AddressPanel extends React.Component {
         <p className="err"><b>Your node's address and its advertisement differ.</b> {m.confDiffers ? <>public_url in arena.conf is <code>{m.conf}</code>, but the network sends players and other nodes to <code>{(m.advertised && m.advertised.length ? m.advertised : [m.installer]).join(', ')}</code>.</> : <>This node runs on <code>{m.conf}</code>, but the network still names <code>{(m.advertised || []).join(', ')}</code>.</>} Changing public_url and restarting is not enough: the network reads the address from the advertisement on chain.</p>
         {m.adoptable ? <p><Button primary disabled={this.state.busy} onClick={() => this.adopt(m.conf)}>{this.state.busy ? 'Posting…' : `Post the advertisement update for ${m.conf}`}</Button></p>
           : m.quick ? <p className="sub">A quick tunnel's address changes at every restart and is never put on chain: choose a stable address below.</p>
+          : m.refusal ? <p className="err" data-check="refusal">This address cannot be used: {m.refusal.why}. <span className="sub">{m.refusal.howTo}</span></p>
           : !m.bonded ? <p className="sub">This node has no bond yet: its bond's advertisement will name the address it runs on.</p> : null}
         {a && !a.ok ? <p className="err">Not posted: {a.why}</p> : null}
       </div>);
@@ -65,8 +67,13 @@ export class AddressPanel extends React.Component {
   async go() {
     this.setState({ busy: true, message: null });
     let x; try { x = await this.props.api.post('/owner/reach', await this.props.api.signed('reach', argsOf(this.state.mode, this.state))); } catch (e) { x = { ok: false, why: e.message }; }
-    if (!x || !x.ok) return this.setState({ busy: false, message: (x && x.why) || 'not started' });
+    if (!x || !x.ok) return this.setState({ busy: false, message: [(x && x.why) || 'not started', x && x.howTo].filter(Boolean).join('. ') });
     await this.read();
+  }
+  // THE NAME TYPED, CHECKED AS IT IS TYPED (kanban #3887): https on 443, a name with a certificate - why not, before anything is started
+  hostnameRefusal() {
+    const h = String(this.state.hostname || '').trim().replace(/^https?:\/\//i, '');
+    return h ? addressRefusal(`https://${h}`) : null;
   }
   progress(p) {
     if (!p) return null;
@@ -124,11 +131,12 @@ export class AddressPanel extends React.Component {
                   <span className="choice-ic" aria-hidden="true">{ic}</span>
                   <span className="choice-body"><b>{title}{r.mode === k ? <span className="pill on">now</span> : null}</b><span className="sub">{String(v).replace(/^[^:]+:\s*/, '')}</span>
                     {on && k === 'workers' ? <span className="choice-fields">{field('cfToken', 'Cloudflare API token (Workers edit)')}{field('cfSubdomain', 'workers.dev subdomain (optional)')}</span> : null}
-                    {on && k === 'permanent' ? <span className="choice-fields">{field('hostname', 'node.example.com (a domain on your Cloudflare account)')}</span> : null}
+                    {on && k === 'permanent' ? <span className="choice-fields">{field('hostname', 'node.example.com (a domain on your Cloudflare account)')}{this.hostnameRefusal() ? <span className="err" data-check="hostname-refusal">{this.hostnameRefusal().why}</span> : null}</span> : null}
+                    {on && k === 'direct' ? <span className="warnline" data-check="direct-warning">Browsers on the https Arena page block an http://IP:port address: put an https name in front of the port. {ADDRESS_HOW_TO}</span> : null}
                   </span>
                 </label>);
             })}</div>
-            <Button primary disabled={busy || !mode || mode === r.mode} onClick={this.go}>{busy ? 'Switching…' : mode && mode !== r.mode ? `Switch to ${(MODE[mode] || [mode])[0]}` : 'Choose another way'}</Button>
+            <Button primary disabled={busy || !mode || mode === r.mode || (mode === 'permanent' && !!this.hostnameRefusal())} onClick={this.go}>{busy ? 'Switching…' : mode && mode !== r.mode ? `Switch to ${(MODE[mode] || [mode])[0]}` : 'Choose another way'}</Button>
             {mode && mode !== r.mode && mode !== 'quick' ? <p className="sub">The node tells the seats its new address at once. On chain it posts an advertisement update from its wallet (a small fee): the census names the new address about 12 blocks (about 2 hours) after the switch{['quick', 'permanent', 'workers'].includes(r.mode) && ['tailscale', 'direct'].includes(mode) ? ', and the old address keeps working until then' : ''}.</p> : null}
             {message ? <p className="err">{message}</p> : null}
           </div>

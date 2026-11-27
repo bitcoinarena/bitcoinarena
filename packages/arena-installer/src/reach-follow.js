@@ -14,6 +14,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tunnelMode } from './reach.js';
 import { nodeState } from './state.js';
+import { addressRefusal } from '../../arena-node/src/address-rules.js';   // kanban #3887
 
 /** Blocks from an update's broadcast until the census names it: confirmed 6 deep, read at the seats' next 6-block step. */
 export const CENSUS_TAKES_BLOCKS = 12;
@@ -129,11 +130,12 @@ export function addressMismatch({ s, publicEndpoint, censusRead = false, ownEndp
   let host = ''; try { host = new URL(conf).hostname; } catch { host = ''; }
   const quick = r.mode === 'quick' || QUICK_HOST.test(host);
   const bonded = !!(s && s.bond && s.bond.txid);
-  const adoptable = confDiffers && !quick && !switching && bonded;
+  const refusal = quick ? null : addressRefusal(conf);   // kanban #3887: https on 443, a name with a certificate
+  const adoptable = confDiffers && !quick && !switching && bonded && !refusal;
   const why = confDiffers
     ? `public_url in arena.conf is ${conf}, but this node's advertisement names ${(advertised && advertised.length ? advertised : [r.url]).join(', ')}: changing public_url and restarting changes nothing for the network until an advertisement update names it`
     : `this node runs on ${conf}, but the census names ${advertised.join(', ')}`;
-  return { conf, installer: r.url || null, advertised, confDiffers, censusDiffers, adoptable, quick, switching: !!switching, bonded, why };
+  return { conf, installer: r.url || null, advertised, confDiffers, censusDiffers, adoptable, quick, switching: !!switching, bonded, refusal, why };
 }
 
 /** What the owner page shows of it: the census's address(es) for this node, the update on its way, the tunnel kept, how long it takes. */

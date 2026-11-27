@@ -45,6 +45,7 @@ import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck, askerAddress } from './reach-check.js';
 import { createReachProbe } from './reach-probe.js';   // kanban #3798
+import { addressRefusal, guardianEndpointRefusal } from './address-rules.js';   // kanban #3887
 import { ownBondOf, ownBondsOf, outputOfEntry, ownOutputsOnChain, lockAt, withdrawSpend } from './bond-withdraw.js';
 import { BOND_TEMPLATE_V2 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
@@ -9663,18 +9664,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!follow) { try { const { viewOf } = await import('../../arena-installer/src/reach-follow.js'); follow = viewOf(st); } catch { follow = null; } }
           const now = { ok: true, mode: r.mode || null, url: r.url || null, stable: !!r.mode && r.mode !== 'quick', serving: publicEndpoint || null, progress,
             follow, announced: lastAnnounce,
-            modes: { direct: 'your own address: the port open to the internet (checked from outside)', permanent: 'a named Cloudflare tunnel on your own domain (log in to Cloudflare)',
+            modes: { direct: 'your own address: the port open to the internet (checked from outside). It is http://<IP>:<port>, which browsers on the https Arena page block: players reach the node only through an https name in front of it', permanent: 'a named Cloudflare tunnel on your own domain (log in to Cloudflare)',
               workers: 'a free workers.dev address on your Cloudflare account (an API token)', tailscale: 'Tailscale Funnel (Tailscale installed and logged in)',
               quick: 'an anonymous tunnel: no account, but a new address at every restart' } };
           const args = body.args || {};
           // TAKE PUBLIC_URL AS THE ADDRESS (kanban #3885): the owner's button on a mismatch - the advertisement update follows in the same pass
           if (args.adopt) {
+            const no = addressRefusal(String(args.adopt));   // kanban #3887
+            if (no) return answer(400, { ok: false, why: no.why, howTo: no.howTo });
             const f = await followReachNow(await censusForAddresses(), { adoptUrl: String(args.adopt) });
             if (!f) return answer(409, { ok: false, why: 'the address could not be followed now: try again in a minute' });
             return answer(200, { ...now, follow: f.view, did: f.did });
           }
           if (!args.mode) return answer(200, now);
           if (!Object.keys(now.modes).includes(args.mode)) return answer(400, { ok: false, why: `no mode ${args.mode}` });
+          if (args.mode === 'permanent') {   // kanban #3887: the name refused at input, with the reason
+            const no = addressRefusal(`https://${String(args.hostname || '').trim().replace(/^https?:\/\//i, '')}`);
+            if (no) return answer(400, { ok: false, why: no.why, howTo: no.howTo });
+          }
           if (progress && (progress.state === 'running' || progress.state === 'login') && Date.now() - progress.atMs < 15 * 60000) return answer(409, { ok: false, why: 'a switch is already running', progress });
           const release = new URL('../../..', import.meta.url).pathname;
           const bin = jn(release, 'packages', 'arena-installer', 'bin', 'reach-switch.mjs');
@@ -14596,6 +14603,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // the advertisement update naming the new address posted while the census names another, the kept old tunnel taken away once it names the new
   const SEAT_STARTED_MS = Date.now();
   let followBusy = null;   // one pass at a time: two clocks at once must not post the update twice
+  // WHAT THE ADDRESS MUST BE (kanban #3887, address-rules.js): said once at the start - an http, IP or odd-port public_url, a guardian
+  // endpoint that is not wss://<the same name>/guardian
+  {
+    const a = publicEndpoint ? addressRefusal(publicEndpoint) : null;
+    if (a) console.log(`[address] WARNING public_url ${publicEndpoint}: ${a.why}. ${a.howTo}`);
+    const g = guardian && guardian.endpoint ? guardianEndpointRefusal(guardian.endpoint, publicEndpoint) : null;
+    if (g) console.log(`[address] WARNING ${g.why}`);
+  }
   const followReachNow = (list, opts = {}) => { if (!followBusy) followBusy = followReachOnce(list, opts).finally(() => { followBusy = null; }); return followBusy; };
   // PUBLIC_URL AGAINST THE ADVERTISEMENT, SAID LOUDLY (kanban #3885): once per difference in the log - an installed node's and a hand-set one's
   let mismatchSaid = null;
