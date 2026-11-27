@@ -6092,6 +6092,15 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // them, a seat that refused has them taken back before another seat is handed new ones, and the record is dropped only once what came
     // back was received at the agreed amount (ecash-transfer.js). A seat that took them and did not answer is asked again, the same seat
     // with the same notes (it answers a retry the same, never pays twice - ecash-exchange.js).
+    // THE SEATS THE E-CASH EXCHANGE MAY HAND NOTES TO (kanban #3873, audit r40-client-4): an exchange hands the player's notes over before the
+    // seat answers, so the seat must be one this site vouches for - the seats daily.json (this page's own origin) names, its lobby's and its
+    // testnet's. A node the page learned from a census (ARENA_LEARN_NODES), a link's node= or a row's list is never handed notes: a bonded
+    // outsider could offer, keep the notes and answer 1 msat. Read once; a failed read is asked again the next time.
+    let exchangeSeatsRead = null;
+    window.ARENA_EXCHANGE_SEATS = () => (exchangeSeatsRead = exchangeSeatsRead || fetch('daily.json', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => [d && d.node, d && d.testnet && d.testnet.node].flatMap((l) => (Array.isArray(l) ? l.map(String) : [])).filter((u) => /^https?:\/\//.test(u)))
+      .catch(() => { exchangeSeatsRead = null; return []; }));
     window.ARENA_EXCHANGE_INTO = async ({ to, toInvite, needMsat, nodes, seed, LockClient, onStep = () => {} }) => {
       const t0 = Date.now();
       const vault = () => window.ARENA_BROWSER_STORE();
@@ -6141,6 +6150,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         return { ok: false, why: 'no other federation of this wallet holds enough spendable sats' };
       }
       const from = src.federation;
+      // ONLY THE SITE'S OWN SEATS ARE HANDED NOTES (kanban #3873): the round's list in its order where it names them, then the rest daily.json names
+      const seatKey = (u) => { try { return String(window.ARENA_VIA_ALT ? window.ARENA_VIA_ALT(String(u)) : u).replace(/\/+$/, '').toLowerCase(); } catch { return ''; } };
+      let own = [];
+      try { own = window.ARENA_EXCHANGE_SEATS ? await window.ARENA_EXCHANGE_SEATS() : []; } catch { own = []; }
+      const ownKeys = new Set(own.map(seatKey).filter(Boolean));
+      const exchangeSeats = [];
+      for (const u of [...(nodes || []).filter((x) => ownKeys.has(seatKey(x))), ...own]) if (!exchangeSeats.some((x) => seatKey(x) === seatKey(u))) exchangeSeats.push(u);
+      if (!exchangeSeats.length) return { ok: false, from, why: 'no seat this site names (daily.json) to exchange at: e-cash is handed only to those', ms: Date.now() - t0 };
       const w = await openW(from, inviteOf(from));
       if (typeof w.sendEcash !== 'function') return { ok: false, why: 'this page\'s wallet cannot send an amount of e-cash' };
       onStep(`moving ${Math.ceil(Number(needMsat) / 1000).toLocaleString('en-US')} sat from federation ${from.slice(0, 8)} into this round's`);
@@ -6150,7 +6167,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         if (window.ARENA_NOTE_ARRIVING) window.ARENA_NOTE_ARRIVING(to, 'exchanged in from federation ' + String(from).slice(0, 8), 30000);
         return tw;
       };
-      const r = await ARENACLIENT.exchangeEcashInto({ storage: vault(), from, to, needMsat, seats: nodes, walletFrom: w, walletTo, onStep, fetcher: (u, o) => fetch(u, o), phrase16 });
+      const r = await ARENACLIENT.exchangeEcashInto({ storage: vault(), from, to, needMsat, seats: exchangeSeats, walletFrom: w, walletTo, onStep, fetcher: (u, o) => fetch(u, o), phrase16 });
       if (window.ARENA_SUM_BALANCES) window.ARENA_SUM_BALANCES();
       return { ...r, ms: Date.now() - t0 };
     };

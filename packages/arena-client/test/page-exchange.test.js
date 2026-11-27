@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { pageFunction } from './page-script.js';
-import { exchangeRig, payingSeat, refusingSeat } from './ecash-1149-rig.js';
+import { exchangeRig, SITE, payingSeat, refusingSeat } from './ecash-1149-rig.js';
 
 const PAGE = new URL('../../../src/arena-ui/index.html', import.meta.url);
 const HTML = readFileSync(PAGE, 'utf8');
@@ -15,7 +15,7 @@ const A = '33'.repeat(32), B = '4d'.repeat(32);   // the rig's two federations
 
 // THE EXCHANGE ITSELF (kanban #1149): one seat per bearer string, each step written first - ecash-1149-rig.js runs the page's own code
 test('the round\'s federation lacks it: the other federation\'s e-cash to the one seat that offers it, the seat\'s e-cash of the round\'s back', async () => {
-  const r = exchangeRig({ seats: { 'http://s1': refusingSeat({}), 'http://s2': payingSeat({ [B]: '500000' }) } });
+  const r = exchangeRig({ siteSeats: SITE, seats: { 'http://s1': refusingSeat({}), 'http://s2': payingSeat({ [B]: '500000' }) } });
   const said = await r.exchange({ to: B, needMsat: 100000n, nodes: ['http://s1', 'http://s2'] });
   assert.equal(said.ok, true, said.why);
   assert.equal(said.from, A);
@@ -25,7 +25,7 @@ test('the round\'s federation lacks it: the other federation\'s e-cash to the on
 });
 
 test('the one offering seat refuses outright: the notes come back to the wallet they left', async () => {
-  const r = exchangeRig({ seats: { 'http://s1': refusingSeat({ [B]: '500000' }) } });
+  const r = exchangeRig({ siteSeats: SITE, seats: { 'http://s1': refusingSeat({ [B]: '500000' }) } });
   const said = await r.exchange({ to: B, needMsat: 100000n, nodes: ['http://s1'] });
   assert.equal(said.ok, false);
   assert.deepEqual(r.log.map((x) => [x[0], x[1]]), [['send', '33'], ['receive', '33']]);
@@ -39,7 +39,7 @@ test('a seat that took the notes and failed to pay is asked again with the same 
     const n = took.get(b.ecash) || take(b.ecash);
     return { status: 200, body: { ok: true, msat: String(n.msat), ecash: mint(b.to, n.msat) } };
   } };
-  const r = exchangeRig({ seats: { 'http://s1': seat } });
+  const r = exchangeRig({ siteSeats: SITE, seats: { 'http://s1': seat } });
   const r1 = await r.exchange({ to: B, needMsat: 100000n, nodes: ['http://s1'] });
   assert.equal(r1.ok, false);
   assert.equal(r.kept().length, 1, 'kept, not taken back');
