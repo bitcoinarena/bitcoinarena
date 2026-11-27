@@ -68,6 +68,7 @@ export const PLAYER_NEW_NET_RESERVE_SATS = 2000000;   // kanban #2827: the day's
 // ONE PERSON CANNOT TAKE THE DAY IN MINUTES (audit 5, kanban #1405): an IPv6 caller holds a whole /64 - every address of it is one household
 // (ipKey), and all players together take at most PLAYER_HOUR_CAP_SATS an hour, so the day's 10M last at least 5 hours whoever asks
 export const PLAYER_HOUR_CAP_SATS = 2000000;
+export const PLAYER_NET_HOUR_SHARE = 3;          // kanban #3860: one IPv6 /48 or IPv4 /24 takes at most a third of the players' hour (666,666 sat: above one address's 200 welcomes, #1405)
 const HOUR_MS = 3600000;
 
 /**
@@ -118,6 +119,11 @@ export function playerGrantDecide({ kind, account, ip = null, invoiceSats, nowMs
   // A RESERVE FOR NETWORKS NOT YET SEEN TODAY (kanban #2827, #1489 r23-faucet-2; #2757 did not hold): two networks at half the day each took it all
   // (9,996,000 of 10,000,000 sat in ~5 h) and honest new players elsewhere were refused. The last PLAYER_NEW_NET_RESERVE_SATS of the day go only to
   // a network (or an address with none) that took nothing today
+  // ONE NETWORK, AT MOST ITS SHARE OF THE HOUR (kanban #3860, #1489 r20-faucet-1): the hour cap is one pool for every player and #2757/#2827 count
+  // only the day, so one /24 asked ~667 welcomes in the first minutes of each hour, took the whole 2,000,000 sat and every honest new player
+  // elsewhere was refused for the rest of the hour. One network takes at most 1/PLAYER_NET_HOUR_SHARE of the last hour's sats
+  if (net && paid.filter((p) => { if (!(p.atMs > nowMs - HOUR_MS)) return false; const k = ipKey(p.ip); return (net48(k) || net24(k)) === net; }).reduce((n, p) => n + p.sats, 0) + granted.invoiceSats > Math.floor(PLAYER_HOUR_CAP_SATS / PLAYER_NET_HOUR_SHARE))
+    return { ok: false, why: 'this network took its share of this hour\'s welcome sats: try again in a little while' };
   if (netTaken > 0 && today.reduce((n, p) => n + p.sats, 0) + granted.invoiceSats > PLAYER_DAY_CAP_SATS - PLAYER_NEW_NET_RESERVE_SATS)
     return { ok: false, why: 'the faucet keeps the rest of today for players on other networks: try again tomorrow' };
   if (kind === 'welcome' && paid.some((p) => p.account === account && p.kind === 'welcome')) return { ok: false, why: 'this account already has its welcome sats' };
