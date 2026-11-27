@@ -61,7 +61,7 @@ export const feeBpsForRound = (round) => (round && Number.isInteger(round.feeBps
   : roundGiftsInFee(round) ? giftsFeeBps(round.feeSet ? roundSplitBps(round.feeSet) : undefined)
   : roundPaysReserves(round) ? (round.feeSet ? roundSplitBps(round.feeSet).nodes : RESERVES_NODE_FEE_BPS) : knownEntryBps(round && round.gameId));
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
-import { readWithOneRetry } from './reread.js';
+import { readWithOneRetry, bytesUpTo } from './reread.js';
 // NO IMPORT ALIAS (kanban #3268): the bundle drops imports, and series.js declares its own private seriesIdOf(template, periodMs, count)
 import { seriesId, seriesRoundCheck } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine } from '../../arena-protocol/src/series-line.js';
@@ -190,6 +190,7 @@ async function seriesTemplateOf(seriesIdHex, nodes, fetcher) {
   }
   return null;
 }
+const ROUND_ANSWER_MAX = 64 * 1024;   // kanban #3848: as the seats' own GET /round read (game-market.js, #1829)
 export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
   const kept = ROUNDS_KEPT.get(id);
   if (kept) return { contract: kept.contract, from: kept.from, refused: [], kept: true };
@@ -199,7 +200,9 @@ export async function fetchRound(id, nodes, { fetcher = fetch } = {}) {
     try {
       const r = await readWithOneRetry(fetcher, at);
       if (!r.ok) { refused.push(`${node}: answered ${r.status}`); continue; }
-      const bytes = new Uint8Array(await r.arrayBuffer());
+      // kanban #3848: read up to ROUND_ANSWER_MAX (a round contract is under 1 kB), not whole - one seat streaming 64 MiB made every
+      // page reading this round buffer all of it before an honest seat was asked; over the cap that seat is refused, the next asked
+      const bytes = await bytesUpTo(r, ROUND_ANSWER_MAX);
       const contract = decodeRoundContract(bytes);
       const got = toHex(roundId(contract));
       if (got !== id) {
