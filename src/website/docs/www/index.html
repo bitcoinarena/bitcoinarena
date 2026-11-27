@@ -380,7 +380,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
   </ul>
 
   <h3 id="rps">Rock Paper Scissors</h3>
-  <p>Both players pick a hidden move, then reveal. The winner takes both stakes. A draw returns them.</p>
+  <p>Both players pick a hidden move, then reveal. The winner takes both stakes less 10 % fees, and a draw gives each player 90 % of their stake back.</p>
   <ul>
     <li>Rounds run every 8 seconds, back to back. A third player gets a second table.</li>
     <li>If no table is open, the page asks the nodes for one. That takes a while on testnet.</li>
