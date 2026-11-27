@@ -44,7 +44,7 @@ test('#1342 the faucet keeps a signed report, still posts every report to the ch
     const kept = await post({ event: report });
     const forged = await post({ event: { ...report, content: JSON.stringify({ happened: 'swapped words' }) } });
     const mine = async (ev) => { const r = await fetch(`${base}/feedback/mine`, { headers: ev ? { authorization: `Nostr ${Buffer.from(JSON.stringify(ev)).toString('base64')}` } : {} }); return { status: r.status, ...(await r.json()) }; };
-    const own = await mine(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET']]));
+    const own = await mine(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET'], ['nonce', String(Math.random())]]));
     const bobs = await mine(signed(bob, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET']]));
     const wrongUrl = await mine(signed(alice, HTTP_AUTH_KIND, [['u', 'https://evil.example/feedback/mine'], ['method', 'GET']]));
     const none = await mine(null);
@@ -100,7 +100,7 @@ esac
     admin.approve(ev.id, 2500, { played: () => true, by: 'admin' });
     const k1 = admin.createReward(ev.id).reward.k1;
     admin.close();
-    const mineNow = async (origin = PRIVATE) => (await fetch(`${base}/feedback/mine`, { headers: { origin, authorization: `Nostr ${Buffer.from(JSON.stringify(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET']]))).toString('base64')}` } })).json();
+    const mineNow = async (origin = PRIVATE) => (await fetch(`${base}/feedback/mine`, { headers: { origin, authorization: `Nostr ${Buffer.from(JSON.stringify(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET'], ['nonce', String(Math.random())]]))).toString('base64')}` } })).json();
     const before = await mineNow();
     const req = await (await fetch(`${base}/lnurlw/${k1}`)).json();
     const cb = (pr, k = k1) => fetch(`${base}/lnurlw/${k1}/callback?k1=${k}&pr=${pr}`).then((r) => r.json());
@@ -203,7 +203,7 @@ test('#1342 the bounty is off until the owner turns it on: no private origin set
     const reward = await act({ id: ev.id, action: 'reward' });
     const reject = await act({ id: ev.id, action: 'reject', reason: 'cannot reproduce, please add the steps' });
     const lnurlw = await fetch(`${base}/lnurlw/${'ab'.repeat(32)}`);
-    const mine = await (await fetch(`${base}/feedback/mine`, { headers: { origin: 'https://arena-fb-private.example', authorization: `Nostr ${Buffer.from(JSON.stringify(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET']]))).toString('base64')}` } })).json();
+    const mine = await (await fetch(`${base}/feedback/mine`, { headers: { origin: 'https://arena-fb-private.example', authorization: `Nostr ${Buffer.from(JSON.stringify(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET'], ['nonce', String(Math.random())]]))).toString('base64')}` } })).json();
     const facts = { sent: sent.kept, approve: [approve.status, approve.why], reward: reward.status, reject: reject.ok, lnurlw: [lnurlw.status, (await lnurlw.json()).reason], mine: mine.reports.map((r) => [r.state, r.reward, r.reason]) };
     console.log('  FACTS #1342 off:', JSON.stringify(facts));
     assert.equal(facts.sent, true, 'reports are still kept');

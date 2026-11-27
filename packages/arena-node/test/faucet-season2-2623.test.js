@@ -51,7 +51,8 @@ test('#2623 the faucet: link code by sign-in, Season 2 approval with bonus and h
     const r3 = await report(cat, 'A Season 1 style approval: the amount is the admin\'s own, as it always was here');
 
     // A LINK CODE FOR A SIGNED-IN KEY; another address in the sign-in is refused
-    const auth = (k, url) => ({ authorization: `Nostr ${Buffer.from(JSON.stringify(signed(k, HTTP_AUTH_KIND, [['u', url], ['method', 'POST']]))).toString('base64')}` });
+    // kanban #3881: a POST sign-in names its body's SHA-256 (payload) and each sign-in is taken once
+    const auth = (k, url, body = '') => ({ authorization: `Nostr ${Buffer.from(JSON.stringify(signed(k, HTTP_AUTH_KIND, [['u', url], ['method', 'POST'], ['payload', createHash('sha256').update(body).digest('hex')]]))).toString('base64')}` });
     assert.equal((await j('/feedback/link', { method: 'POST' })).status, 401);
     assert.equal((await j('/feedback/link', { method: 'POST', headers: auth(ann, 'https://elsewhere.example/link') })).status, 401);
     const code = await j('/feedback/link', { method: 'POST', headers: auth(ann, `${STAGE}/link`) });

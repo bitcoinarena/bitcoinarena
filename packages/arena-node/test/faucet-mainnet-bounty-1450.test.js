@@ -59,7 +59,7 @@ esac
     admin.approve(ev.id, 2500, { played: () => true, by: 'admin' });
     const k1 = admin.createReward(ev.id, { network: 'mainnet' }).reward.k1;
     admin.close();
-    const mineNow = async (origin = PRIVATE) => (await fetch(`${base}/feedback/mine`, { headers: { origin, authorization: `Nostr ${Buffer.from(JSON.stringify(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET']]))).toString('base64')}` } })).json();
+    const mineNow = async (origin = PRIVATE) => (await fetch(`${base}/feedback/mine`, { headers: { origin, authorization: `Nostr ${Buffer.from(JSON.stringify(signed(alice, HTTP_AUTH_KIND, [['u', MINE], ['method', 'GET'], ['nonce', String(Math.random())]]))).toString('base64')}` } })).json();
     const before = await mineNow();
     const req = await (await fetch(`${base}/lnurlw/${k1}`)).json();
     const cb = (pr, k = k1) => fetch(`${base}/lnurlw/${k1}/callback?k1=${k}&pr=${pr}`).then((r) => r.json());
