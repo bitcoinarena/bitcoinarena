@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33, 35]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 export const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -101,6 +101,19 @@ export const splitsTies = (v) => Number.isInteger(v) && v >= TIE_SPLIT_VERSION;
 export const DISJOINT_RULES_VERSION = 33;
 /** Whether a round of protocol version `v` runs the 2026.0.33 rules (kanban #3257, #3260, #2983). */
 export const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERSION;
+/**
+ * 2026.0.35 - POOL FIRST (kanban #3854, audit #1489 r41-entry-1; spec ruling 2026-11-27, comment 11620). Below this version a market round is
+ * an order book as soon as a certified batch holds an order (#1417 option B), so a losing plain-pick holder's one minimum order seconds before
+ * the close refunded every plain pick of the pool. From 35 a market is a BOOK only if a certified batch holds an order AND the round has no
+ * backed plain pick (one whose stake the seat saw, the set its settlement counts); with any backed plain pick it is a POOL - its orders are no
+ * entries of it (never filled, their locks back as an unfilled order's), its picks settle as if no order was posted. Inputs: the backed-entry
+ * and certified-batch sets only; the doors and what a seat signs stay as they are. Rounds below 35 keep option B byte for byte. 34 is the
+ * bound identity proof's (prepared, page-side); versions are cumulative, so a round at 35 is at or above 34 and 32 - seats of this build
+ * serve the bound proof, and 32 gates nothing yet. Round creators write 35 only once every seat of the network lists it.
+ */
+export const POOL_FIRST_VERSION = 35;
+/** Whether a market round of protocol version `v` is a pool once it holds a backed plain pick, orders or not (kanban #3854). */
+export const poolsFirst = (v) => Number.isInteger(v) && v >= POOL_FIRST_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
