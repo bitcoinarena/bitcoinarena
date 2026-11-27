@@ -30,9 +30,10 @@ test('a version-11 game round: 4 % fee, a mandatory 6,000 msat on 100 sat, the r
 });
 
 test('the reserve key: five agreeing signer nodes make it; four, or a split, do not', async () => {
-  const serve = (keys) => async (url) => { const i = Number(new URL(url).port); const k = keys[i];
+  const serve = (keys) => async (url) => { const i = Number(new URL(url).hostname.replace(/\D/g, '')); const k = keys[i];
     return new Response(JSON.stringify({ federations: k ? [{ federationId: toHex(FED), key: k }] : [] }), { status: 200 }); };
-  const nodes = [1, 2, 3, 4, 5, 6, 7].map((p) => `http://127.0.0.1:${p}`);
+  // seven seats on seven hosts (kanban #3856: ports or paths of one host are one seat unless each proves a census key)
+  const nodes = [1, 2, 3, 4, 5, 6, 7].map((p) => `http://seat${p}.test`);
   const k = toHex(RK), other = toHex(key(0x03, 0xd4));
   const five = await fetchReserveKey({ federationId: FED, nodes, fetcher: serve({ 1: k, 2: k, 3: k, 4: k, 5: k, 6: other }) });
   assert.equal(five.ok, true, five.why); assert.equal(toHex(five.key), k); assert.equal(five.agreeing, 5);
@@ -46,9 +47,9 @@ test('the reserve key: five agreeing signer nodes make it; four, or a split, do 
 // two names the key its guardian seats agreed on as `reserveKey`, and the round was refused "only 4 of the round's signer nodes name reserve key"
 test('the reserve key: a signer node outside the federation counts with the key it names as reserveKey; five must still agree', async () => {
   const k = toHex(RK), other = toHex(key(0x03, 0xd4));
-  const serve = (rows) => async (url) => { const i = Number(new URL(url).port); const r = rows[i];
+  const serve = (rows) => async (url) => { const i = Number(new URL(url).hostname.replace(/\D/g, '')); const r = rows[i];
     return new Response(JSON.stringify({ federations: r ? [{ federationId: toHex(FED), ...r }] : [] }), { status: 200 }); };
-  const nodes = [1, 2, 3, 4, 5, 6].map((p) => `http://127.0.0.1:${p}`);
+  const nodes = [1, 2, 3, 4, 5, 6].map((p) => `http://seat${p}.test`);   // kanban #3856: one host per seat
   const member = { key: k, reserveKey: k }, outside = { key: null, reserveKey: k };
   const mixed = await fetchReserveKey({ federationId: FED, nodes, fetcher: serve({ 1: member, 2: member, 3: member, 4: member, 5: outside, 6: outside }) });
   assert.equal(mixed.ok, true, mixed.why); assert.equal(toHex(mixed.key), k); assert.ok(mixed.agreeing >= 5);
