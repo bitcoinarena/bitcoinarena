@@ -21,7 +21,7 @@ It runs on **testnet4** today.
 |---|---|---|
 | **Tick Tock, Next Block** | skill, replayed | Drive a truck through the next Bitcoin block. Load mempool transactions, cross the price war front, deliver before time runs out. Every player gets the same block and seed, every node replays every run, and the best run wins the pot. |
 | **Rock Paper Scissors** | head to head | Commit a hidden move, reveal it, and the winner takes the pot. Rounds every 8 seconds. |
-| **Bitcoin Up or Down** | prediction market | Will BTC be higher at the end of the 15-minute window? Three independent attestors sign the price, and the winning side shares the pot. 96 markets a day. |
+| **Bitcoin Up or Down** | prediction market | Will BTC be higher at the end of the 15-minute window? Seven nodes drawn for each round attest the price, 5 of 7 must agree, and the winning side shares the pot. 96 markets a day. |
 
 The game page is at [testnet.bitcoinarena.io](https://testnet.bitcoinarena.io). Your wallet is your 24 words or your Nostr key; your stake is locked in a federation until the round settles.
 
@@ -31,8 +31,9 @@ The game page is at [testnet.bitcoinarena.io](https://testnet.bitcoinarena.io). 
 2. **Set it up** in the browser wizard. It tests each step before saving it:
    - **chain:** your own Bitcoin Core, or an Electrum server;
    - **roles:** verify, settlement, custody, liquidity;
-   - **24 words:** your node's keys and your wallet;
-   - **public address:** direct, a Cloudflare tunnel, Tailscale Funnel or workers.dev;
+   - **apps:** the games your node hosts;
+   - **24 words:** your node's keys and your wallet, and an emergency code;
+   - **public address:** direct, a Cloudflare tunnel, Tailscale Funnel, workers.dev or a temporary tunnel;
    - **Lightning and the gateway**, for custody;
    - **the bond.**
 3. **Manage it** with one command:
@@ -43,22 +44,23 @@ The game page is at [testnet.bitcoinarena.io](https://testnet.bitcoinarena.io). 
    | `bitcoinarena doctor` | finds problems and names the fix |
    | `bitcoinarena restart lnd` | restarts one service, or all with plain `bitcoinarena restart` |
    | `bitcoinarena logs` | shows a service's log |
-   | `bitcoinarena config` | shows and changes the settings |
+   | `bitcoinarena config` | shows and changes the settings (`bitcoinarena config set <key> <value>`) |
+   | `bitcoinarena update` | installs a new release now (auto update checks every 30 minutes) |
 
    Add `--verbose` (or `-v`) to any of them, or to `arena-install`, to see each step as it runs; `--debug` also shows full errors, failed answers and the programs it runs. Passwords, keys and seed words are never shown. For the node's own services: `bitcoinarena config set log_level debug`, then `bitcoinarena restart`.
 
    Until 2026.1.9.8 the command was `arenanode` and the node lived in `~/.arena-node`. `arenanode` still works (it runs `bitcoinarena`), and a node installed before stays in `~/.arena-node`; a new one goes in `~/.bitcoinarena`.
 
-   Every setting is in one file, `arena.conf`. The owner page (`/dashboard/owner`, signed with your owner key) shows the same services, plus the bond, earnings and updates.
-4. **Update** in place with `arena-install --update <new release>`. It checks the release's signature, backs the node up, and rolls back by itself if the new release does not come up.
+   Every setting is in one file, `arena.conf`. The owner page (`/dashboard/owner`, or [testnet.bitcoinarena.io/owner](https://testnet.bitcoinarena.io/owner/), signed with your owner key) shows the same services, plus the bond, earnings, updates and **Check my node** (can the network reach your node).
+4. **Updates are automatic** (`auto_update=0` in `arena.conf` turns them off). By hand: `bitcoinarena update`, or `arena-install --update <new release>` for a downloaded one. Each checks the release's signature, backs the node up, and rolls back by itself if the new release does not come up.
 
-Each paid entry pays **4 % to the nodes** (four pools: game/verify, settlement, custody, liquidity), **4 % to the developers** and **2 % to the protocol reserves**, a treasury the bonded nodes vote to spend. Prediction markets pay 0.4 % / 0.4 % / 0.2 %.
+Each paid entry pays **4 % to the nodes** (four pools: game/verify, settlement, custody, liquidity), **4 % to the developers** and **2 % to the protocol reserves**, a treasury the bonded nodes vote to spend. Bitcoin Up or Down pays 0.4 % / 0.4 % / 0.2 %.
 
 The full guide, the node API and how to build your own game are at **[docs.bitcoinarena.io](https://docs.bitcoinarena.io)**.
 
 ## How it works, in one paragraph
 
-A round is a signed contract. Players enter with a stake locked in a Fedimint federation (10 guardians, all of them nodes) and play against a deterministic game core. A committee of 7 nodes, drawn by a fair lottery from the bonded nodes in the on-chain census, replays every input (or checks the attestors' signed outcome for a market). The result holds when 5 of the 7 sign the same one. The federation then pays the winners from the locked stakes. Every rule is a protocol version: rounds carry the version they run on, and old and new versions run side by side.
+A round is a signed contract. Players enter with a stake locked in a Fedimint federation (its guardians are nodes; testnet4's have 7 each, 5 of 7 to move money) and play against a deterministic game core. A committee of 7 nodes, drawn by a fair lottery from the bonded nodes in the on-chain census, replays every input (or checks the attestors' signed outcome for a market). The result holds when 5 of the 7 sign the same one. The federation then pays the winners from the locked stakes. Every rule is a protocol version: rounds carry the version they run on, and old and new versions run side by side (the newest is 33).
 
 ## Repository layout
 
@@ -67,16 +69,21 @@ A round is a signed contract. Players enter with a stake locked in a Fedimint fe
 | `packages/arena-protocol` | the protocol: canonical encodings, contracts, census, sortition, payouts, reserves. Isomorphic JavaScript |
 | `packages/arena-node` | the node (seat): rounds, entries, replay, signing, settlement, federations, the owner page |
 | `packages/arena-client` | the player's half: joining, stake locks, the page's bundle |
+| `packages/arena-web` | the pages in React 19: the owner page, the installer wizard, the dashboard |
+| `packages/arena-sdk` | what a game imports from the Arena: manifests, hashes, donation sets, encodings |
 | `packages/arena-installer` | the installer wizard, `bitcoinarena`, updates, services on Linux/macOS/Windows |
-| `packages/nextblock` | Tick Tock, Next Block's deterministic core (integer arithmetic only) and plugin |
-| `packages/rock-paper-scissors`, `packages/btc-updown` | the other games: decide adapters, signed manifests, clients |
+| `packages/nextblock` | Tick Tock, Next Block's deterministic core (integer arithmetic only) and plugin (placed by `tools/fetch-apps.mjs`) |
+| `packages/rock-paper-scissors`, `packages/btc-updown` | the other games: decide adapters, signed manifests, clients (placed by `tools/fetch-apps.mjs`) |
+| `packages/orange-pill-run` | a daily platformer on the previous day's BTC chart (in development, not hosted yet) |
 | `packages/arena-attestor` | a market attestor: reads price sources, signs outcomes |
 | `packages/arena-donor` | a developer's donation client |
-| `unity-proto/` | the Unity WebGL client of Tick Tock, Next Block (input and rendering only; outcomes come from the core) |
-| `deploy/` | the websites: homepage, docs and API reference |
+| `src/arena-ui/` | the game page (testnet.bitcoinarena.io) |
+| `src/website/` | the websites: homepage, docs (`src/website/docs`, built by `gen-docs.py`), API reference, explorer |
+| `deploy/` | the testnet site's deploy and the release channel |
 | `tools/release/` | the release build (`build-release.sh`), the installer packages (`package.sh`, `package-mac.sh`) and signing |
 | `multiplayer_p2p.md`, `FEDERATION.md` | the specification |
-| `index.html`, `src/` | the original single-player browser prototype ([its notes](docs/original-browser-prototype.md)) |
+
+Tick Tock, Next Block's Unity WebGL client (input and rendering only; outcomes come from the core) lives in its own repository, `bitcoinarena/arena-app-next-block`. The original single-player browser prototype is described in [its notes](docs/original-browser-prototype.md); its files are no longer in this repository.
 
 ## License
 
