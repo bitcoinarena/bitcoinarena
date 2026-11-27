@@ -86,6 +86,11 @@ export const ZAP_MINTS_ALL = 300;
 // kanban #3379 (audit nostr a6-3-4): keyless plain tips take at most this many of the window's ZAP_MINTS_ALL - ten addresses' unpaid tips
 // filled the whole cap first come, first served and every signed zap was refused for the window; the rest stays for signed zap requests
 export const ZAP_TIPS_ALL = 150;
+// kanban #3838 (audit r40 nostr-2, a bypass of #3379): a signed zap request costs nothing either (a fresh key, one local signature), so
+// ten addresses sending 30 each under fresh keys still filled all ZAP_MINTS_ALL of the window and every honest zap was refused. The last
+// ZAP_MINTS_FRESH of the window are kept for askers that have minted nothing in it yet: an asker that already minted is refused once
+// ZAP_MINTS_ALL - ZAP_MINTS_FRESH are taken, so filling the cap takes that many distinct askers, not ten. ZAP_MINTS_ALL itself is unchanged.
+export const ZAP_MINTS_FRESH = 60;
 // AT ONCE, TOO (kanban #2302, #1489 a44-refute-56-s1): the window bounds above count mints, not mints in flight, so strangers from fresh
 // addresses had up to ZAP_MINTS_ALL invoice() calls - each an `lncli addinvoice` child - running at the same moment (64 asks: 64 children).
 // Callers not on this host have at most ZAP_MINTING_MAX invoices being made at once, on both doors together; past it the ask is refused
@@ -180,6 +185,8 @@ export function serveZapAddresses({ host = '127.0.0.1', port = 0, publicHost, pu
     if (a && a.n >= ZAP_MINTS_PER_ASKER) return `at most ${ZAP_MINTS_PER_ASKER} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes from one address`;
     mintsAll = mintsAll.filter((t) => now - t < ZAP_ASKER_WINDOW_S);
     if (mintsAll.length >= ZAP_MINTS_ALL) return `this Lightning address mints at most ${ZAP_MINTS_ALL} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes; try again later`;
+    // kanban #3838: the window's last ZAP_MINTS_FRESH are for askers that minted nothing in it yet
+    if (a && a.n > 0 && mintsAll.length >= ZAP_MINTS_ALL - ZAP_MINTS_FRESH) return `this Lightning address is busy; at most ${ZAP_MINTS_ALL - ZAP_MINTS_FRESH} invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes go to addresses that asked before; try again later`;
     tipsAll = tipsAll.filter((t) => now - t < ZAP_ASKER_WINDOW_S);
     if (plain && tipsAll.length >= ZAP_TIPS_ALL) return `this Lightning address mints at most ${ZAP_TIPS_ALL} plain tip invoices per ${ZAP_ASKER_WINDOW_S / 60} minutes; try again later`;
     if (!a) {
