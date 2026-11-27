@@ -1211,14 +1211,19 @@ createServer((req, res) => {
     let ev = null;
     try { const h = String(req.headers.authorization || ''); if (h.startsWith('Nostr ')) ev = JSON.parse(Buffer.from(h.slice(6), 'base64').toString('utf8')); } catch { ev = null; }
     if (!ev) return send(401, { ok: false, why: 'sign in with your key (NIP-98)' });
+    // THE BODY BEFORE THE SIGN-IN (kanban #3881, audit #1489 r40 nostr-3): the sign-in is taken only for the body its `payload` tag hashes, and
+    // only once, so every door reads its body (at most 4 KiB) first and hands it to the check
+    let raw = '', big = false;
+    req.on('data', (c) => { if (big) return; raw += c; if (raw.length > 4096) { big = true; req.destroy(); } });
+    req.on('end', () => { if (!big) door(); });
+    return undefined;
+    function door() {
     let who = null, last = null;
-    for (const base of S2_BASES) { const m = FEEDBACK.mine(ev, { url: base + path.slice('/feedback'.length), method: 'POST' }); if (m.ok) { who = m.pubkey; break; } last = m; }
+    for (const base of S2_BASES) { const m = FEEDBACK.mine(ev, { url: base + path.slice('/feedback'.length), method: 'POST', body: raw }); if (m.ok) { who = m.pubkey; break; } last = m; }
     if (!who) return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
     // THE SOCIAL SCREEN (kanban #2641): { x, telegram, discord, armada } names, each read live; no names answers the stored links and the bonus
     if (path === '/feedback/social') {
-      let raw = '';
-      req.on('data', (c) => { raw += c; if (raw.length > 4096) req.destroy(); });
-      req.on('end', () => {
+      {
         let asked = {}; try { asked = raw ? JSON.parse(raw) : {}; } catch { return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' }); }
         if (!asked || typeof asked !== 'object' || Array.isArray(asked)) return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' });
         const any = ['x', 'telegram', 'discord', 'armada', 'nostr'].some((k) => typeof asked[k] === 'string' && asked[k].trim());
@@ -1229,8 +1234,7 @@ createServer((req, res) => {
           S2_SOCIAL_ASKS.set(who, Date.now()); if (S2_SOCIAL_ASKS.size > 5000) S2_SOCIAL_ASKS.delete(S2_SOCIAL_ASKS.keys().next().value);
         }
         return socialCheck(S2, who, any ? asked : {}, S2_NAMES).then((j) => send(200, { ...j, on: Object.keys(S2_NAMES) }), () => send(200, { ok: false, why: 'try again' }));
-      });
-      return undefined;
+      }
     }
     // LINK CODES PER CALLER AND IN ALL, AN HOUR (kanban #2666, #1489 r2-faucet-1): a key costs nothing, so one caller signing in with a fresh key
     // per request made a code (a row) each - 400 in 1.2 s, none refused. Counted by the caller's ipKey (an IPv6 /64 is one) and for every caller
@@ -1251,6 +1255,7 @@ createServer((req, res) => {
     S2_VERIFY_ASKS.set(who, Date.now()); if (S2_VERIFY_ASKS.size > 5000) S2_VERIFY_ASKS.delete(S2_VERIFY_ASKS.keys().next().value);
     S2.verify(who, S2_VERIFY, { cause: 'reporter' }).then((flags) => send(200, { ok: true, flags, links: S2.links(who).map(({ userId, ...l }) => l) }), () => send(200, { ok: false, why: 'try again' }));
     return undefined;
+    }
   }
   // A DUPLICATE'S TICKET TEXT (kanban #2745): only by its secret token; the ticket number, title and description, nothing else; never indexed or cached
   { const m = /^\/feedback\/dup\/([0-9a-f]{32})$/.exec(path);

@@ -12,16 +12,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { eventId } from '../src/nostr-relay.js';
 import { HTTP_AUTH_KIND } from '../src/feedback-store.js';
 
 const hex = (b) => Buffer.from(b).toString('hex');
 const BASE = 'https://bitcoinarena.io/api/faucet/feedback';
+const sha3881 = (b) => createHash('sha256').update(String(b ?? '')).digest('hex');   // kanban #3881: a POST sign-in names its body's SHA-256 (payload) and each sign-in is taken once
 const KEY = 'w'.repeat(48);
 const WORKER_EGRESS = '2a06:98c0:3600::103';   // the address Cloudflare names for a Worker's subrequest
-const auth = () => { const secret = randomBytes(32); const e = { pubkey: hex(schnorr.getPublicKey(secret)), created_at: Math.floor(Date.now() / 1000), kind: HTTP_AUTH_KIND,
-  tags: [['u', `${BASE}/link`], ['method', 'POST']], content: '' }; e.id = eventId(e); e.sig = hex(schnorr.sign(Buffer.from(e.id, 'hex'), secret));
+const auth = (body = '') => { const secret = randomBytes(32); const e = { pubkey: hex(schnorr.getPublicKey(secret)), created_at: Math.floor(Date.now() / 1000), kind: HTTP_AUTH_KIND,
+  tags: [['u', `${BASE}/link`], ['method', 'POST'], ['payload', sha3881(body)]], content: '' }; e.id = eventId(e); e.sig = hex(schnorr.sign(Buffer.from(e.id, 'hex'), secret));
   return `Nostr ${Buffer.from(JSON.stringify(e)).toString('base64')}`; };
 
 test('audit-faucet-r2-2: one stranger through the site Worker does not use up every reporter\'s link codes', async () => {
@@ -64,7 +65,7 @@ test('#2995 the stage Worker passes the caller\'s address and its key on the Sea
     const env = { FAUCET_ORIGIN: 'http://faucet.invalid', FAUCET_WORKER_KEY: KEY };
     for (const door of ['link', 'verify', 'social']) {
       await worker.fetch(new Request(`https://testnet-stage.bitcoinarena.io/api/faucet/feedback/${door}`, { method: 'POST', body: '{}',
-        headers: { authorization: auth(), 'cf-connecting-ip': '203.0.113.9' } }), env, { waitUntil() {} });
+        headers: { authorization: auth('{}'), 'cf-connecting-ip': '203.0.113.9' } }), env, { waitUntil() {} });
     }
     assert.equal(sent.length, 3);
     for (const h of sent) { assert.equal(h['x-arena-ip'], '203.0.113.9'); assert.equal(h['x-arena-worker'], KEY); }

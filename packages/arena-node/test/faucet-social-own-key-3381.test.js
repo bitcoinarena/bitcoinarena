@@ -15,7 +15,7 @@ import { socialCheck } from '../src/bounty-social.js';
 const hex = (b) => Buffer.from(b).toString('hex');
 const key = (n) => { const secret = new Uint8Array(32).fill(n); return { secret, pubkey: hex(schnorr.getPublicKey(secret)) }; };
 const URL_ = 'https://bitcoinarena.io/api/faucet/feedback/social';
-const signIn = (as, by, url = URL_) => { const e = { pubkey: as.pubkey, created_at: Math.floor(Date.now() / 1000), kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'POST']], content: '' };
+const signIn = (as, by, url = URL_) => { const e = { pubkey: as.pubkey, created_at: Math.floor(Date.now() / 1000), kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'POST'], ['payload', 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855']], content: '' };   // kanban #3881: a POST sign-in names its body's SHA-256 (payload) and each sign-in is taken once (an empty body's)
   e.id = eventId(e); e.sig = hex(schnorr.sign(Buffer.from(e.id, 'hex'), by.secret)); return e; };
 
 test('#3381 the social link check links only the key that signed the sign-in', async () => {

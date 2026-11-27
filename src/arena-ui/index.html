@@ -2125,7 +2125,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (!hasIdentity()) { list.textContent = 'Open a wallet first: your reports are listed under your key.'; return; }
       try {
         const url = feedbackUrl() + '/mine';
-        const auth = await identitySign({ kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'GET']], content: '' });
+        // a nonce (kanban #3881): the faucet takes each sign-in once, so two opens in one second must not sign the same event
+        const nonce = [...crypto.getRandomValues(new Uint8Array(8))].map((x) => x.toString(16).padStart(2, '0')).join('');
+        const auth = await identitySign({ kind: HTTP_AUTH_KIND, tags: [['u', url], ['method', 'GET'], ['nonce', nonce]], content: '' });
         const r = await fetch(url, { headers: { authorization: 'Nostr ' + btoa(JSON.stringify(auth)) } });
         const j = await r.json();
         if (!j.ok) throw new Error(j.why || 'not read');
