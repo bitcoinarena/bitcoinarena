@@ -84,6 +84,20 @@ export async function askPeer(fetcher, url, opts = {}, { ms = DKG_ASK_MS, max = 
   finally { clearTimeout(timer); read.catch(() => {}); }
 }
 
+/**
+ * A PUSHED CONTRIBUTION IS NOT TAKEN; THE DEALER IS ASKED FOR IT (kanban #3852, wf1489 r20 gossip-3, measured on the MacBook: a stranger
+ * who knows only the committee's public keys dealt a polynomial of its own "from" an honest member H and POSTed it to the other members
+ * before H's own arrived - nothing in a contribution is signed by the key it names (the proof of knowledge is bound to the dealer's
+ * signer node number, and the dealer picks its sealing key), dkg_contributions keeps the first one per dealer, so both seats held the
+ * forged deal, H its own, and every agreement after refused "they differ on the deal of <H>": no claim key, paid rounds stalled).
+ * Binding the deal to the dealer's key would change what seats sign; this changes only what this node keeps: a contribution is stored
+ * when it is this node's own or was fetched from a committee peer's own GET /dkg (the peers of the committee's census run() was
+ * given), never because somebody posted it. A post that checks out and is not held yet makes this node ask those peers now, once at a
+ * time per epoch, so a push still arrives within the dealer's run; the post is taken when what the peers served is the same bytes, and
+ * otherwise answered "asks the dealer" (server: 202, the dealer counts that peer as told) - a forged deal is never kept, the real one is.
+ */
+export const DKG_ASKS_DEALER = 'this node takes a contribution only from its dealer and asks it for this one';
+
 export class Dkg {
   /**
    * `curve` is the group the daemon already injects everywhere else. `random`
@@ -114,7 +128,8 @@ export class Dkg {
     // 39,000 sent a minute - a committee one member never deals to is run every second until its entry closes, up to 5,878 runs a
     // key, and every run posted this node's contribution to each peer again and fetched each peer's again): a peer that took this
     // node's contribution is not told again, a peer whose contribution this node holds is not asked again
-    this.peersDone = new Map();           // epoch hex -> { told: Set of peer urls, got: Set of peer urls }
+    this.peersDone = new Map();           // epoch hex -> { told: Set of peer urls, got: Set of peer urls, peers: the committee's peer urls }
+    this.pullsNow = new Map();            // epoch hex -> the pull a post started and has not finished (kanban #3852)
   }
 
   get canDeal() { return !!(this.curve && this.random && this.round.identity); }
@@ -188,7 +203,7 @@ export class Dkg {
     this.round.putEpoch({ epochId: where.epochId, signerNodes: order, mine: encodeContribution(dealt.contribution) });
     // AND THIS SIGNER NODE ACCEPTS ITS OWN, so the combine below sees the whole
     // committee rather than everybody except itself.
-    await this.accept(encodeContribution(dealt.contribution));
+    await this.take(encodeContribution(dealt.contribution));
     return { ok: true, contribution: dealt.contribution };
   }
 
@@ -202,6 +217,15 @@ export class Dkg {
    * later when there is nothing to be done.
    */
   async accept(bytes) {
+    // THE POST /dkg DOOR (kanban #3852): checked as take() checks it, but not stored - unless held already, byte for byte
+    return this.take(bytes, { pushed: true });
+  }
+
+  /** Whether a run of this Dkg named the peers of an epoch (hex), whom a post for it makes this node ask (kanban #3852). */
+  asksFor(epochHex) { const d = this.peersDone.get(epochHex); return !!(d && d.peers); }
+
+  /** Check, open and (unless `pushed`, kanban #3852) store a contribution: this node's own, or one fetched from its dealer. */
+  async take(bytes, { pushed = false } = {}) {
     let c;
     try { c = decodeContribution(bytes); }
     catch (e) { return { ok: false, why: 'that is not a contribution: ' + e.message }; }
@@ -224,6 +248,22 @@ export class Dkg {
       pubkey: this.round.pubkey, secret: this.round.identity.secret, curve: this.curve,
     });
     if (!mine.ok) return mine;
+    // kanban #3852: a posted one is not kept in the dealer's name - this node fetches the dealer's own from the committee's peers
+    if (pushed) {
+      const id = toHex(c.epochId);
+      const done = this.peersDone.get(id);
+      if (done && done.peers) {
+        let pulling = this.pullsNow.get(id);
+        if (!pulling) {
+          pulling = this.pull(id, done.peers, done).finally(() => this.pullsNow.delete(id));
+          this.pullsNow.set(id, pulling);
+        }
+        await pulling;
+        const now = this.round.contributionsOf(c.epochId).find((r) => Buffer.compare(Buffer.from(r.bytes), Buffer.from(bytes)) === 0);
+        if (now) return { ok: true, fresh: false, from: c.from };
+      }
+      return { ok: false, asksDealer: true, from: c.from, why: DKG_ASKS_DEALER };
+    }
 
     const fresh = this.round.rememberContribution({
       epochId: c.epochId, dealer: c.from, bytes: encodeContribution(c),
@@ -410,9 +450,32 @@ export class Dkg {
   async tell(url, bytes) {
     try {
       const r = await askPeer(this.fetcher, url, { method: 'POST', body: bytes });   // bounded (kanban #2541)
+      // kanban #3852: a peer that will ask this node for its contribution has been told (202; a 409 saying so from a peer that maps every refusal to 409)
+      if (!r.ok && r.text().trim().startsWith(DKG_ASKS_DEALER)) return { ok: true };
       if (!r.ok) return { ok: false, why: `${r.status} ${r.text().trim()}` };
       return { ok: true };
     } catch (e) { return { ok: false, why: e.message }; }
+  }
+
+  /**
+   * ASK EACH PEER NOT YET HEARD FROM FOR ITS OWN CONTRIBUTION: fetched side by side and bounded (kanban #2541), each answer then taken
+   * in turn. What a committee peer's GET /dkg serves is the one way a contribution of another dealer is stored (kanban #3852).
+   */
+  async pull(id, peers, done) {
+    const got = []; const refused = [];
+    const toAsk = peers.filter((peer) => !done.got.has(peer));
+    const fetched = await Promise.allSettled(toAsk.map((peer) => askPeer(this.fetcher, `${peer.replace(/\/+$/, '')}/dkg?epoch=${id}`)));
+    for (const [i, a] of fetched.entries()) {
+      const peer = toAsk[i];
+      try {
+        if (a.status !== 'fulfilled') throw a.reason;
+        const r = a.value;
+        if (!r.ok) { refused.push(`${peer}: ${r.status} ${r.text().trim()}`); continue; }
+        const took = await this.take(r.bytes);    // fetched from the peer's own GET /dkg: kept (kanban #3852)
+        if (took.ok) { got.push(peer); done.got.add(peer); } else refused.push(`${peer}: ${took.why}`);
+      } catch (e) { refused.push(`${peer}: ${e.message}`); }
+    }
+    return { got, refused };
   }
 
   /**
@@ -432,6 +495,7 @@ export class Dkg {
     // THE PEERS OF THIS COMMITTEE, when the caller names them: a daemon on many
     // rounds has one committee per round, read from each round's own census.
     const done = this.peersDone.get(id) || Dkg.keep(this.peersDone, id, { told: new Set(), got: new Set() }, 4096);
+    done.peers = peers;                   // whom a post for this epoch makes this node ask (kanban #3852)
     const told = [];
     const refused = [];
     // every peer told side by side, so one that never answers holds nobody else up (kanban #2541)
@@ -444,20 +508,9 @@ export class Dkg {
 
     // AND ASK FOR THEIRS. A peer serves its own contribution for an epoch, so
     // this fills in whatever did not arrive by being pushed.
-    const got = [];
-    // fetched side by side and bounded (kanban #2541), each answer then taken in turn as before
-    const toAsk = peers.filter((peer) => !done.got.has(peer));
-    const fetched = await Promise.allSettled(toAsk.map((peer) => askPeer(this.fetcher, `${peer.replace(/\/+$/, '')}/dkg?epoch=${id}`)));
-    for (const [i, a] of fetched.entries()) {
-      const peer = toAsk[i];
-      try {
-        if (a.status !== 'fulfilled') throw a.reason;
-        const r = a.value;
-        if (!r.ok) { refused.push(`${peer}: ${r.status} ${r.text().trim()}`); continue; }
-        const took = await this.accept(r.bytes);
-        if (took.ok) { got.push(peer); done.got.add(peer); } else refused.push(`${peer}: ${took.why}`);
-      } catch (e) { refused.push(`${peer}: ${e.message}`); }
-    }
+    const pulled = await this.pull(id, peers, done);
+    const got = pulled.got;
+    refused.push(...pulled.refused);
 
     const finished = await this.finish(signerNodes, peers);
     // `told` / `got`: the peers that hold this node's contribution / whose contribution this node holds, all runs together;
