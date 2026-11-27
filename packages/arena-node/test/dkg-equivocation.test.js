@@ -67,6 +67,9 @@ test('5 of 7: a dealer sending two valid contributions to two halves of the hone
       const r = await fetch(`http://127.0.0.1:${node.port}/dkg`, { method: 'POST', body: i < 3 ? one : two });
       took.push(r.status);
     }
+    // kanban #3852: a posted contribution is no longer kept (202, "asks the dealer") - a dealer that equivocates now has to serve two
+    // halves two different answers off its own GET /dkg, which is what each node's pull then keeps
+    for (const [i, node] of c.honest.entries()) { const r = await node.dkg.take(i < 3 ? one : two); assert.equal(r.ok, true, r.why); }
     const done = [];
     for (const node of c.honest) done.push(await node.dkg.finish(c.order));
     const finished = done.filter((d) => d.ok);
@@ -79,9 +82,9 @@ test('5 of 7: a dealer sending two valid contributions to two halves of the hone
     console.log('  FACTS (5 of 7, equivocating dealer):', JSON.stringify(facts));
     for (const d of done.filter((x) => !x.ok)) console.log('  refused:', d.why);
 
-    // Each contribution is still valid on its own, so each is taken (201); the
+    // Each contribution is still valid on its own, so each is taken; the
     // disagreement is caught where it matters - before any signer node keeps a share.
-    assert.deepEqual(facts, { postedStatuses: '201,201,201,201,201,201', honestFinished: 0,
+    assert.deepEqual(facts, { postedStatuses: '202,202,202,202,202,202', honestFinished: 0,
       distinctGroupKeys: 0, distinctPoolAddresses: 0 });
     const attacker = toHex(c.attackerPub).slice(0, 16);
     for (const d of done) {

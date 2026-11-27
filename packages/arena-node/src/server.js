@@ -14490,7 +14490,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/dkg') {
         const dealt = await read(req);
         try { peerMakesEpoch(decodeContribution(dealt).epochId); } catch { /* accept says what is wrong with it */ }
-        const took = await dkg.accept(dealt);
+        // kanban #3852: the Dkg that ran this epoch (the round's, or a federation's reserve key's) knows the committee's peers to ask
+        let door = dkg;
+        try { const e = toHex(decodeContribution(dealt).epochId); for (const d of reserveDkgs.values()) if (d.asksFor(e)) { door = d; break; } } catch { /* accept says what is wrong with it */ }
+        const took = await door.accept(dealt);
+        // kanban #3852: a checked contribution not held yet is not kept from a post; this node's run fetches it from its dealer
+        if (!took.ok && took.asksDealer) return text(res, 202, took.why);
         if (!took.ok) return text(res, 409, took.why);
         res.writeHead(took.fresh ? 201 : 200, { 'content-type': 'text/plain', ...CORS });
         return res.end(took.fresh ? 'taken' : 'already');
