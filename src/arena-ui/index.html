@@ -8896,9 +8896,16 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // objects ("xx", {length:2}, [null, null]) threw outside any try, and a head-to-head round of two holds at most two entries; an entry's verdict is a
           // string entry, a string outcome (or none) and a number score (or none) - outcome ['DELIVERED'] counted for the honest verdict as String(outcome).
           // Any other answer is dropped like a seat that did not answer; an answer with no `players` is a seat that was not drawn
+          // A STRANGER'S VOID ENTRY IS NOT ONE OF THE TWO (kanban #3861, audit #1489 r41-h2h-1): an honest seat lists every entry it holds, and a paid
+          // round holds lockless entries (round.js LOCKLESS_PER_SEAT, #1745) that the seats sign VOID - one stranger's entry with no stake made every honest
+          // answer three players and the signed verdict never reached the page. In a head-to-head answer of more than two players the rows signed VOID
+          // (other than this tab's own entry) are left out before the count; an answer that still lists more than two is dropped as before (#2241)
+          const voidOut = (ps) => (needs === 2 && Array.isArray(ps) && ps.length > 2 && ps.every((p) => p && typeof p === 'object')
+            ? ps.filter((p) => !(p.outcome === 'VOID' && Number(p.signedBy) > 0) || (h && p.entry === h.entryIdHex)) : ps);
           const validAnswer = (j) => {
             if (!j || typeof j !== 'object') return null;
             if (!j.players) return { ...j, players: [] };
+            { const ps = voidOut(j.players); if (ps !== j.players) j = { ...j, players: ps }; }
             if (!Array.isArray(j.players) || (needs === 2 && j.players.length > 2) || !j.players.every((p) => p && typeof p === 'object')) return null;
             if (!j.players.every((p) => typeof p.entry === 'string' && (p.outcome === null || p.outcome === undefined || typeof p.outcome === 'string')
               && (p.score === null || p.score === undefined || (typeof p.score === 'number' && Number.isFinite(p.score))))) return null;
