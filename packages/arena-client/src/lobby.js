@@ -61,7 +61,35 @@ export const LOBBY_MOST_MS = 500;
  * `fetcher` with a limit: a read that has not answered in `ms` is refused with the words the lobby shows, and a real
  * fetch is aborted rather than left open. An injected fetcher that ignores the signal still loses the race.
  */
-export function answerWithin(fetcher, ms = SIGNER_ANSWER_MS) {
+// ONE SEAT'S /rounds ANSWER IS READ UP TO A BOUND (kanban #3835): a time limit is no byte limit - the browser inflates a gzip body
+// before the page sees it (~1000:1 for spaces), so ~100 KB on the wire held ~100 MB in every visitor's tab on every lobby read.
+// Honest listings are under 1 MB (LOBBY_PER_SERIES rounds per series, compact); a longer answer is that seat's refusal alone.
+export const LOBBY_ROUNDS_BYTES_MAX = 8 * 1024 * 1024;
+
+async function bodyUpTo(r, maxBytes) {
+  const len = Number(r.headers && typeof r.headers.get === 'function' ? r.headers.get('content-length') : NaN);
+  const over = () => Object.assign(new Error(`its answer is over ${maxBytes} bytes`), { silent: true });
+  if (Number.isFinite(len) && len > maxBytes) { try { await r.body?.cancel(); } catch { /* gone already */ } throw over(); }
+  if (!r.body || typeof r.body.getReader !== 'function') {
+    const b = await r.arrayBuffer();
+    if (b.byteLength > maxBytes) throw over();
+    return b;
+  }
+  const reader = r.body.getReader(), parts = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { try { await reader.cancel(); } catch { /* gone already */ } throw over(); }
+    parts.push(value);
+  }
+  const all = new Uint8Array(total); let at = 0;
+  for (const p of parts) { all.set(p, at); at += p.byteLength; }
+  return all;
+}
+
+export function answerWithin(fetcher, ms = SIGNER_ANSWER_MS, maxBytes = LOBBY_ROUNDS_BYTES_MAX) {
   return (url, opts = {}) => {
     const abort = typeof AbortController === 'function' ? new AbortController() : null;
     let timer;
@@ -77,7 +105,7 @@ export function answerWithin(fetcher, ms = SIGNER_ANSWER_MS) {
     // caller gets it already in hand.
     const asked = Promise.resolve().then(() => fetcher(url, abort ? { ...opts, signal: abort.signal } : opts)).then(async (r) => {
       if (!r || typeof r.arrayBuffer !== 'function' || typeof Response !== 'function') return r;
-      const body = [101, 204, 205, 304].includes(r.status) ? null : await r.arrayBuffer();
+      const body = [101, 204, 205, 304].includes(r.status) ? null : await bodyUpTo(r, maxBytes);   // kanban #3835: counted as it arrives, dropped past maxBytes
       return new Response(body, { status: r.status, statusText: r.statusText, headers: r.headers });
     });
     return Promise.race([asked, late]).finally(() => clearTimeout(timer));
