@@ -7,11 +7,21 @@ export const OWN_SERVICES = Object.freeze(['guardian', 'guardian-next', 'p2p-tun
 
 export function serviceSettings(db) {
   db.exec('CREATE TABLE IF NOT EXISTS service_settings (id TEXT PRIMARY KEY, at_boot INTEGER NOT NULL)');
+  db.exec('CREATE TABLE IF NOT EXISTS service_owner_stops (id TEXT PRIMARY KEY, stopped INTEGER NOT NULL)');   // kanban #3814
   return {
     atBoot: (id) => { const r = db.prepare('SELECT at_boot FROM service_settings WHERE id = ?').get(id); return r ? r.at_boot === 1 : true; },
     setAtBoot: (id, on) => {
       if (!OWN_SERVICES.includes(id)) throw new Error(`${id} is not a service the node runs itself`);
       db.prepare('INSERT INTO service_settings (id, at_boot) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET at_boot = excluded.at_boot').run(id, on ? 1 : 0);
+      return !!on;
+    },
+    // THE OWNER'S STOP KEPT ACROSS THE NODE'S RESTART (kanban #3814, state audit 2026-11-12; gap in #3606): the owner page's Stop of a
+    // service the node runs itself only cleared it in memory, so the seat's next start (every auto update restarts the seat, also a crash
+    // or "restart node") started it again from the "at boot" switch alone. The Stop is now written here and the owner's Start clears it.
+    stoppedByOwner: (id) => { const r = db.prepare('SELECT stopped FROM service_owner_stops WHERE id = ?').get(id); return !!r && r.stopped === 1; },
+    setStoppedByOwner: (id, on) => {
+      if (!OWN_SERVICES.includes(id)) throw new Error(`${id} is not a service the node runs itself`);
+      db.prepare('INSERT INTO service_owner_stops (id, stopped) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET stopped = excluded.stopped').run(id, on ? 1 : 0);
       return !!on;
     },
   };

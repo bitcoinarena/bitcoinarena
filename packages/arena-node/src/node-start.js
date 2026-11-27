@@ -83,7 +83,9 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
   // tries (a reboot: Core still loading its block index; a Core restart while fedimintd exited) was left `running: false`, and nothing
   // ever asked again - the node served on without its guardian until restarted by hand. A wanted slot that does not run is started
   // again by exitWatch below; only the owner's stop (or the "at boot" switch off) clears it.
-  const wanted = { guardian: !!plan.own && settings.atBoot('guardian'), next: !!plan.next && settings.atBoot('guardian-next') };
+  // kanban #3814: and not while the owner's Stop stands - it is kept in the store (service-settings.js), so a seat restart (an auto
+  // update, a crash, "restart node") no longer starts a guardian the owner stopped; only the owner's Start clears it.
+  const wanted = { guardian: !!plan.own && settings.atBoot('guardian') && !settings.stoppedByOwner('guardian'), next: !!plan.next && settings.atBoot('guardian-next') };
   if (wanted.guardian) guardian = await start('guardian');
   if (plan.next && guardian.running && settings.atBoot('guardian-next')) {
     try { next = await start('next'); } catch (e) { await guardian.stop(); throw e; }
@@ -116,11 +118,11 @@ export async function startNode({ db, path }, options = {}, chain = {}) {
       guardianControl: control = {
         has: () => !!plan.own,
         running: () => !!guardian.running,
-        stop: () => serial('guardian', async () => { wanted.guardian = false; if (!guardian.running) return { ok: true }; await (guardian.halt || guardian.stop)(); guardian = none; return { ok: true }; }),
+        stop: () => serial('guardian', async () => { wanted.guardian = false; settings.setStoppedByOwner('guardian', true); if (!guardian.running) return { ok: true }; await (guardian.halt || guardian.stop)(); guardian = none; return { ok: true }; }),
         start: () => serial('guardian', async () => {
           if (!plan.own) return { ok: false, why: 'this node holds no guardian key and waits in no setup: it runs no guardian' };
           if (closed) return { ok: false, why: 'the node is closed' };
-          wanted.guardian = true;
+          wanted.guardian = true; settings.setStoppedByOwner('guardian', false);   // kanban #3814: the owner's Start clears the kept Stop
           if (guardian.running) return { ok: true };
           guardian = await start('guardian');
           return guardian.running ? { ok: true } : { ok: false, why: guardian.why || 'the guardian did not start' };
