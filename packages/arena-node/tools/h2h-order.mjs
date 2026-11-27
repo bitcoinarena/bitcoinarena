@@ -25,7 +25,10 @@ const h2hLockRefusal = typeof join.h2hLockRefusal === 'function' ? join.h2hLockR
 export async function handoutThenLock({ body, needed, nodes, entryCloseMs, leadMs, lock, fetcher = fetch, waitMs = 6000, graceMs = 300, now = () => Date.now() }) {
   const put = await postHandout({ body, handout: { needed } }, nodes, { fetcher, needed, waitMs, graceMs });
   if (!put.ok) return { ok: false, why: `handout: ${put.why}${put.refused.length ? ` (${put.refused[0].slice(0, 160)})` : ''} - nothing was locked`, put };
-  const late = h2hLockRefusal({ put, entryCloseMs, leadMs, now: now() });
+  // kanban #3694: the seats asked again right before the lock (the table may have filled since the handout)
+  const late = typeof join.h2hLockRecheck === 'function'
+    ? await join.h2hLockRecheck({ stake: { body, handout: { needed } }, nodes, needed, put, entryCloseMs, leadMs, fetcher, waitMs, graceMs, now })
+    : h2hLockRefusal({ put, entryCloseMs, leadMs, now: now() });
   if (late) return { ok: false, why: late, put };
   return { ok: true, put, locks: await lock() };
 }
