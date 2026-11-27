@@ -9040,7 +9040,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             const cancelTaken = (r) => (r.status >= 200 && r.status < 300) || (r.status === 409 && /already carried by batch/.test(String(r.why || '')));
             const seats = await Promise.all(x.nodes.map((n) => fetch(String(n).replace(/\/+$/, '') + '/cancel?entry=' + entryIdHex, { method: 'POST', body: sig, signal: AbortSignal.timeout(15000) })
               .then(async (r) => ({ node: n, status: r.status, why: r.ok ? '' : (await r.text()).slice(0, 160) })).catch((e) => ({ node: n, status: 0, why: e.message }))));
-            const ok = seats.some(cancelTaken);
+            // NOT ON ONE SEAT'S WORD (kanban #3880, audit r40-client-93): any one 2xx marked the order cancelled for good, so a seat that
+            // answered 200 and kept nothing while the book seats were busy (503) or slow left the order resting - and filling - in every honest
+            // seat's book. The cancel stands only when two hosts of the round took it (one when all its seats sit on one host; one host is
+            // one vote, as the round result read counts them); otherwise the order stays open and a second tap posts it again (a seat that
+            // already holds it answers the #3276 409, which counts)
+            const hostKey = (n) => { try { const u = new URL(String(n).trim()); if (u.hostname) return u.hostname.toLowerCase().replace(/\.+$/, ''); } catch { /* not a URL */ } return String(n).replace(/\/+$/, ''); };
+            const hosts = new Set(x.nodes.map(hostKey)), took = new Set(seats.filter(cancelTaken).map((r) => hostKey(r.node)));
+            const ok = took.size >= Math.min(2, hosts.size) && took.size > 0;
             if (ok) { x.order.cancelled = true; rememberPick(x); }
             return { ok, seats };
           },
