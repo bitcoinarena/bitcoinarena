@@ -14,7 +14,7 @@ test('64 path-prefixed seats of one operator do not push the honest lock off the
   const fetcher = async (url) => {
     const m = /^https:\/\/evil\.example\/s(\d+)\//.exec(url);
     const body = m ? [{ outpoint: `${(Number(m[1]) + 1).toString(16).padStart(64, '0')}:0`, entryId: 'ee'.repeat(32), fields: fields('44') }] : [real];
-    return { ok: true, status: 200, json: async () => body, text: async () => '' };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
   };
   const evil = Array.from({ length: 64 }, (_, i) => `https://evil.example/s${i}`);
   const honest = Array.from({ length: 14 }, (_, i) => `https://seat${i}.example`);

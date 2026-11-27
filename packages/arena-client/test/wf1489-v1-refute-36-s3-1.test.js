@@ -18,7 +18,7 @@ test('one seat under 64 fragment spellings of its URL does not push the honest s
     if (m) hosts.add(new URL(url).host);
     const i = m ? Number(m[1]) : -1;
     const body = m ? Array.from({ length: 8 }, (_, k) => fake((i % 8) * 8 + k)) : [real];
-    return { ok: true, status: 200, json: async () => body, text: async () => '' };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
   };
   const spellings = Array.from({ length: 64 }, (_, i) => `http://evil#${i}`);
   const got = await findLock({ roundId, playerPubkey: new Uint8Array(33).fill(2), nodes: [...spellings, 'http://a', 'http://b'], fetcher });

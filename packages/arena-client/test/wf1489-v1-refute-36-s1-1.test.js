@@ -9,7 +9,7 @@ test('the shipped bundle: one seat listing 5000 made-up locks does not hand 5000
   const fake = (i) => ({ outpoint: `${i.toString(16).padStart(64, '0')}:0`, entryId: i.toString(16).padStart(64, '0'),
     fields: { paymentImage: { kind: 'hash', bytes: '11'.repeat(32) }, amountMsat: '1000', claimPk: '02' + '22'.repeat(32), refundPk: '02' + '33'.repeat(32), expiration: 100 } });
   const flood = Array.from({ length: 5000 }, (_, i) => fake(i + 1));
-  const fetcher = async (url) => ({ ok: true, status: 200, json: async () => (url.startsWith('http://evil') ? flood : []), text: async () => '' });
+  const fetcher = async (url) => ({ ok: true, status: 200, json: async () => (url.startsWith('http://evil') ? flood : []), text: async () => JSON.stringify(url.startsWith('http://evil') ? flood : []) });
   const got = await ARENACLIENT.findLock({ roundId, playerPubkey: new Uint8Array(33).fill(2), nodes: ['http://a', 'http://b', 'http://evil'], fetcher });
   assert.ok(got.length <= 64, `the shipped bundle put ${got.length} locks on the player's collect list`);
 });

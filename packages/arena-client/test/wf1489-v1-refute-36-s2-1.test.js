@@ -16,7 +16,7 @@ test('one seat named under 64 spellings of its URL does not push the honest seat
   const fetcher = async (url) => {
     const evil = url.startsWith('http://evil/');
     const body = evil ? Array.from({ length: 8 }, () => { n++; return { outpoint: `${n.toString(16).padStart(64, '0')}:0`, entryId: n.toString(16).padStart(64, '0'), fields: fields('44') }; }) : [real];
-    return { ok: true, status: 200, json: async () => body, text: async () => '' };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
   };
   const spellings = Array.from({ length: 64 }, (_, i) => 'http://evil' + '/'.repeat(i));
   const got = await findLock({ roundId, playerPubkey: new Uint8Array(33).fill(2), nodes: [...spellings, 'http://a', 'http://b'], fetcher });
