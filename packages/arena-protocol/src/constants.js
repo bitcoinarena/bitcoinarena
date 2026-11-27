@@ -811,6 +811,9 @@ export const TAG = {
   // collide with a checkpoint's or a batch's over the same bytes: 0.10 says a
   // ghost is never an input, and a shared tag would be one way to forget it.
   ghost: 'ARENA/v1/Ghost',
+  // A /play SOCKET SHOWN TO BE THE PLAYER'S (kanban #3742): the entry's session key signs the seat's key, a nonce the seat drew for
+  // that one socket, and the entry id. Its own tag, so no checkpoint, batch or other message signed by the same key is ever this.
+  playSocketOwner: 'ARENA/v1/PlaySocketOwner',
   playerSubSeed: 'ARENA/v1/PlayerSubSeed',
   // The census entries a contract's root is checked against, and the height
   // they were taken at. Its own tag: a proof binds to the INPUTS, and a
