@@ -458,8 +458,9 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
   const seatHex = toHex(seatId);
   // the seatings a standing certificate superseded, per role, as sorted keys (kanban #2537): a seat still naming one is behind, not lying
   const supersededOf = {};
-  // ONE READ OF A ROLE'S SEATING. `every`: wait for every seat, not for a majority and the grace.
-  const askSeating = async (role, every = false) => {
+  // ONE READ OF A ROLE'S SEATING. `every`: wait for every seat, not for a majority and the grace. `fresh` (kanban #3870): a read again that
+  // still waits only for a majority and the grace (2.0 keeps no answers between reads, so every read is fresh).
+  const askSeating = async (role, every = false, fresh = false) => {
     let spoke = false; const refused = [];
     // A CERTIFICATE OF ANOTHER ROUND (kanban #1389, the owner's playtest 2026-11-09 ~11:05Z, UI 594: the old test host's seats, on an older tree, seated each
     // round of an RPS table on its own and answered that round's certificate, where the table's first round seats it): no lie about this round's
@@ -616,8 +617,16 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
     // weil eine Node offline ist"): the certificate may be what this client missed, in a read that came back empty or in the seats that fell outside the grace. Every seat is
     // waited for now, and the comparison is made again on what they hand.
     if (seats.some((s) => s.agrees === false)) {
-      for (const role of roles) {
-        const s = await askSeating(role, true);
+      // ONE SEAT DOES NOT HOLD EVERY JOIN (kanban #3870, wf1489 r40 census-2: one seat answering /committee with a made-up list and letting
+      // GET /seating run to SEATING_ASK_MS held every join 2 x 6 s - 12.8 s against 46 ms): a role whose first read already found a checked
+      // certificate is read again fresh (no kept answers) but waits only for a majority and the grace, as the first read; only a role with no
+      // certificate yet still waits for every seat. The roles are read side by side, not one after the other.
+      const again = await Promise.all(roles.map((role) => {
+        const had = got.seating[role] && Array.isArray(got.seating[role].seated);
+        return had ? askSeating(role, false, true) : askSeating(role, true);
+      }));
+      for (const [i, role] of roles.entries()) {
+        const s = again[i];
         if (s.found || !got.seating[role] || got.seating[role].unread) {
           if (!s.found || !got.seating[role] || !(got.seating[role].index > s.found.index)) keepSeating(role, s);
         }
