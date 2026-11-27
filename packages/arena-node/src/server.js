@@ -16,6 +16,7 @@
 // One process, one player, no verification. There is no bond here, no quota
 // and no committee; those are M2.1 steps 4 and later, and each is refused
 // rather than half-built.
+import { identityBoundDigest as boundIdentityDigest, identityHostKey as boundIdentityHost } from '../../arena-protocol/src/identity-proof.js';   // kanban #3800
 import { seasonRoundStands } from './season-stands.js';
 import { gzipSync } from 'node:zlib';
 import { tableAnchorOf, feeOfKnownGame } from '../../arena-protocol/src/known-game.js';
@@ -43,6 +44,7 @@ import { guardianThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck, askerAddress } from './reach-check.js';
+import { createReachProbe } from './reach-probe.js';   // kanban #3798
 import { ownBondOf, ownBondsOf, outputOfEntry, ownOutputsOnChain, lockAt, withdrawSpend, withdrawToSign, withdrawWithOwnerSignature } from './bond-withdraw.js';
 import { BOND_TEMPLATE_V2, BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
@@ -95,7 +97,7 @@ import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer, WebSocket as WsClient } from 'ws';
 import { createP2pTunnels, carryP2p, carryApi, P2P_TUNNEL_PATHS, GUARDIAN_NEXT_PATH, GUARDIAN_API_RELAY_PATH } from './p2p-tunnel.js';
-import { createAddressBook, announceOwn, pullAnnouncements } from './address-book.js';
+import { createAddressBook, announceOwn, pullAnnouncements, peerEndpointRefusal } from './address-book.js';
 import { reserveKeyCache, payeeReserveKeysAt } from './reserve-key-cache.js';
 import { ownServices } from './own-services.js';
 import { serviceSettings } from './service-settings.js';
@@ -440,6 +442,8 @@ export function bondMinCanonical(values, b) {
 // A NODE KEY PROVEN AT AN ADDRESS (kanban #2982, #3253): what a seat signs, BIP-340 with its node key, when asked GET /identity?nonce=. The
 // asker's fresh nonce makes the answer the seat's word now, not one replayed from another address.
 export const identityProofDigest = (nonce) => taggedHash('ARENA/v1/NodeIdentityProof', nonce);
+// AND AT THE ADDRESS ASKED (kanban #3800, protocol 34): beside it the seat signs identityBoundDigest(nonce, at), `at` the Host it was asked at
+// (arena-protocol identity-proof.js) - a relay reaching the seat by the seat's own name gets a proof of the seat's host, never of its own
 // whether the seat at `base` signs for `key` (64 hex) over a fresh nonce - false on any other answer, or none in `ms`
 export async function provesNodeKey(base, key, { fetch: f = fetch, ms = 8000 } = {}) {
   try {
@@ -6256,6 +6260,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       outcome: decided, entries } };
   };
   const reachCheck = createReachCheck({ allowPrivate: process.env.ARENA_REACH_ALLOW_PRIVATE === '1' });
+  // CAN THE NETWORK REACH THAT NODE (kanban #3798, reach-probe.js): the owner page's "Check my node" - this seat dials only the addresses it
+  // holds for the key asked (its newest census's advert endpoints and the node's newest announcement), each held to the peer rule
+  const reachProbe = createReachProbe({ refusal: (u) => peerEndpointRefusal(u, { localOk: seatsLocalOk() }),
+    targetsOf: (node) => {
+      const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
+      const census = cn ? cn.entries.filter((e) => e && e.pubkey && toHex(e.pubkey) === node && e.advert).map((e) => String(e.advert.endpoint || '')).filter(Boolean) : [];
+      const ann = addressBook.list({ node }).filter((x) => x && x.node === node).sort((x, y) => Number(y.atMs) - Number(x.atMs))[0];
+      return { census: [...new Set(census)], announced: ann ? ann.endpoint : null };
+    } });
   // THIS NODE'S BOND in the newest census this seat holds (bond-withdraw.js): { bond, network } or null
   // THE NEWEST RELEASE (release-latest.js): checked with the installer's release key when this node runs from a release (a seat
   // tree without the installer has no verifier and offers none)
@@ -10554,9 +10567,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const nonce = url.searchParams.get('nonce');
         if (nonce === null) return bytes(res, 200, round.pubkey);
         if (!/^[0-9a-f]{64}$/i.test(nonce)) return text(res, 400, 'GET /identity?nonce=<32 bytes hex>');
+        // kanban #3800: `at` the Host this ask came in by (never X-Forwarded-Host: a relay sets that through every proxy), and `atSig` over it
+        const n = fromHex(nonce.toLowerCase()), at = boundIdentityHost(req.headers.host);
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify({ node: toHex(round.pubkey), nonce: nonce.toLowerCase(),
-          sig: toHex(schnorr.sign(identityProofDigest(fromHex(nonce.toLowerCase())), round.identity.secret)) }));
+          sig: toHex(schnorr.sign(identityProofDigest(n), round.identity.secret)),
+          ...(at ? { at, atSig: toHex(schnorr.sign(boundIdentityDigest(n, at), round.identity.secret)) } : {}) }));
       }
 
       // THE ICON OF ITS PAGES (the 2026.1.9.11 install test: the dashboard and the owner page logged a missing favicon.ico at every load)
@@ -12896,6 +12912,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/reach-check') {
         let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a reach check is JSON { port, nonce }'); }
         const r = await reachCheck(req, j);
+        res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(r.body));
+      }
+      if (req.method === 'GET' && url.pathname === '/reach-probe') {
+        const r = await reachProbe(req, url.searchParams.get('node'));
         res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r.body));
       }

@@ -31,7 +31,8 @@ import { advertInTransaction } from '../../arena-protocol/src/census.js';
 import { httpProvider, headerSources, HEADER_SOURCES_ASKED } from './headers.js';
 export { headerSources, HEADER_SOURCES_ASKED };
 import { seedHexFromInput } from './bip39.js';
-import { NO_SHARES, dealHandout, encodeHandout } from '../../arena-protocol/src/handout.js';
+import { NO_SHARES, dealHandout, encodeHandout, decodeHandout } from '../../arena-protocol/src/handout.js';
+import { seatsOf, hostOf } from './seat-identity.js';   // kanban #3753 (seat-identity.js reads sourceKey from here, inside its functions only)
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { worldSeedWord, worldIsShared, worldSlot, slotOfEntryId, WORLD_SLOTS } from '../../arena-protocol/src/seed.js';
 import { playerSecretFor, refundFingerprint } from '../../arena-protocol/src/player-key.js';
@@ -394,7 +395,17 @@ function countRandomness(nodes, reads, committee = 0) {
  */
 // `out`: given, `out.posted` (each seat's own post) is set before the first answer - a market order hands its entries after them without
 // waiting for this answer
-export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, graceMs = 300, waitMs = 20000, out = null } = {}) {
+// ONE SEAT, ONE ACCEPTANCE (kanban #3753, audit client-a8-3-1, the gap in #3694): every URL of the link that answered 201 counted as one of the
+// `needed` seats, so one box named under two paths that takes any handout met the threshold alone - the #3694 pre-lock recheck passed on a
+// table every honest seat called full, the page locked, every seat refused the entry and the lock's fee parts were spent. The URLs are grouped
+// into seats as every other door groups them (seat-identity.js seatsOf: one host is one seat unless each URL proves a distinct key of the
+// handout's own signer nodes - the committee this page checked; `verify` the page's BIP-340 check, window.ARENA_CURVE). A seat took the
+// handout when every one of its URLs that answered took it; its close is its earliest. Posted to every URL as before, beside the grouping.
+// Where no curve is loaded (no proof can be checked: a test harness, never a page that dealt the handout) each URL counts, as before.
+const handoutVerify = () => { const c = globalThis.ARENA_CURVE; return c && typeof c.verify === 'function' ? (sg, m, k) => { try { return !!c.verify(sg, m, k); } catch { return false; } } : null; };
+const handoutKeys = (stake) => { try { return decodeHandout(stake.body).shares.map((x) => x.signerNodePubkey).filter((k) => k instanceof Uint8Array); } catch { return []; } };
+// `bound` (kanban #3800): the round is of protocol 34+ (bindsIdentity) - a URL proves a signer node's key only with a proof bound to its host.
+export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked, graceMs = 300, waitMs = 20000, out = null, keys = null, verify = undefined, bound = false } = {}) {
   if (!stake || !stake.body) throw new Error('there is no dealt stake to publish');
   // THE SIGNER NODES THAT MUST HOLD IT are the threshold it was dealt at - which
   // `stakeFor` makes the round's. The default was a flat 5 (M3.3-26).
@@ -417,7 +428,7 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
       const r = await fetcher(at, { method: 'POST', body: stake.body, signal: AbortSignal.timeout(waitMs) });
       const said = r.ok && r.headers && typeof r.headers.get === 'function' ? r.headers.get('x-entry-close-in-ms') : null;
       const left = said === null || said === '' ? NaN : Number(said);
-      answers[i] = r.ok ? { node, ok: true, ...(Number.isFinite(left) ? { closeAtMs: sentAt + left } : {}) } : { node, why: `${node}: ${(await r.text()).trim()}` };
+      answers[i] = r.ok ? { node, ok: true, ...(Number.isFinite(left) ? { closeAtMs: sentAt + left } : {}) } : { node, said: true, why: `${node}: ${(await r.text()).trim()}` };
     } catch (e) {
       answers[i] = { node, why: `${node}: ${e.message}` };
     }
@@ -425,15 +436,40 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
   const rest = Promise.all(posts).then(() => answers.slice());
   const posted = new Map(nodes.map((node, i) => [node, posts[i]]));   // each seat's own post: its entry goes after it
   if (out) out.posted = posted;
+  // (kanban #3753) the seat of each URL, found beside the posts
+  // with no curve to check a proof by (a page has one before it can deal a handout at all: dealHandout), each URL counts, as before
+  const proofCheck = verify !== undefined ? verify : handoutVerify();
+  const seatIds = nodes.map((u, i) => (typeof proofCheck === 'function' ? `host:${hostOf(u)}` : `url:${i}`));
+  const grouping = (typeof proofCheck !== 'function' ? Promise.resolve([]) : seatsOf(nodes, { keys: keys || handoutKeys(stake), verify: proofCheck, fetcher, ms: Math.min(8000, waitMs), bound }))
+    .then((groups) => {
+      const idOf = new Map();
+      for (const g of groups) for (const u of g.urls) idOf.set(u, g.id);
+      const bySource = new Map();
+      for (const u of nodes) if (idOf.has(u)) bySource.set(sourceKey(String(u)) || String(u).replace(/\/+$/, ''), idOf.get(u));
+      nodes.forEach((u, i) => { seatIds[i] = idOf.get(u) || bySource.get(sourceKey(String(u)) || String(u).replace(/\/+$/, '')) || seatIds[i]; });
+    }, () => { /* each host one seat */ });
+  let grouped = false;
+  const seatsTaking = () => {
+    const by = new Map();
+    answers.forEach((a, i) => { const id = seatIds[i]; if (!by.has(id)) by.set(id, []); by.get(id).push(a); });
+    const took = [];
+    for (const [id, said] of by) {
+      const spoke = said.filter((a) => a.ok || a.said);
+      if (said.some((a) => a.ok) && spoke.every((a) => a.ok)) took.push({ id, closes: said.filter((a) => a.ok && Number.isFinite(a.closeAtMs)).map((a) => a.closeAtMs) });
+    }
+    return took;
+  };
   await new Promise((res) => {
     let left = posts.length, grace = null;
     const done = () => { clearTimeout(grace); res(); };
+    grouping.then(() => { grouped = true; if (left === 0) return done(); if (!grace && seatsTaking().length >= needed) grace = setTimeout(done, graceMs); });
     for (const p of posts) p.then(() => {
-      if (--left === 0) return done();
-      if (!grace && answers.filter((a) => a.ok).length >= needed) grace = setTimeout(done, graceMs);
+      if (--left === 0) { if (grouped) done(); return; }
+      if (!grace && grouped && seatsTaking().length >= needed) grace = setTimeout(done, graceMs);
     });
   });
-  const accepted = answers.filter((a) => a.ok).map((a) => a.node);
+  const took = seatsTaking();
+  const accepted = took;
   const refused = answers.filter((a) => !a.ok).map((a) => a.why);
   // THE CLOSE ON THE SEATS' CLOCK (kanban #1892): the earliest any seat that took the handout puts it, in this page's Date.now() terms; null from seats
   // that do not say (older builds)
@@ -441,7 +477,8 @@ export async function postHandout(stake, nodes, { fetcher = fetch, needed: asked
   // x-entry-close-in-ms: -86400000 refused every paid head-to-head lock and set the seats' clock a day ahead for every later tap in the tab. A lock
   // needs `needed` seats to take it: the close that counts is the one by which `needed` of the seats that said one still take it (the needed-th
   // latest); with fewer such answers than needed, the earliest, as before
-  const closes = answers.filter((a) => a.ok && Number.isFinite(a.closeAtMs)).map((a) => a.closeAtMs).sort((x, y) => x - y);
+  // (kanban #3753) one close per seat that took it: its earliest
+  const closes = took.filter((t) => t.closes.length).map((t) => Math.min(...t.closes)).sort((x, y) => x - y);
   const seatCloseAtMs = !closes.length ? null : closes.length >= needed ? closes[closes.length - needed] : closes[0];
   if (accepted.length < needed)
     return {
@@ -479,6 +516,20 @@ export function h2hLockRefusal({ put = null, entryCloseMs, leadMs, now = Date.no
   const left = seats === null ? own : Math.min(own, seats);
   if (!(left >= Number(leadMs))) return `the entry closes in ${(left / 1000).toFixed(1)} s on the ${seats !== null && seats < own ? "seats'" : "player's"} clock, and a head-to-head lock and entry need ${(Number(leadMs) / 1000).toFixed(1)} s - nothing was locked`;
   return null;
+}
+
+/**
+ * MAY A HEAD-TO-HEAD ORDER LOCK NOW, THE SEATS ASKED AGAIN? (kanban #3694, bypass audit of #2634 / #1485) The seats check the table (#2634: full)
+ * and the close (#1485) at POST /handout only, and the funding runs after it with no bound: a table whose last seat was taken in that gap was
+ * locked on anyway, and every seat refused the entry ("already seats ... 2 players") with the lock's fee parts spent. Right before the lock the
+ * handout is posted once more (the same bytes: a seat that holds it takes it again, and every door check runs on it), and nothing is locked
+ * unless `needed` seats still take it; then h2hLockRefusal on that fresh answer. Answers null (lock) or why not (nothing is locked).
+ * The gap left is the lock's own time (2-3 s), the one the #1485 lead covers.
+ */
+export async function h2hLockRecheck({ stake, nodes, needed, put = null, entryCloseMs, leadMs, fetcher = fetch, waitMs = 6000, graceMs = 300, now = () => Date.now(), bound = false } = {}) {
+  const fresh = await postHandout(stake, nodes, { fetcher, needed, waitMs, graceMs, bound });
+  if (!fresh.ok) return `the seats no longer take this handout - ${fresh.refused.length ? fresh.refused[0].slice(0, 200) : fresh.why} - nothing was locked`;
+  return h2hLockRefusal({ put: fresh.seatCloseAtMs !== null && fresh.seatCloseAtMs !== undefined ? fresh : put, entryCloseMs, leadMs, now: now() });
 }
 
 /**

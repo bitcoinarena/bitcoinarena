@@ -17,6 +17,7 @@
 // one seat per hostname. Where the answers a door counts carry their own signatures (a lock-set certificate, a signed fee proposal) the door
 // checks those instead; where they do not, the most a door can do is keep those seats from outnumbering the round's proven ones.
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { identityBoundDigest, identityHostKey, bindsIdentity } from '../../arena-protocol/src/identity-proof.js';   // kanban #3800
 import { sourceKey } from './join.js';
 import { endpointRoot } from './node-discovery.js';
 
@@ -44,10 +45,27 @@ const PROVEN_KEYS = new Map(), PROVEN_KEYS_MAX = 2000;
 export const forgetProofs = () => PROVEN_KEYS.clear();
 const proofNonce = () => { const n = new Uint8Array(32); globalThis.crypto.getRandomValues(n); return n; };
 
-/** The node key the seat at `base` proves over a fresh nonce (64 hex, lower case), or null. `verify(sig, msg, key)`: BIP-340. */
-export async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, now = Date.now() } = {}) {
+// A PROOF BOUND TO THE ADDRESS ASKED (kanban #3800, RULED 2026-11-26, protocol 34): the seat signs, beside the nonce, the Host it was asked
+// at (`at`, `atSig`: arena-protocol identity-proof.js). With `bound` (a round of 34+, bindsIdentity) a URL proves a key only where `at` is
+// the URL's own host, or the host the page's alt route for it reaches (window.ARENA_VIA_ALT: the page's own routes, never the link's) - a
+// box that relays a seat's /identity gets the seat's host signed, not its own, so its path proves nothing. Without it: today's rule.
+const askedHosts = (base) => {
+  const out = new Set();
+  const add = (u) => { try { const h = identityHostKey(new URL(String(u)).host); if (h) out.add(h); } catch { /* not a URL */ } };
+  add(base);
+  const via = typeof globalThis.ARENA_VIA_ALT === 'function' ? globalThis.ARENA_VIA_ALT : null;
+  if (via) { try { add(via(String(base))); } catch { /* no route */ } }
+  return out;
+};
+
+/**
+ * The node key the seat at `base` proves over a fresh nonce (64 hex, lower case), or null. `verify(sig, msg, key)`: BIP-340. `bound`: only a
+ * proof bound to the host asked counts (kanban #3800).
+ */
+export async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, now = Date.now(), bound = false } = {}) {
   base = seatUrlTrimmed(base);
-  const kept = PROVEN_KEYS.get(base);
+  const keptAs = `${bound ? 'bound' : 'any'} ${base}`;   // a key proven unbound never stands for a bound ask
+  const kept = PROVEN_KEYS.get(keptAs);
   if (kept && now - kept.at < PROOF_KEEP_MS) return kept.key;
   if (typeof verify !== 'function') return null;
   try {
@@ -57,9 +75,13 @@ export async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, no
     const j = JSON.parse(await r.text());
     const key = j && typeof j.node === 'string' ? j.node.toLowerCase() : '';
     if (!/^[0-9a-f]{64}$/.test(key) || !/^[0-9a-f]{128}$/i.test(String(j.sig))) return null;
-    if (!verify(fromHex(String(j.sig).toLowerCase()), identityProofDigest(nonce), fromHex(key))) return null;
+    if (bound) {
+      const at = typeof j.at === 'string' ? identityHostKey(j.at) : '';
+      if (!at || !askedHosts(base).has(at) || !/^[0-9a-f]{128}$/i.test(String(j.atSig))) return null;
+      if (!verify(fromHex(String(j.atSig).toLowerCase()), identityBoundDigest(nonce, at), fromHex(key))) return null;
+    } else if (!verify(fromHex(String(j.sig).toLowerCase()), identityProofDigest(nonce), fromHex(key))) return null;
     if (PROVEN_KEYS.size >= PROVEN_KEYS_MAX) PROVEN_KEYS.delete(PROVEN_KEYS.keys().next().value);
-    PROVEN_KEYS.set(base, { key, at: now });
+    PROVEN_KEYS.set(keptAs, { key, at: now });
     return key;
   } catch { return null; }
 }
@@ -76,7 +98,8 @@ export async function provenKeyAt(base, { fetcher = fetch, verify, ms = 8000, no
 //   path proves nothing and stays in its host's one seat, and the seat keeps its voice (#3585's rule, page side);
 // - otherwise a key proven at several URLs is one seat whose URLs must agree (seatVoice): a relay can stall that seat's vote, not cast it.
 // A box relaying a round seat the link does not name at all still proves that key - one more voice, as one more hostname of the box would
-// be (the limit stated above). Binding the proof to the address asked is a change of the digest, the node's and the page's together.
+// be (the limit stated above) - in a round below 34. From 34 (kanban #3800) the proof is bound to the host asked (`bound`, above), and the
+// relayed proof names the seat's host, not the box's.
 /** A seat URL as adverts and links are compared: scheme and host lower case, no trailing slash. */
 export const seatUrlKey = (u) => {
   try { const x = new URL(String(u)); return `${x.protocol}//${x.host.toLowerCase().replace(/\.+$/, '')}${x.pathname.replace(/\/+$/, '')}`; } catch { return seatUrlTrimmed(u); }
@@ -119,7 +142,8 @@ const advertKeys = (roots) => {
  * by default the adverts of the censuses this page checked, noteAdverts; null for none) - where one of a key's URLs is its advert's, the
  * key is that URL's alone (kanban #3730). Without keys or verify every host is one seat.
  */
-export async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 8000, advertised } = {}) {
+// `bound` (kanban #3800): a round of 34+ (bindsIdentity) - a URL proves a key only with a proof bound to its host.
+export async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch, ms = 8000, advertised, bound = false } = {}) {
   const want = new Set((keys || []).map(seatKeyHex).filter(Boolean));
   const sources = distinctSources(nodes);
   const order = new Map(sources.map((u, i) => [u, i]));
@@ -131,7 +155,7 @@ export async function seatsOf(nodes, { keys = [], verify = null, fetcher = fetch
   if (!asking) {
     for (const [host, urls] of byHost) seats.push({ id: `host:${host}`, urls, key: null });
   } else {
-    const proven = await Promise.all(sources.map((u) => provenKeyAt(u, { fetcher, verify, ms })));
+    const proven = await Promise.all(sources.map((u) => provenKeyAt(u, { fetcher, verify, ms, bound })));
     const byKey = new Map();
     sources.forEach((u, i) => { const k = proven[i]; if (k && want.has(k)) { if (!byKey.has(k)) byKey.set(k, []); byKey.get(k).push(u); } });
     const advertOf = advertLookup(advertised);

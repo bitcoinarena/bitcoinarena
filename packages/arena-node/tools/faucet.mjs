@@ -115,6 +115,8 @@ const S2_VERIFY = verifiersFromEnv(env);
 // SEASON 2 STARTS (the owner 2026-11-13 ~17:55Z: "Season 2 läuft ab Sonntag"): before it no Season 2 approval; a Season 1 report past the weekly budget
 // waits for it and is approved by the Season 2 rules once it runs (the sweep below)
 const S2_START_MS = env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null;
+// WEEK 1 ENDED (kanban #2639): a report received at or after this time belongs to Week 2
+const S1_END_MS = env.FAUCET_BOUNTY_S1_END ? Date.parse(env.FAUCET_BOUNTY_S1_END) : null;
 const S2_STARTED = () => !Number.isFinite(S2_START_MS) || Date.now() >= S2_START_MS;
 const S2_START_DAY = Number.isFinite(S2_START_MS) ? new Date(S2_START_MS).toISOString().slice(0, 10) : null;
 const S2_LEVEL_BY_SATS = { 500: 'useful', 1000: 'low', 2000: 'medium', 5000: 'high', 10000: 'critical' };
@@ -122,6 +124,21 @@ const S2_LEVEL_BY_SATS = { 500: 'useful', 1000: 'low', 2000: 'medium', 5000: 'hi
 const S2_BASES = String(env.FAUCET_BOUNTY_S2_BASES || 'https://testnet-stage.bitcoinarena.io/api/faucet/feedback').split(',').map((x) => x.trim().replace(/\/+$/, '')).filter(Boolean);
 const S2_VERIFY_ASKS = new Map();   // pubkey -> last /feedback/verify (one a minute)
 const S2_VERIFY_GAP_MS = 60000;
+// ONE BUDGET FOR EVERY LIVE SOCIAL READ, ALL CALLERS TOGETHER (kanban #2646, audit #1489 r1-faucet-2; 2.0 port: only /feedback/verify reads live here):
+// it was bounded only per signed-in key, and a NIP-98 key costs nothing - a fresh key per request made one live X read each. Now each live check
+// takes a slot of one shared minute first; a full minute answers "try again in a minute" at once (nothing read, nothing queued).
+// A SHARE PER CALLER FIRST (kanban #2996, audit faucet r2-3): a caller (its ipKey, an IPv6 /64 as one) takes at most S2_LIVE_PER_CALLER of the
+// minute's slots; a caller over its share is told so and takes none
+const S2_LIVE_ALL = [], S2_LIVE_MINUTE = Math.max(1, Number(env.FAUCET_BOUNTY_S2_LIVE_MINUTE) || 4);
+const S2_LIVE_PER_CALLER = Math.max(1, Number(env.FAUCET_BOUNTY_S2_LIVE_PER_CALLER) || 2);
+function s2LiveSlot(caller = '', now = Date.now()) {
+  while (S2_LIVE_ALL.length && now - S2_LIVE_ALL[0].at >= 60000) S2_LIVE_ALL.shift();
+  if (S2_LIVE_ALL.filter((x) => x.caller === caller).length >= S2_LIVE_PER_CALLER) return 'caller';
+  if (S2_LIVE_ALL.length >= S2_LIVE_MINUTE) return false;
+  S2_LIVE_ALL.push({ at: now, caller }); return true;
+}
+const s2CallerOf = (req) => ipKey(ipOf(req)) || String(ipOf(req) || '');
+const S2_LIVE_REFUSED = (got) => (got === 'caller' ? 'too many checks from this address right now - try again in a minute' : 'too many checks right now - try again in a minute');
 const S2_LINK_ASKS = new Map(), S2_LINK_HOUR = { hour: -1, n: 0 };   // kanban #2666: ipKey -> link codes asked this hour; all of them
 const S2_LINK_PER_CALLER_HOUR = 20, S2_LINK_PER_HOUR = 600;
 // kanban #3366: one network (an IPv6 /48, an IPv4 /24) takes at most a tenth of the hour's link codes
@@ -760,7 +777,7 @@ if (S2) setInterval(() => { if (!S2_STARTED() || !bountyOn()) return;
       if (!p.ok) continue;
       if (p.waits || p.noBounty) { if (p.waits && p.season !== a.season) S2.wait(r, p, { by: 'season2' }); continue; }   // a Season 2 waiter keeps waiting (#2787: Season 2 keeps its rule)
       const out = s2Approve(r, p, 'season2');
-      console.log(`${new Date().toISOString()} season 2: ${r.label || r.id.slice(0, 12)} ${out.ok ? `approved ${p.sats} sat` : `not approved: ${out.why}`}`);
+      console.log(`${new Date().toISOString()} week 2: ${r.label || r.id.slice(0, 12)} ${out.ok ? `approved ${p.sats} sat` : `not approved: ${out.why}`}`);
     }
   }).catch(() => {});
 }, Number(env.FAUCET_BOUNTY_S2_SWEEP_MS || 60000)).unref();
@@ -899,7 +916,7 @@ createServer((req, res) => {
         return res.end(readFileSync(f)); } }
     if (S2 && path === '/feedback/admin/season' && req.method === 'GET') {
       const season = Number(q.get('season')) || S2.seasonNow(Date.now());
-      return send(200, { ok: true, pot: S2.pot(season), approvals: S2.approvals({ season }), waiting: S2.approvals({ state: 'waiting' }), verifiers: Object.keys(S2_VERIFY) });
+      return send(200, { ok: true, s1EndMs: Number.isFinite(S1_END_MS) ? S1_END_MS : null, pot: S2.pot(season), approvals: S2.approvals({ season }), waiting: S2.approvals({ state: 'waiting' }), verifiers: Object.keys(S2_VERIFY) });
     }
     if (path === '/feedback/admin/export.csv' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="arena-feedback.csv"', 'cache-control': 'no-store', ...cors });
@@ -945,16 +962,20 @@ createServer((req, res) => {
           }
           // A CRITICAL BUG ABOVE THE BANDS IS THE OWNER'S OWN CALL: critical: true lifts mostSats to the amount for this one approval
           const rules = b.critical === true ? { ...RULES, mostSats: Math.max(Number(b.amountSats) || 0, RULES.mostSats || 0) } : RULES;
-          const s1 = FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by });
-          // PAST THE SEASON 1 BUDGET THE REPORT MOVES TO SEASON 2 (the owner 2026-11-13 ~17:55Z): kept waiting, a note on its log, approved by the Season 2
-          // rules once Season 2 runs; a report that fits stays Season 1 as before
-          if (!s1.ok && S2 && /this week's budget/.test(String(s1.why || ''))) {
+          // RECEIVED AFTER WEEK 1 ENDED (kanban #2639, the owner 2026-11-13 20:37:31Z: "Alles was nun reinkommt ist automatisch week 2"): never approved in
+          // Week 1, whatever its budget says - it takes the overflow path below
+          const late0 = FEEDBACK.report(b.id);
+          const late = !!(S2 && Number.isFinite(S1_END_MS) && late0 && late0.state === 'new' && late0.receivedMs >= S1_END_MS);
+          const s1 = late ? { ok: false, why: 'received after Week 1 ended' } : FEEDBACK.approve(b.id, b.amountSats, { played: PLAYED.played, excluded: ourKeys(), rules, severity: b.severity || null, by });
+          // PAST THE WEEK 1 BUDGET THE REPORT MOVES TO WEEK 2 (the owner 2026-11-13 ~17:55Z): kept waiting, a note on its log, approved by the Week 2
+          // rules once Week 2 runs; a report that fits stays Week 1 as before
+          if (late || (!s1.ok && S2 && /this week's budget/.test(String(s1.why || '')))) {
             const r = FEEDBACK.report(b.id);
             const level = String(b.severity || '').toLowerCase() || S2_LEVEL_BY_SATS[Number(b.amountSats)] || '';
             const p = r ? S2.plan(r, { level, codeOnly: b.codeOnly === true, followUp: b.followUp === true, played: playedFor(r) }) : { ok: false };
             if (!p.ok) return send(200, s1);
             const waiting = S2.wait(r, p, { by });
-            FEEDBACK.remark(r.id, `moved to Season 2: the Season 1 budget is used up; approved by the Season 2 rules${S2_START_DAY ? ` once Season 2 starts (${S2_START_DAY})` : ''}`, { by });
+            FEEDBACK.remark(r.id, late ? 'received after Week 1 ended: Week 2 rules' : `moved to Week 2: the Week 1 budget is used up; approved by the Week 2 rules${S2_START_DAY ? ` once Week 2 starts (${S2_START_DAY})` : ''}`, { by });
             return send(200, { ok: true, movedToSeason2: true, why: s1.why, season2: waiting });
           }
           return send(200, s1);
@@ -1169,6 +1190,7 @@ createServer((req, res) => {
       const c = S2.makeCode(who); return send(200, { ...c, links: S2.links(who).map(({ userId, ...l }) => l), flags: S2.flagsOf(who) }); }
     const lastAsk = S2_VERIFY_ASKS.get(who) || 0;
     if (Date.now() - lastAsk < S2_VERIFY_GAP_MS) return send(429, { ok: false, why: 'one check a minute' });
+    { const slot = s2LiveSlot(s2CallerOf(req)); if (slot !== true) return send(429, { ok: false, why: S2_LIVE_REFUSED(slot) }); }   // kanban #2646, #2996
     S2_VERIFY_ASKS.set(who, Date.now()); if (S2_VERIFY_ASKS.size > 5000) S2_VERIFY_ASKS.delete(S2_VERIFY_ASKS.keys().next().value);
     S2.verify(who, S2_VERIFY, { cause: 'reporter' }).then((flags) => send(200, { ok: true, flags, links: S2.links(who).map(({ userId, ...l }) => l) }), () => send(200, { ok: false, why: 'try again' }));
     return undefined;

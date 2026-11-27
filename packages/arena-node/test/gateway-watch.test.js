@@ -283,9 +283,10 @@ function aged({ claim0, claim1 = {}, fees = {}, rulesEpoch = 0, tipAt = 144 * 40
     const seat = /^https:\/\/seat(\d)\.example\/gateway-claim\?federation=[0-9a-f]{64}$/.exec(url);
     if (seat) return claims[seat[1]] ? { status: 200, json: async () => claims[seat[1]] } : { status: 404, json: async () => ({}) };
     // an LNv2 routing_info, its fees as fedimint's PaymentFee (kanban #1324): 0 % unless the test names a seat's
+    // each gateway its own module key (kanban #2422: a module key another node's claim answers first is held by that node)
     const gw = /^https:\/\/n(\d)\.example\/gateway\/routing_info$/.exec(url);
     const f = (gw && fees[gw[1]]) || { base: 0, parts_per_million: 0 };
-    return { status: 200, text: async () => JSON.stringify({ module_public_key: '02' + 'cd'.repeat(32), send_fee_default: f, send_fee_minimum: f, receive_fee: f }) };
+    return { status: 200, text: async () => JSON.stringify({ module_public_key: '02' + ('c' + (gw ? gw[1] : 'd')).repeat(32), send_fee_default: f, send_fee_minimum: f, receive_fee: f }) };
   };
   const asked = [], w = { tip: tipAt };
   const watch = createGatewayWatch({ federationId: async () => fid, seated: async () => [keys[0].hex, keys[1].hex], entries: async () => entries, tip: async () => w.tip, beaconAt: async () => new Uint8Array(32).fill(7),

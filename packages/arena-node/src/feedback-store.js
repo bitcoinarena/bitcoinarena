@@ -846,9 +846,15 @@ export function networkPlayers({ seats, games, days = 90, keepMs = 10 * 60 * 100
     // on its round's committee seats, not on all of them. A seat that does not answer keeps its last list (#2565), as before.
     const bySeat = new Map();   // seat -> every key it lists in any game
     for (const [sg, set] of enteredLast) { const seat = sg.slice(0, sg.lastIndexOf('|')); const all = bySeat.get(seat) || new Set(); for (const k of set) all.add(k); bySeat.set(seat, all); }
-    const need = Math.floor(Math.min(PLAYED_READS, bySeat.size) / 2) + 1, seen = new Map();
-    for (const all of bySeat.values()) for (const k of all) seen.set(k, (seen.get(k) || 0) + 1);
-    entered = new Set([...seen].filter(([, n]) => n >= need).map(([k]) => k));
+    // THE MAJORITY OF THE CONFIGURED SEATS, NOT OF THE ONES THAT ANSWERED (kanban #3670, #1489 sm1-faucet-1): `need` was taken from bySeat.size,
+    // so with the other seats timing out (a restart, load: the #2565 case) one answering seat made need 1 and its list alone named a never-played
+    // key a player. `need` now comes from the configured seats, as the rows read's needAnswers does (one configured seat: still 1); with fewer
+    // seats holding a list than `need`, the last `entered` stays, as a game with too few answers keeps its last rows.
+    const need = Math.floor(Math.min(PLAYED_READS, seats.length) / 2) + 1, seen = new Map();
+    if (bySeat.size >= need) {
+      for (const all of bySeat.values()) for (const k of all) seen.set(k, (seen.get(k) || 0) + 1);
+      entered = new Set([...seen].filter(([, n]) => n >= need).map(([k]) => k));
+    }
     for (const g of games) for (const [k, n] of lastOf.get(g) || []) {
       next.add(k); const m = counts.get(k) || {}; m[g] = (m[g] || 0) + n; counts.set(k, m); }
     keys = next; perGame = counts; at = Date.now();

@@ -360,7 +360,13 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       }
       if (reorged) refreshLive();
       for (const listed of proposals.list().slice().sort((a, b) => a.votingFrom - b.votingFrom || a.publishedAt - b.publishedAt)) {
-        let p = listed;
+        // EACH RECORD AS IT IS NOW, NOT AS THE LIST AT THE TOP OF THE PASS SAW IT (kanban #3671): the list was read before this pass
+        // awaited the chain for the proposals before this one (their census, their blocks); a sightings majority the peer pull
+        // completed in that await (proposals.vouch -> late.agreed) left this record "late" in the old list, and the branch below
+        // decided it FAILED "no census majority signed ..." on a record that held that majority - for good, while a seat whose
+        // vouch landed before its pass counted it: two final outcomes for one proposal. Gone from the list meanwhile: not handled
+        let p = proposals.list().find((x) => x.id === listed.id);
+        if (!p) continue;
         // ITS SCHEDULE FROM THE HISTORY AT ITS PUBLICATION, AS IT IS NOW (kanban #1631, proposals.js reschedule): never the one
         // frozen at intake. Not known yet: not counted this pass. Rewritten: its count starts again on the new window.
         const sched = typeof proposals.reschedule === 'function' ? proposals.reschedule(p.id, { at: tip }) : 'same';

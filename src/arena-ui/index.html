@@ -4679,7 +4679,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // seats than needed took the handout of is refused after it was sent (its lock comes back as an unused lock does)
         const handedOut = {};
         const putP = reuse ? Promise.resolve({ ok: true, accepted: signerNodes.signerNodes.length, refused: [] })
-          : joinStep('postHandout', () => ARENACLIENT.postHandout(stake, named.nodes, { needed: ARENACLIENT.sharesNeededFor(named.round), out: handedOut }))
+          : joinStep('postHandout', () => ARENACLIENT.postHandout(stake, named.nodes, { needed: ARENACLIENT.sharesNeededFor(named.round), out: handedOut, bound: ARENACLIENT.bindsIdentity(named.round.protocolVersion) /* kanban #3800 */ }))
             .catch((e) => ({ ok: false, accepted: 0, refused: [], why: 'the handout: ' + (e && e.message ? e.message : e) }));
         window.ARENA_HANDED_OUT = handedOut.posted || null;   // the seats still answering: each gets its entry after its handout
         window.ARENA_HANDOUT_DONE = putP;
@@ -4775,10 +4775,14 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
             // 201 how long they still had (put.seatCloseAtMs); the smaller of theirs and this clock's must leave the lead, or nothing is locked
             if (thisJoin && !thisJoin.free && h2hHere) {
               window.ARENA_SEAT_AHEAD_MS = ARENACLIENT.seatClockAheadMs(put, named.round.entryCloseMs);
-              const h2hLate = ARENACLIENT.h2hLockRefusal({ put, entryCloseMs: named.round.entryCloseMs, leadMs: window.ARENA_H2H_LEAD_MS() });
+              // THE SEATS ASKED AGAIN RIGHT BEFORE THE LOCK (kanban #3694): the table (#2634) and the close (#1485) were checked at the handout only,
+              // and a table whose last seat was taken during the funding was locked on - every seat refused the entry, the lock's fee parts spent
+              const h2hLate = ARENACLIENT.h2hLockRecheck
+                ? await ARENACLIENT.h2hLockRecheck({ stake, nodes: named.nodes, needed: ARENACLIENT.sharesNeededFor(named.round), put, entryCloseMs: named.round.entryCloseMs, leadMs: window.ARENA_H2H_LEAD_MS(), bound: ARENACLIENT.bindsIdentity(named.round.protocolVersion) /* kanban #3800 */ })
+                : ARENACLIENT.h2hLockRefusal({ put, entryCloseMs: named.round.entryCloseMs, leadMs: window.ARENA_H2H_LEAD_MS() });
               if (h2hLate) {
-                console.log('[arena] #1485 #1892 no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ': ' + h2hLate);
-                throw new Error('the entry closed before it went in - nothing was locked');
+                console.log('[arena] #1485 #1892 #3694 no lock: head-to-head round ' + named.roundIdHex.slice(0, 8) + ': ' + h2hLate);
+                throw new Error(/table is full/.test(h2hLate) ? 'that table filled before the lock - nothing was locked, tap the next round' : 'the entry closed before it went in - nothing was locked');
               }
             }
             if (thisJoin && !thisJoin.free && Number.isFinite(lastEntryMs) && Date.now() > lastEntryMs) {
