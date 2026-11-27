@@ -3306,5 +3306,9 @@
  "3883": {
   "text": "Node software: a warm ghost answering just inside the deadline can block a seat thread uncounted",
   "kind": "bug"
+ },
+ "3894": {
+  "text": "Rock Paper Scissors game: the site and the docs say a draw returns both stakes, but the game keeps a fee",
+  "kind": "bug"
  }
 }
