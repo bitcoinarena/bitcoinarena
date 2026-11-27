@@ -8,42 +8,62 @@ import { roundSplit, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.j
 import { roundSplitBps } from '../../arena-protocol/src/fee-proposal.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { stakeOf } from './join.js';
+import { seatsOf, seatVoice, hostOf } from './seat-identity.js';   // kanban #3856
+import { newestCheckedCensus } from './committee.js';   // kanban #3856
 
-export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 8000 } = {}) {
+// ONE SEAT, ONE VOTE (kanban #3856, audit r20 client-2, the bypass of #2652): the URLs were the votes, deduped only by spelling, so a lobby
+// link naming two real seats plus five paths of one stranger box (evil.example/s1../s5) gave the stranger's key 5 votes and the real one 2,
+// and the page paid the reserves' share to the stranger. The URLs are grouped into seats as fetchFees (#3576) and handToSeats (#3577) group
+// them (seat-identity.js seatsOf: one host one seat unless each of its URLs proves a distinct key of the checked census - `keys`, default
+// newestCheckedCensus; `verify`, default the page's curve); a seat's answers are one vote, none when its URLs disagree (seatVoice).
+// `needed` counts seats and is NOT capped by them: a link of one box never makes the reserve key alone.
+const reservesVerify = () => { const c = globalThis.ARENA_CURVE; return c && typeof c.verify === 'function' ? (sg, m, k) => { try { return !!c.verify(sg, m, k); } catch { return false; } } : null; };
+const reservesCensusKeys = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
+const reservesBaseOf = (n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '');
+const reservesSeats = async (nodes, { keys, verify, fetcher, ms }) => {
+  const list = [...new Set((nodes || []).map(reservesBaseOf))];
+  try { return await seatsOf(list, { keys: keys || reservesCensusKeys(), verify: verify || reservesVerify(), fetcher, ms }); }
+  catch { const by = new Map(); for (const u of list) by.set(hostOf(u), [...(by.get(hostOf(u)) || []), u]); return [...by].map(([h, urls]) => ({ id: `host:${h}`, urls, key: null })); }
+};
+
+export async function fetchReserveKey({ federationId, nodes, needed = 5, fetcher = (u, o) => fetch(u, o), timeoutMs = 8000, keys = null, verify = null } = {}) {
   if (!(federationId instanceof Uint8Array) || federationId.length !== 32) return { ok: false, why: 'the round names no federation to pay the reserves in' };
   const fed = toHex(federationId);
+  const seats = await reservesSeats(nodes, { keys, verify, fetcher, ms: timeoutMs });   // kanban #3856
   const said = new Map();
-  const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))];
   // DONE AS SOON AS ENOUGH AGREE (kanban #926, measured 2026-11-01: an 8 s round was gone while the page waited out the slowest of the round's nodes): the slower ones are not waited for
   await new Promise((done) => {
-    let left = asked.length;
+    let left = seats.length;
     if (!left) done();
-    for (const base of asked) (async () => {
-      try {
-        const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) });
-        if (!r.ok) return;
-        // A SIGNER NODE OUTSIDE THE FEDERATION NAMES IT TOO (kanban #1391, measured 2026-11-09 12:3xZ: an RPS table's committee of 6 held 4 of federation
-        // A's guardian seats, so "only 4 name reserve key 02533d74…, and 5 must" refused every round of it): `key` is a member's own, `reserveKey` the
-        // key that seat's guardian seats agreed on at their threshold - every seat that knows the federation names it. Five must still agree.
-        const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || x.reserveKey || '')));
-        const k = f ? String(f.key || f.reserveKey) : null;
-        if (k) said.set(k, (said.get(k) || 0) + 1);
-      } catch { /* a node that does not answer names nothing */ }
+    for (const seat of seats) (async () => {
+      const keyAt = async (base) => {
+        try {
+          const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) });
+          if (!r.ok) return null;
+          // A SIGNER NODE OUTSIDE THE FEDERATION NAMES IT TOO (kanban #1391, measured 2026-11-09 12:3xZ: an RPS table's committee of 6 held 4 of federation
+          // A's guardian seats, so "only 4 name reserve key 02533d74…, and 5 must" refused every round of it): `key` is a member's own, `reserveKey` the
+          // key that seat's guardian seats agreed on at their threshold - every seat that knows the federation names it. Five must still agree.
+          const f = ((await r.json()).federations || []).find((x) => x.federationId === fed && /^0[23][0-9a-f]{64}$/.test(String(x.key || x.reserveKey || '')));
+          return f ? String(f.key || f.reserveKey) : null;
+        } catch { return null; }   // a node that does not answer names nothing
+      };
+      // (kanban #3856) a seat's URLs are one vote: the key they all name, none when they disagree
+      const k = seatVoice(await Promise.all(seat.urls.map(keyAt)), (x) => x);
+      if (k) said.set(k, (said.get(k) || 0) + 1);
     })().finally(() => {
       left -= 1;
-      // NOT THE FIRST KEY TO REACH `needed` (kanban #2652): the nodes are URLs from a lobby link, and five extra paths of one stranger answering
-      // at once made five votes for the stranger's key before the real seats answered. Done early only when no other key - one named already
-      // or one still unheard - can reach `needed` with the answers still out; two keys that both reach it are refused below.
+      // NOT THE FIRST KEY TO REACH `needed` (kanban #2652): done early only when no other key - one named already or one still unheard -
+      // can reach `needed` with the seats still out; two keys that both reach it are refused below.
       const top = [...said.values()].sort((a, b) => b - a);
       if (!left || ((top[0] || 0) >= needed && (top[1] || 0) + left < needed)) done();
     });
   });
   const best = [...said.entries()].sort((a, b) => b[1] - a[1])[0];
-  if (!best) return { ok: false, why: `none of the round's ${asked.length} seats names a reserve key for federation ${fed.slice(0, 8)}` };
+  if (!best) return { ok: false, why: `none of the round's ${seats.length} seats names a reserve key for federation ${fed.slice(0, 8)}` };
   const rival = [...said.entries()].find(([k, n]) => k !== best[0] && n >= needed);
   if (rival) return { ok: false, why: `the round's seats name two reserve keys, ${best[0].slice(0, 16)} and ${rival[0].slice(0, 16)}, each at least ${needed} times - the reserves are not paid to either` };
   if (best[1] < needed) return { ok: false, why: `only ${best[1]} of the round's seats name reserve key ${best[0].slice(0, 16)}, and ${needed} must` };
-  return { ok: true, key: fromHex(best[0]), agreeing: best[1], asked: asked.length };
+  return { ok: true, key: fromHex(best[0]), agreeing: best[1], asked: seats.length };
 }
 
 /**
@@ -96,12 +116,15 @@ export function keylessFundsLine({ parts, keyless, expected = {}, tip = 0, block
   return { sats, text: `${sats.toLocaleString('en-US')} sat of your balance can't be played right now. It stays in your wallet, in federation ${where}. Paid rounds there are paused.${when} To play now, deposit into another federation.` };
 }
 
-/** GET /reserves of up to `limit` nodes, read as keylessFederations reads them. Never throws. */
-export async function fetchKeylessFederations({ nodes, limit = 6, fetcher = (u, o) => fetch(u, o), timeoutMs = 5000, minAnswers = 3 } = {}) {
-  const asked = [...new Set((nodes || []).map((n) => String(n).replace(/^ws(s?):/, 'http$1:').replace(/\/+$/, '')))].slice(0, limit);
-  const answers = await Promise.all(asked.map(async (base) => {
+/** GET /reserves of up to `limit` seats, read as keylessFederations reads them. Never throws. */
+// (kanban #3856) one answer per seat, not per URL: five paths of one box were five answers and could make a federation look keyless by
+// themselves (minAnswers 3). The URLs are grouped as fetchReserveKey groups them; a seat whose URLs answer differently gives no answer.
+const keylessShape = (a) => (a && Array.isArray(a.federations) ? JSON.stringify(a.federations.map((f) => [String(f && f.federationId), /^0[23][0-9a-f]{64}$/.test(String((f && (f.key || f.reserveKey)) || ''))]).sort()) : null);
+export async function fetchKeylessFederations({ nodes, limit = 6, fetcher = (u, o) => fetch(u, o), timeoutMs = 5000, minAnswers = 3, keys = null, verify = null } = {}) {
+  const seats = (await reservesSeats(nodes, { keys, verify, fetcher, ms: timeoutMs })).slice(0, limit);
+  const answers = await Promise.all(seats.map(async (seat) => seatVoice(await Promise.all(seat.urls.map(async (base) => {
     try { const r = await fetcher(`${base}/reserves`, { signal: AbortSignal.timeout(timeoutMs) }); return r.ok ? await r.json() : null; } catch { return null; }
-  }));
+  })), keylessShape)));
   return keylessFederations(answers, { minAnswers });
 }
 
