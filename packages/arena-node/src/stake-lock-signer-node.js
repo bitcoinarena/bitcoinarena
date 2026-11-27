@@ -254,22 +254,33 @@ function decodedOf(x) {
   if (x.entry && typeof x.entry === 'object' && !(x.entry instanceof Uint8Array)) return x.entry;
   try { return x.bytes ? decodeEntryContract(new Uint8Array(x.bytes)) : null; } catch { return null; }
 }
-// the stake point the stake lock this seat holds at `e`'s stake outpoint was verified for, or null when it holds none
-function stakePointLockedAt(round, e) {
+// the entry whose stake lock this seat holds at `e`'s stake outpoint (decoded), or null when it holds none
+function stakeHolderAt(round, e) {
   const o = e && e.stakeLockOutpoint;
   if (!o || zero(o.txid) || typeof round.stakeLockAt !== 'function') return null;
   const at = round.stakeLockAt(o);
   if (!at) return null;
   const held = typeof round.entry === 'function' ? round.entry(at.entryId) : null;
   if (!held) return null;
-  try { return hexOf(decodeEntryContract(new Uint8Array(held)).stakePoint); } catch { return null; }
+  try { return decodeEntryContract(new Uint8Array(held)); } catch { return null; }
+}
+// the stake point the stake lock this seat holds at `e`'s stake outpoint was verified for, or null when it holds none
+function stakePointLockedAt(round, e) {
+  const h = stakeHolderAt(round, e);
+  return h ? hexOf(h.stakePoint) : null;
 }
 // does a claim by `e` count for this lock (see above)
+// THE ANCHOR IS A STAKE LOCK OF THE CLAIMED ENTRY'S OWN PLAYER (kanban #3875, #1489 attack audit r40 entry-1): "an entry of the same stake
+// point" was met by the attacker's OWN staked entry A (his key k_a, his stake point P', his own stake lock): a copy C of the victim's entry
+// (victim's key, F, fee outpoint) naming P' and A's stake outpoint, with a claim by p', fitted the victim's fee lock and took it at every
+// seat - the victim's own stake lock was then refused ("another entry of that player key is already staked"). A stake lock is refundable
+// only to its entry's player key, so it anchors a fee claim only when the entry holding it is of the claimed entry's player key too (the
+// claimed entry itself, or a same-key copy its claim takes the stake lock back from, #1603) and of its stake point.
 function claimFits(round, entry, kind, e) {
   if (!e || zero(e.stakePoint)) return false;
   if (kind === 'stake') return hexOf(e.stakePoint) === hexOf(entry.stakePoint);
-  const locked = stakePointLockedAt(round, e);
-  return !!locked && locked === hexOf(e.stakePoint);
+  const h = stakeHolderAt(round, e);
+  return !!h && hexOf(h.stakePoint) === hexOf(e.stakePoint) && hexOf(h.playerPubkey) === hexOf(e.playerPubkey);
 }
 // can `e` provably never be this lock's own entry
 function provablyNotTheLocks(round, entry, kind, e) {
