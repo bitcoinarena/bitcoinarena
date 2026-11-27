@@ -565,14 +565,17 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (!outpoint || zero(outpoint.txid)) return { ok: false, why: 'that entry names no fee lock outpoint' };
   if (zero(entry.feePreimage)) return { ok: false, why: 'that entry hands over no F, so its fee lock could never be claimed' };
   // ONE FEE LOCK IS ONE ENTRY TOO (kanban #1214): no fee lock was checked against another entry at all
-  const feeTaken = () => { const t = round.feeLockAt ? round.feeLockAt(outpoint) : null; return t && !Buffer.from(t.entryId).equals(Buffer.from(entryIdBytes)); };
-  { const t = round.feeLockAt ? round.feeLockAt(outpoint) : null;   // kanban #1603: a claimed entry takes its fee lock back from an unclaimed copy
-    if (t && feeTaken()) claimTakesBack(round, entry, entryIdBytes, 'fee', outpoint, t.entryId); }
+  // kanban #1603: a claimed entry takes its fee lock back from an unclaimed copy. Kanban #3876 (#3808's gap on the fee path): this first guard
+  // only ASKS whether it could (yieldNow false, a read) - the holder's rows go at the last re-check below, with no await before putFeeLock, so a
+  // hand-over refused anywhere on the way (lockFieldsMatchEntry, the federation, H(F)) lets nothing go
+  const feeHolder = () => { const t = round.feeLockAt ? round.feeLockAt(outpoint) : null; return t && !Buffer.from(t.entryId).equals(Buffer.from(entryIdBytes)) ? t.entryId : null; };
+  const feeTaken = () => { const h = feeHolder(); return !!h && !claimTakesBack(round, entry, entryIdBytes, 'fee', outpoint, h, { yieldNow: false }); };
   if (feeTaken()) return { ok: false, why: 'that fee lock already pays the fee of another entry in this round: one lock is one entry' };
+  const feeBackFrom = feeHolder();
   const feeNamedFirstWhy = 'that fee lock outpoint was named first by another entry (in this round or another, at this seat or another of the round): '
     + 'a lock pays for the entry that named it first (kanban #1489, #1692, #1758)';
   if (typeof namersAtPeers !== 'function' && namedFirstByAnother(round, entry, entryIdBytes, 'fee', outpoint)) return { ok: false, why: feeNamedFirstWhy };
-  if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee', { peerStakedLower: true }))   // kanban #3369, as for the stake
+  if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee', { peerStakedLower: true, except: feeBackFrom }))   // kanban #3369, as for the stake
     return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
   { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
   // (kanban #2752) fields that can never be the entry's fee lock cost no federation question
@@ -597,7 +600,13 @@ export async function verifyFeeLock({ round, port, entryIdBytes, fields, claimPk
   if (feeTaken()) return { ok: false, why: 'that fee lock already pays the fee of another entry in this round: one lock is one entry' };
   { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
   if (namedFirstByAnother(round, entry, entryIdBytes, 'fee', outpoint, feeNamers)) return { ok: false, why: feeNamedFirstWhy };
-  if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee', { yieldNow: true, peerStakedLower: stakedAtPeer(feeNamers, entryIdBytes) }))   // last: it may let another entry's rows go (kanban #2477)
+  const feeBackNow = feeHolder();
+  if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee', { peerStakedLower: stakedAtPeer(feeNamers, entryIdBytes), except: feeBackNow }))
+    return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
+  // the writes, no await between them and the reads above: the taken-back holder's rows (kanban #3876), then any other the key's lower entry takes (#2477)
+  if (feeBackNow && !claimTakesBack(round, entry, entryIdBytes, 'fee', outpoint, feeBackNow))
+    return { ok: false, why: 'that fee lock already pays the fee of another entry in this round: one lock is one entry' };
+  if (otherStakedUnderKey(round, entry, entryIdBytes, 'fee', { yieldNow: true, peerStakedLower: stakedAtPeer(feeNamers, entryIdBytes), except: feeBackNow }))   // last: it may let another entry's rows go (kanban #2477)
     return { ok: false, why: 'another entry of that player key already has a fee lock in this round: one player key, one fee lock (kanban #1215)' };
   round.putFeeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id), atMs });
   // AND A STAKE LOCK ALREADY VERIFIED AND WAITING FOR THIS ONE IS COUNTED NOW (pick a).
