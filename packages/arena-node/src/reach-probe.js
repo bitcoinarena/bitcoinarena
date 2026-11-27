@@ -50,15 +50,38 @@ export function failureKind(e) {
   return 'connect';
 }
 
+// AT MOST 64 BYTES READ, FOR REAL (kanban #3839, #1489 r30-gossip-1): probeOne read the whole answer with r.arrayBuffer() and only then sliced
+// 64 bytes - a census node answering its /identity with a gzip bomb (48,943 bytes on the wire, 48 MiB decoded; ~1 MB -> ~1 GB) had every seat
+// it sent GET /reach-probe to inflate and hold all of it, three addresses at once, again every PROBE_KEEP_MS: past the memory guard. Now the
+// probe asks for no encoding and reads the decoded body chunk by chunk up to PROBE_READ_MOST bytes, then cancels the rest (as peer-read.js
+// textHead): one chunk past the bound at most, whatever the node sends or declares.
+export const PROBE_READ_MOST = 64;
+async function headBytes(r, most) {
+  if (r.body === undefined) return typeof r.arrayBuffer === 'function' ? new Uint8Array(await r.arrayBuffer()).slice(0, most) : new Uint8Array(0);   // a test stand-in
+  if (!r.body) return new Uint8Array(0);
+  const reader = r.body.getReader();
+  const out = new Uint8Array(most); let n = 0;
+  try {
+    while (n < most) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const take = value.subarray(0, most - n);
+      out.set(take, n); n += take.length;
+    }
+  } finally { reader.cancel().catch(() => {}); }
+  return out.slice(0, n);
+}
+
 /** GET <origin>/identity once: does `node`'s key answer? { reached, ms, kind?, status? } - kind: http | other-node | <failureKind>. */
 export async function probeOne(url, node, { fetchFn = fetch, timeoutMs = PROBE_TIMEOUT_MS, nowMs = () => Date.now() } = {}) {
   const origin = String(url).replace(/^ws(s?):/i, 'http$1:').replace(/\/+$/, '');
   const t0 = nowMs();
   try {
-    const r = await fetchFn(`${origin}/identity`, { redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(timeoutMs), headers: { accept: 'application/octet-stream' } });
+    const r = await fetchFn(`${origin}/identity`, { redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(timeoutMs),
+      headers: { accept: 'application/octet-stream', 'accept-encoding': 'identity' } });
     const ms = nowMs() - t0;
     if (r.status !== 200) { try { await r.body?.cancel(); } catch { /* gone */ } return { reached: false, ms, kind: 'http', status: r.status }; }
-    const b = new Uint8Array(await r.arrayBuffer()).slice(0, 64);
+    const b = await headBytes(r, PROBE_READ_MOST);
     const hex = Buffer.from(b).toString('hex');
     return hex === node ? { reached: true, ms: nowMs() - t0 } : { reached: false, ms, kind: 'other-node' };
   } catch (e) { return { reached: false, ms: nowMs() - t0, kind: failureKind(e) }; }
