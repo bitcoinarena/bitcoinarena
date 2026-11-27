@@ -25,7 +25,7 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 35]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33]);
 /**
  * THE VERSION THAT RUNS THE CENSUS KEY'S DAEMON (5A.3B, RULED 2026-11-02, kanban #1048 answer 2). A node that does not speak it cannot deal or sign, so a share given to it counts against
  * the threshold and nobody can use it: a node whose advertisement does not list this version is out of the key's census, in T and the shares alike. It is above BOND_SUM_VERSION, so
@@ -207,8 +207,10 @@ export const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RUL
  * backed plain pick (one whose stake the seat saw, the set its settlement counts); with any backed plain pick it is a POOL - its orders are no
  * entries of it (never filled, their locks back as an unfilled order's), its picks settle as if no order was posted. Inputs: the backed-entry
  * and certified-batch sets only; the doors and what a seat signs stay as they are. Rounds below 35 keep option B byte for byte. 34 is the
- * 2.0's genesis run (#3762, ruled, not spoken alone); versions are cumulative, so a round at 35 is at or above 34 and 32 - seats of this build
- * close a genesis run FORFEIT 0 there (verify.js decidesGenesisRun), and 32 gates nothing yet. Round creators write 35 only once every seat of the network lists it.
+ * bound identity proof's on 1.9. ON 2.0 (kanban #1489 port) 34 is also the signed draw (#3743, sortition.js SIGNED_DRAW_VERSION) and the
+ * genesis run (#3762), not spoken yet (they join with #3612/#3680); versions are cumulative, so a round at 35 would run all of them - a 35
+ * round's census assigns no keys on this build. So 2.0 does not speak 35 until it speaks 34: the rule is here, and rounds below 35 keep option B,
+ * as on 1.9. Round creators write 35 only once every seat of the network lists it.
  */
 export const POOL_FIRST_VERSION = 35;
 /** Whether a market round of protocol version `v` is a pool once it holds a backed plain pick, orders or not (kanban #3854). */

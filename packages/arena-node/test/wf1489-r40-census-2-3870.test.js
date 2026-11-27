@@ -145,14 +145,14 @@ function setup() {
 }
 
 
-import { clientCommittee, clientSettlementSignerNodes, forgetSeatings } from '../../arena-client/src/committee.js';
+import { clientCommittee, clientSettlementSignerNodes } from '../../arena-client/src/committee.js';
 import { pageCurve } from '../../arena-client/src/page-curve.js';
 import { blockHashOf } from '../../arena-protocol/src/chain.js';
 import { encodeSeatingCertificate, signSeating } from '../../arena-protocol/src/seating.js';
 
 
 test('wf1489 r40 census-2: one seat with a made-up /committee answer and a slow /seating does not stall the join', async () => {
-  forgetSeatings();
+  // (2.0: no kept seating answers to forget, #1449 is not on 2.0)
   const { roster, rid, view, ev, contract } = setup();
   const headerBytes = Buffer.concat(headersOf(view).map((h) => Buffer.from(h)));
   const secretOf = new Map([1, 2, 3, 4, 5, 6].map((n) => [toHex(keyFor(n)), new Uint8Array(32).fill(n)]));
@@ -178,11 +178,11 @@ test('wf1489 r40 census-2: one seat with a made-up /committee answer and a slow 
   const nodes = ['https://seat-a.example', 'https://seat-b.example', 'https://seat-c.example', 'https://seat-d.example', 'https://bad.example'];
   const anchorAt = { hash: blockHashOf(headersOf(view)[0]), height: view.firstHeight };
   // honest baseline: the same seats with the bad one left out
-  forgetSeatings();
+  // (2.0: no kept seating answers to forget, #1449 is not on 2.0)
   let t = Date.now();
   await clientSettlementSignerNodes(toHex(rid), contract, nodes.slice(0, 4), { curve: pageCurve, fetcher, anchorAt });
   const honestMs = Date.now() - t;
-  forgetSeatings();
+  // (2.0: no kept seating answers to forget, #1449 is not on 2.0)
   t = Date.now();
   let refused = null, got = null;
   try { got = await clientSettlementSignerNodes(toHex(rid), contract, nodes, { curve: pageCurve, fetcher, anchorAt }); } catch (e) { refused = e.message; }

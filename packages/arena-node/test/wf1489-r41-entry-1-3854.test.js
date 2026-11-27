@@ -20,7 +20,13 @@ import { donationSetId } from '../../arena-protocol/src/donation.js';
 import { YES, NO } from '../../arena-protocol/src/order-book.js';
 import { UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
-import { POOL_FIRST_VERSION } from '../../arena-protocol/src/constants.js';
+import { POOL_FIRST_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
+// 2.0: 35 is spoken only once 34 is (constants.js POOL_FIRST_VERSION) - until then the protocol-35 cases are skipped, as genesis-run-3762's
+const AT35 = !SUPPORTED_PROTOCOL_VERSIONS.includes(POOL_FIRST_VERSION) && 'protocol 35 is spoken on 2.0 only with 34 (#3612/#3680)';
+
+// ON 2.0, 27 AND UP IS ALSO THE ARENA LOCK (arena-lock.js NAMED_CLAIM_VERSION, regtest's point 0): this fixture's locks are stock contracts, so its
+// rounds sit below regtest's named-claim point by the harness switch, as wf1489-r20-h2h-1 and h2h-lock-set-2561 do (kanban #1489 port of #3854)
+process.env.ARENA_DONATION_NETWORK = 'regtest'; process.env.ARENA_TEST_NAMED_CLAIM_HEIGHT = '999999999';
 
 const UPDOWN = testAttestedGame({ name: 'btc-updown-15m-r41', outcomes: [...UP_DOWN_OUTCOMES] });
 const ROUND = { gameId: UPDOWN.registration.gameId, simCoreHash: b32(0), configHash: b32(0), donationSetId: donationSetId(TEST_DONATION_SET_KEYS_REGTEST.recipients), entryCloseMs: 900000n };
@@ -64,7 +70,7 @@ async function run({ protocolVersion, picks = true }) {
   return facts;
 }
 
-test('r41-entry-1 (#3854): at protocol 35 a loser\'s last-second minimum order does not turn a pool with backed plain picks into a book', { timeout: 170000 }, async () => {
+test('r41-entry-1 (#3854): at protocol 35 a loser\'s last-second minimum order does not turn a pool with backed plain picks into a book', { timeout: 170000, skip: AT35 }, async () => {
   const facts = await run({ protocolVersion: POOL_FIRST_VERSION });
   console.log('  MEASURED r41-entry-1 v35:', JSON.stringify(facts));
   assert.deepEqual(facts.picks, ['taken', 'taken']);
@@ -78,7 +84,7 @@ test('r41-entry-1 (#3854): at protocol 35 a loser\'s last-second minimum order d
   assert.notEqual(facts.losersPickBack, 'signed back at once', 'the loser\'s pick is not refunded');
 });
 
-test('r41-entry-1 (#3854): at protocol 35 a round of orders only is a book as before', { timeout: 170000 }, async () => {
+test('r41-entry-1 (#3854): at protocol 35 a round of orders only is a book as before', { timeout: 170000, skip: AT35 }, async () => {
   const facts = await run({ protocolVersion: POOL_FIRST_VERSION, picks: false });
   console.log('  MEASURED r41-entry-1 v35 orders only:', JSON.stringify(facts));
   assert.equal(facts.batch, 'certified');
