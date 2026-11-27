@@ -33,6 +33,17 @@ export const BADGES_SHOWN = 5;
 const BADGE_D = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const BADGE_HEX64 = /^[0-9a-f]{64}$/;
 
+// WHAT ONE SEAT MAY SHOW ON ITS OWN WORD (kanban #3849, #1489 r41-settle-1): a ROUND badge of the catalogue whose scope is the
+// game itself - each seat awards those from the rounds its own committees settled, so one seat holding it and the other not
+// is honest, and one d counts once per game however many a seat sends. EVERY OTHER award (a week's "Season top 3", ranked
+// from the network's agreed season, and any badge not in the catalogue, whose scopes a seat could name without end) is shown
+// only when BADGES_AGREE of the badge seats that answered for this player hand in the same (d, scope) - fewer when fewer
+// answered (one badge seat alone is the only word there is). Before this, the first seat to name a (d, scope) put it on the
+// row: one seat of seven showed "Season top 3 ×40" and "Your badges: 40" for a player no other seat awarded anything.
+// The page's own reading of the seats' answers, not a rule the seats share; 3 is season.js SEASON_NETWORK_AGREE.
+export const BADGES_AGREE = 3;
+const BADGE_ROUND_DS = new Set(['arena-first-win', 'arena-five-rounds', 'arena-perfect-run']);
+
 /**
  * THE BUILT-IN GLYPH of each catalogue badge, for a definition that names no image (a seat with no public base leaves the
  * image tag out, which NIP-58 allows) or an image that does not load: the seat's own medal colours (nostr-badges.js LOOK)
@@ -90,17 +101,22 @@ export function readBadgeDefinition(def) {
  * order, each `answer` a GET /badges body (`{ player, on, awards, definitions }`). Kept: an answer that is `on: true` and
  * names this player; an award of the shown game (`award.game === game` - its round badges, and its weekly board's
  * top 3, whose scope is the game and the week) with a well-formed d and scope, whose event (when sent) names this player in
- * its `p` tag. Each (d, scope) once, the first seat's. Answers `{ player, count, badges }`: `count` the awards kept, and
+ * its `p` tag. Each (d, scope) once, the first seat's - a catalogue round badge scoped to the game on one seat's word, any
+ * other award only when BADGES_AGREE of the answering badge seats (or all, when fewer answered) name it (kanban #3849). Answers `{ player, count, badges }`: `count` the awards kept, and
  * `badges` one entry per d - `{ d, name, description, count, image, glyph, title }`, `image` the defining seat's
  * /badge-image URL (unrouted) or null - in the catalogue's order, at most BADGES_SHOWN.
  */
 export function mergeBadgeAwards(answers, { player, game } = {}) {
   const who = String(player || '').toLowerCase();
   const kept = new Map();                        // `${d}\n${scope}` -> d
+  const named = new Map();                       // `${d}\n${scope}` -> { d, seats: Set } (kanban #3849: awards that need agreement)
   const defs = new Map();                        // d -> { ...definition, seat }
+  const answered = new Set();                    // the badge seats that answered for this player
   for (const { seat, answer } of Array.isArray(answers) ? answers : []) {
     if (!answer || typeof answer !== 'object' || answer.on !== true) continue;
     if (String(answer.player || '').toLowerCase() !== who) continue;
+    const from = String(seat || '').replace(/\/+$/, '');
+    answered.add(from);
     for (const def of Array.isArray(answer.definitions) ? answer.definitions : []) {
       const r = readBadgeDefinition(def);
       if (r && !defs.has(r.d)) defs.set(r.d, { ...r, seat: String(seat || '').replace(/\/+$/, '') });
@@ -112,9 +128,14 @@ export function mergeBadgeAwards(answers, { player, game } = {}) {
       // AN AWARD TO SOMEBODY ELSE is not this player's, whatever row it was asked for: a sent event names its player
       if (a.event && Array.isArray(a.event.tags) && !a.event.tags.some((t) => Array.isArray(t) && t[0] === 'p' && t[1] === who)) continue;
       const k = `${a.d}\n${a.scope}`;
-      if (!kept.has(k)) kept.set(k, a.d);
+      if (BADGE_ROUND_DS.has(a.d) && a.scope === game) { if (!kept.has(k)) kept.set(k, a.d); continue; }
+      if (!named.has(k)) named.set(k, { d: a.d, seats: new Set() });
+      named.get(k).seats.add(from);
     }
   }
+  // kanban #3849: an award one seat's word cannot carry is kept when enough of the answering badge seats name it
+  const need = Math.max(1, Math.min(BADGES_AGREE, answered.size));
+  for (const [k, { d, seats }] of named) if (seats.size >= need && !kept.has(k)) kept.set(k, d);
   const byD = new Map();
   for (const d of kept.values()) byD.set(d, (byD.get(d) || 0) + 1);
   const rank = (d) => { const i = BADGE_ORDER.indexOf(d); return i < 0 ? BADGE_ORDER.length : i; };
