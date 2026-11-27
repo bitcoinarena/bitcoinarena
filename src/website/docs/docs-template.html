@@ -728,10 +728,21 @@ ARENA_APPS=packages/nextblock/plugin/nextblock-v7.js node packages/arena-node/sr
     <div><b>Rounds</b><span>the rounds your node is drawn for</span></div>
     <div><b>Bond</b><span>add to your bond, how your node is drawn</span></div>
     <div><b>Services</b><span>status, restart, stop</span></div>
+    <div><b>Check my node</b><span>can the network reach it</span></div>
     <div><b>Apps</b><span>the games your node hosts</span></div>
     <div><b>Updates</b><span>your release and new ones</span></div>
   </div>
   <p>Further down: Donations, Referrer, Emergency code, Leave, Create a market, Developer and Your login.</p>
+  <h4 id="check">Check my node</h4>
+  <p>One button, five lines, each green or red with what to do:</p>
+  <ol>
+    <li><b>Your address now</b>: what your node serves.</li>
+    <li><b>The network's address</b>: what the seats' census names for your node, and an update on its way.</li>
+    <li><b>Reachable from outside</b>: three seats dial your node and ask it for its key (<code>GET /reach-probe?node=&lt;your node key&gt;</code>): the name, the certificate, the time and the answer.</li>
+    <li><b>Response time</b>: over 3 s is a warning.</li>
+    <li><b>Drawn into rounds</b>: in the last 24 hours.</li>
+  </ol>
+  <p>The check also runs on its own every few minutes and puts a line on the Overview when one is red. A seat answers <code>/reach-probe</code> only for a node key, never for an address you name, and dials only the addresses the network holds for that key.</p>
   <p><b>Your address on the network.</b> Your bond's advertisement names your node's address. When it changes (a temporary tunnel gets a new name at each restart), your node signs an <b>address announcement</b> and hands it to the seats: no transaction, no fee. A lasting change, such as a new way in, is posted as an advertisement update by the node itself.</p>
 
   <!-- THE DASHBOARD, FOLDED (2026-10-30: "Dashboard is also very technical, hide it by default") -->

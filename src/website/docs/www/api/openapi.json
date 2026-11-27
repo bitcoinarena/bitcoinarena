@@ -11091,6 +11091,53 @@
     }
    }
   },
+  "/reach-probe": {
+   "get": {
+    "tags": [
+     "Players"
+    ],
+    "summary": "Visit a node at the addresses this seat holds for it",
+    "description": "Can the network reach this node? The owner page's \"Check my node\" asks three seats. The seat dials only the addresses it holds for that node key (its census advert endpoints and the node's newest address announcement, each held to the peer address rules), asks GET /identity there and says per address whether that key answered, how long it took, and if not, why: dns, tls, timeout, refused, blocked, http (with the status), other-node, connect. It never says what the address sent. A node's answer is kept 30 s; at most 6 fresh checks a minute per address, 30 in all (kanban #3798).\n\nAccess: none\n\nReturns: 200 JSON {ok, node, census, announced, results:[{url, from, reached, ms, kind?, status?}]}; 400; 404; 429\n\nSource: `packages/arena-node/src/server.js` line 0.",
+    "operationId": "get_reach_probe",
+    "parameters": [
+     {
+      "name": "node",
+      "in": "query",
+      "required": true,
+      "description": "the node key, 64 hex",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "{ok: true, node, census: [endpoint], announced: endpoint | null, results: [{url, from: ['census'|'announced'], reached, ms, kind?, status?}], keptMs?}.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "400": {
+      "description": "No node key.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "404": {
+      "description": "This seat holds no address for that node.",
+      "content": {
+       "application/json": {}
+      }
+     },
+     "429": {
+      "description": "More than 6 fresh checks a minute from this address, or 30 in all.",
+      "content": {
+       "application/json": {}
+      }
+     }
+    }
+   }
+  },
   "/receipts": {
    "get": {
     "tags": [
