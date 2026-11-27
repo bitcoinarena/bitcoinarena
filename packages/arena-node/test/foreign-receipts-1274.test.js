@@ -15,6 +15,8 @@ test('#1274 receipts for marks this seat does not hold are kept up to the cap, t
   let now = 1_800_000_000_000;
   round.now = () => now;
   const secret = schnorr.utils.randomSecretKey(), key = schnorr.getPublicKey(secret);
+  // kanban #3862: a foreign receipt is filed only under a committee member's key (a stranger's is refused) - this one is on a committee
+  round.recordSignerNodes(crypto.getRandomValues(new Uint8Array(32)), [key]);
   const send = () => {
     const r = { checkpointId: crypto.getRandomValues(new Uint8Array(32)), receivedAtMs: BigInt(now), nodePubkey: key };
     const body = encodeCheckpointReceipt(r);
