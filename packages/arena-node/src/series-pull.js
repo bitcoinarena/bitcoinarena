@@ -122,6 +122,11 @@ export function createSeriesPull({ peers, held, take, parse, idOf, fetchFn = fet
         for (const u of roots) {
           const left = endAt - Date.now();
           if (left <= 0) break;
+          // A STRUCK PEER IS PASSED OVER FOR SHARED IDS TOO (kanban #3869, #1489 r40-gossip-2): strikes were read only for ids one peer
+          // lists alone, so a seat that answered GET /series first (roots[0] of every real id) and held each line to the timeout cost
+          // timeoutMs per real series before the honest peer was asked - 6 of 40 a pass live. Its own node-local choice: what is taken
+          // is still checked by take() alone.
+          if ((strikes.get(u) || 0) >= peerStrikes) continue;
           let line = null;
           try { const res = await fetchFn(`${u}/series-template?id=${id}`, { signal: AbortSignal.timeout(Math.min(timeoutMs, left)) }); line = res.ok ? await capped(res, lineBytes, true) : null; } catch { line = null; }
           if (!line) { strike(u); continue; }
