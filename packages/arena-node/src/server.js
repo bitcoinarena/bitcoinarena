@@ -11337,7 +11337,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
             try {
               const net = chainNetworkId() ? (toHex(fromHex(chainNetworkId())) === toHex(NETWORK_ID_TESTNET4) ? 'testnet4' : 'regtest') : 'testnet4';
               const r = await addBondFromWallet({ ...w, network: net, secret: round.identity.secret, pubkey: round.pubkey, addSats: args.sats, post: args.post === true, key: actionKeyOf(args), journal: ownerJournal,
-                blockMs: net === 'testnet4' ? 600000 : 1000, censusKey: newestCensusKey() });
+                blockMs: net === 'testnet4' ? 600000 : 1000, censusKey: newestCensusKey(),
+                // kanban #3815: refused while the seat's own advertisement update (.advert-self.json) is unconfirmed, as the roles door is
+                waitFor: (() => { try { return db && db.arenaPath ? JSON.parse(readFileSync(`${db.arenaPath}.advert-self.json`, 'utf8')).txid || null : null; } catch { return null; } })() });
               if (!r.ok) return answer(400, r);
               if (r.bond) console.log(`[bond] added ${r.plan.addSats} sat beside the bond from the bond wallet: ${r.bond.txid}:0 (total ${r.plan.totalSats} sat)`);
               return answer(200, { ok: true, plan: r.plan, bond: r.bond || null });
