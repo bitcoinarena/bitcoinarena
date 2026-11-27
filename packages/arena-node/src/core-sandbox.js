@@ -469,7 +469,10 @@ export function sandboxFor(core, options) {
       // for the thread's life left every later close of that game - a head-to-head decide's retry too - failing until a restart
       // kanban #2710 (#1489 r4-hosting-6): nor one whose META ASK ran out of time - a seat busy at a core's first load (at start, or the
       // first ask after an idle sweep) missed ASK_MS there and the game was refused until a restart: every round of it unsigned
-      if (/did not stop within \d+ ms \((loading|meta)\)/.test(e.message)) throw e;
+      // kanban #3843 (#1489 r30-hosting-1): nor one whose COMPILE APART (#3389, core-compile-apart.js) ran out of time - that child is
+      // bounded by the same loadMs (TRIAL_MS 1.5 s at registration), compileApart keeps no verdict for a timeout, and a refusal kept
+      // here left that game version unhostable on the seat until a restart after one slow child spawn at a busy start
+      if (/did not stop within \d+ ms \((loading|meta)\)|did not compile within \d+ ms in a process of its own/.test(e.message)) throw e;
       // kanban #2549 (refute of #1695): a refusal kept for the thread's life is bounded - whatever path built its text
       s = { refused: String(e && e.message).slice(0, WHY_MAX) };
     }
