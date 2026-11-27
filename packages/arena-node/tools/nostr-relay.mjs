@@ -31,7 +31,9 @@ export async function readStanding(seats = standingSeats, games = standingGames,
           if (!j.next) break;
           after = j.next;
         }
-        break;   // one seat that answered is enough for this game
+        // EVERY LISTED SEAT (kanban #3866, audit r41-nostr-1): one seat's /season-rounds holds only the rounds of the committees it sat on,
+        // so stopping at the first seat that answered left every identity staked only in another seat's rounds without standing (evictable
+        // by a fresh-key flood). Standing is the union of the staked, settled identities all listed seats serve - no seat drops one alone
       } catch { /* the next seat */ }
     }
   }
