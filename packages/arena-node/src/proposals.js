@@ -605,6 +605,11 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
       // ONE RECORD ONCE PER LISTING (kanban #3373, audit census a6-3-1, gap in #3040): a seat listing one late record 256 times, each copy with
       // junk sightings by every census key, cost 256 x K signature checks per pull (vouch's one-check-per-key holds within one call only)
       const seenHere = new Set();
+      // ONE VOUCH PER PROPOSAL PER PULL, KEYED BY THE ID THIS SEAT COMPUTED (kanban #3840, bypass of #3373): the key above is the peer's own
+      // unsigned `id` field, so 256 copies of one late proposal under 256 made-up ids each ran vouch (K signature checks) again. A proposal
+      // this seat keeps is vouched for at most once in one pull, under mine.id / add()'s got.id - the proposal id of the decoded bytes.
+      const vouchedHere = new Set();
+      const vouchOnce = async (pid, r) => { if (vouchedHere.has(pid)) return; vouchedHere.add(pid); await api.vouch(pid, r); };
       for (const r of asked) {
         if (!r || typeof r.proposal !== 'string' || typeof r.blockHash !== 'string') continue;
         const once = typeof r.id === 'string' ? `id:${r.id.toLowerCase()}` : `p:${r.proposal.toLowerCase()}`;
@@ -612,11 +617,11 @@ export function createProposals({ confirmedTx, recipientsFor, lowestBondMinSatsF
         seenHere.add(once);
         const mine = typeof r.id === 'string' ? held.get(r.id.toLowerCase()) : null;
         // kept here: only its signed sightings are news (kanban #2432) - who listed it proves nothing
-        if (mine && stateOf(mine) !== S.ORPHANED) { if (isLate(mine)) { try { await api.vouch(mine.id, r); } catch { /* the next pull */ } } continue; }
+        if (mine && stateOf(mine) !== S.ORPHANED) { if (isLate(mine)) { try { await vouchOnce(mine.id, r); } catch { /* the next pull */ } } continue; }
         try {
           const got = await api.add({ proposal: r.proposal, blockHash: r.blockHash }, { own: 'peer' });   // kanban #2840
           if (got.ok && got.status === 201) took++;
-          if (got.ok && isLate(held.get(got.id))) await api.vouch(got.id, r);
+          if (got.ok && isLate(held.get(got.id))) await vouchOnce(got.id, r);
         } catch { /* not one */ }
       }
       return took;
