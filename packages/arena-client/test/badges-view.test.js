@@ -19,10 +19,12 @@ const FW = def('arena-first-win', 'First win', 'Won a staked round of a game for
 const TOP = def('arena-season-top-3', 'Season top 3', 'Finished first, second or third on a game\'s weekly board (Monday to Monday, UTC).', false);
 
 test('merged by (d, scope): a badge two seats issued shows once; two weeks on the podium count twice under one icon', () => {
+  // kanban #3849: a week's top 3 is shown when both badge seats name it (each seat's word alone carries only a round badge)
   const a = { player: P, on: true, definitions: [FW, TOP], awards: [award('arena-first-win', 'nextblock', 'nextblock'),
-    award('arena-season-top-3', 'nextblock', 'nextblock@2026-10-05')] };
+    award('arena-season-top-3', 'nextblock', 'nextblock@2026-10-05'), award('arena-season-top-3', 'nextblock', 'nextblock@2026-09-28'),
+    award('arena-season-top-3', 'nextblock', 'nextblock@2026-09-21')] };
   const b = { player: P, on: true, definitions: [def('arena-first-win', 'Other words', 'Other.'), TOP], awards: [award('arena-first-win', 'nextblock', 'nextblock'),
-    award('arena-season-top-3', 'nextblock', 'nextblock@2026-09-28')] };
+    award('arena-season-top-3', 'nextblock', 'nextblock@2026-09-28'), award('arena-season-top-3', 'nextblock', 'nextblock@2026-10-05')] };
   const m = mergeBadgeAwards([{ seat: 'https://seat-1.example/', answer: a }, { seat: 'https://seat-7.example', answer: b }], { player: P, game: 'nextblock' });
   assert.equal(m.count, 3);
   assert.deepEqual(m.badges.map((x) => [x.d, x.count, x.name, x.image]), [
