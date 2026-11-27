@@ -56,6 +56,12 @@ export function bountyEndMsOf(text) { const ms = text ? Date.parse(String(text))
 export function receivedAfterBountyEnd(receivedMs, endMs) {
   return Number.isFinite(endMs) && Number.isFinite(Number(receivedMs)) && Number(receivedMs) > endMs;
 }
+// THE LAST SEASON (kanban #3895, the owner 2026-11-27: no Season 4): FAUCET_BOUNTY_LAST_SEASON "<season>:<ISO end>", e.g. "3:2026-11-29T23:59:59Z".
+// That season runs to that end - past its weekly boundary - and no later season begins: every approval from then on counts in its pot.
+export function lastSeasonOf(text) {
+  const m = /^\s*(\d+)\s*:\s*(\S+)\s*$/.exec(String(text || '')); if (!m) return null;
+  const endMs = Date.parse(m[2]); return Number(m[1]) >= FIRST_SEASON && Number.isFinite(endMs) ? { season: Number(m[1]), endMs } : null;
+}
 export function seasonPayout({ level, codeOnly = false, followUp = false, flags = {}, played = true, receivedMs = null } = {}) {
   const lv = String(level || '').toLowerCase();
   if (lv === 'node' && Number.isFinite(receivedMs) && receivedMs >= NODE_BOT_EXCLUDED_FROM_MS && !HUMAN_FLAGS.some((k) => !!(flags && flags[k])))   // the owner 2026-11-16 ~14:00Z: no played round needed (a node session cannot play) - a linked X only
@@ -137,7 +143,7 @@ export function cleanOpenIssues(o) {
 // store's; without it every approval counts by the current rule.
 // `pots` (kanban #2784, the owner 2026-11-15: "Season 2 pot = 120,000"): a pot per season, { 2: 120000 }; a season not named has `potSats`.
 // `drawPrizes`: the season draw's prize, its own figure beside the pot ({ 2: 50000 }), never counted in it.
-export function openBountySeason(path = ':memory:', { startMs = null, potSats = SEASON_POT_SATS, pots = {}, drawPrizes = {}, paidOf = null } = {}) {
+export function openBountySeason(path = ':memory:', { lastSeason = null, startMs = null, potSats = SEASON_POT_SATS, pots = {}, drawPrizes = {}, paidOf = null } = {}) {
   const potOf = (season) => (Number.isInteger(Number(pots && pots[season])) && Number(pots[season]) > 0 ? Number(pots[season]) : potSats);
   const drawPrizeOf = (season) => (Number.isInteger(Number(drawPrizes && drawPrizes[season])) && Number(drawPrizes[season]) > 0 ? Number(drawPrizes[season]) : null);
   const db = new DatabaseSync(path);
@@ -159,7 +165,8 @@ export function openBountySeason(path = ':memory:', { startMs = null, potSats = 
   // THE ROW BEFORE AN INTENT (kanban #3220): an 'approving' row keeps the row it replaced (JSON, null when there was none), so a report store that
   // refuses the approval puts that row back - a waiting report keeps waiting
   try { db.exec('ALTER TABLE approvals ADD COLUMN intent_prior TEXT'); } catch { /* there already */ }
-  const seasonNow = (nowMs) => seasonAt(nowMs, startMs);
+  // kanban #3895: never past the last season
+  const seasonNow = (nowMs) => { const s = seasonAt(nowMs, startMs); return lastSeason && s > lastSeason.season ? lastSeason.season : s; };
 
   // EVERY NAME A LINKED ACCOUNT CARRIED (kanban #3032, audit faucet r3-1): the bot list (#2958) was matched against the link's current username only,
   // so a listed X bot renamed its account (free on X), typed or posted the new name, and its reports paid the human amount again. Each

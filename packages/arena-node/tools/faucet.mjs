@@ -28,7 +28,7 @@ import { readFileSync, writeFileSync, appendFileSync, renameSync } from 'node:fs
 import { execFile } from 'node:child_process';
 import { nodeBountyCheck } from '../src/node-bounty-check.js';
 import { seatPublicFetch } from '../src/public-fetch.js';
-import { openBountySeason, cleanOpenIssues, seasonEndMs, NO_CARRY_FROM_SEASON, LEVEL_SATS, BOT_PCT, BOUNTY_ENDED_WHY, bountyEndMsOf, receivedAfterBountyEnd } from '../src/bounty-season.js';
+import { openBountySeason, cleanOpenIssues, seasonEndMs, NO_CARRY_FROM_SEASON, LEVEL_SATS, BOT_PCT, BOUNTY_ENDED_WHY, bountyEndMsOf, receivedAfterBountyEnd, lastSeasonOf } from '../src/bounty-season.js';
 import { verifiersFromEnv } from '../src/bounty-verify.js';
 import { readJsonBounded } from '../src/lnurl-read.js';   // kanban #2517
 import { openFeedbackStore, networkPlayers, imageKind, SHOT_MOST, SHOT_UNCLAIMED_MS, REWARD_LEVELS, NODE_BOUNTY_BASE_SATS, lnAddressWorks, lnAddressUrl, lnAddressInvoice, reportAddress } from '../src/feedback-store.js';
@@ -108,7 +108,9 @@ const UNPOSTED = new Set();
 function seasonFigures(text) { const o = {}; for (const part of String(text || '').split(',')) { const m = /^\s*(\d+)\s*:\s*(\d+)\s*$/.exec(part); if (m) o[Number(m[1])] = Number(m[2]); } return o; }
 const FEEDBACK = env.FAUCET_FEEDBACK_DB ? openFeedbackStore(env.FAUCET_FEEDBACK_DB) : null;
 // BUG BOUNTY SEASON 2 (kanban #2623): its own file, so Season 1's feedback.db, /bounty and the paid log stay as they are; off when not named
-const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOUNTY_S2_DB, { startMs: env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null,
+// kanban #3895: the last season and its end ("3:2026-11-29T23:59:59Z"); no later season
+const LAST_SEASON = lastSeasonOf(env.FAUCET_BOUNTY_LAST_SEASON);
+const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOUNTY_S2_DB, { lastSeason: LAST_SEASON, startMs: env.FAUCET_BOUNTY_S2_START ? Date.parse(env.FAUCET_BOUNTY_S2_START) : null,
   pots: seasonFigures(env.FAUCET_BOUNTY_POTS), drawPrizes: seasonFigures(env.FAUCET_BOUNTY_DRAW_PRIZES),   // kanban #2784: '2:120000', '2:50000'
   paidOf: (id) => FEEDBACK.paidSatsOf(id) }) : null;   // kanban #2784: the pot counts what was paid
 const S2_VERIFY = verifiersFromEnv(env);
@@ -122,6 +124,8 @@ const S1_END_MS = env.FAUCET_BOUNTY_S1_END ? Date.parse(env.FAUCET_BOUNTY_S1_END
 const BOUNTY_END_MS = bountyEndMsOf(env.FAUCET_BOUNTY_END);
 const endedFor = (r) => !!r && receivedAfterBountyEnd(r.receivedMs, BOUNTY_END_MS);
 const bountyOver = (nowMs = Date.now()) => Number.isFinite(BOUNTY_END_MS) && nowMs > BOUNTY_END_MS;
+// a season's end, the last season's from FAUCET_BOUNTY_LAST_SEASON (kanban #3895)
+const seasonEnd = (season) => (LAST_SEASON && Number(season) === LAST_SEASON.season ? LAST_SEASON.endMs : seasonEndMs(season, S2_START_MS));
 const S2_STARTED = () => !Number.isFinite(S2_START_MS) || Date.now() >= S2_START_MS;
 const S2_START_DAY = Number.isFinite(S2_START_MS) ? new Date(S2_START_MS).toISOString().slice(0, 10) : null;
 const S2_LEVEL_BY_SATS = { 500: 'useful', 1000: 'low', 2000: 'medium', 5000: 'high', 10000: 'critical' };
@@ -1186,7 +1190,7 @@ createServer((req, res) => {
   if (S2 && path === '/feedback/season' && req.method === 'GET') { const p = S2.pot(S2.seasonNow(Date.now()));
     // usedUp (kanban #2787): from Season 3 on, a pot that cannot take even the smallest payout (a useful note at 25 %) means no bounty this season
     return send(200, { season: p.season, potSats: p.potSats, usedSats: p.usedSats, paidSats: p.paidSats, owedSats: p.owedSats, leftSats: p.leftSats, drawPrizeSats: p.drawPrizeSats, nodes: p.nodes, nodesMost: p.nodesMost,
-      usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor((LEVEL_SATS.useful * BOT_PCT) / 100), nextSeasonMs: seasonEndMs(p.season, S2_START_MS),
+      usedUp: p.season >= NO_CARRY_FROM_SEASON && p.leftSats < Math.floor((LEVEL_SATS.useful * BOT_PCT) / 100), nextSeasonMs: seasonEnd(p.season),
       // kanban #2789: this season's reports still waiting for review (a number only), for the stage pot banner from 98 %
       pendingNew: FEEDBACK.countNew(seasonEndMs(p.season - 1, S2_START_MS) ?? 0),
       // kanban #3895: when the bug bounty ends, and whether it has
