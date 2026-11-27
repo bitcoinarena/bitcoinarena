@@ -21,7 +21,7 @@ const SRC = HTML.slice(a + '          cancel: '.length, HTML.indexOf(end, a) + e
 test('audit client r1 #3: one silent seat does not hold a market order\'s Cancel for good', async () => {
   assert.ok(a > 0 && SRC.startsWith('async (entryIdHex) =>'), 'index.html holds the market cancel');
   const RID = 'ab'.repeat(32), EID = 'cd'.repeat(32);
-  const pick = { entryIdHex: EID, roundIdHex: RID, order: {}, nodes: ['https://honest.example', 'https://silent.example'] };
+  const pick = { entryIdHex: EID, roundIdHex: RID, order: {}, nodes: ['https://honest.example', 'https://honest2.example', 'https://silent.example'] };   // kanban #3880: a cancel needs two hosts, so two honest seats
   const remembered = [];
   const ARENACLIENT = { fromHex: (h) => Uint8Array.from(Buffer.from(h, 'hex')), orderCancelId: () => new Uint8Array(32) };
   const { privateKey } = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
