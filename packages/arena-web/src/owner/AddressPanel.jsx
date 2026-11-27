@@ -9,6 +9,7 @@ import { Button } from '../design/components.jsx';
 
 /** Each way in: its name and icon. */
 export const MODE = Object.freeze({ quick: ['Quick tunnel', '⚡'], permanent: ['Your own domain', '🏷️'], workers: ['workers.dev name', '☁️'], tailscale: ['Tailscale Funnel', '🔗'], direct: ['Direct (open port)', '🔌'], tor: ['Tor', '🧅'] });
+const a0 = (u) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
 export const running = (p) => !!(p && (p.state === 'running' || p.state === 'login'));
 /** What /owner/reach is asked for a mode: workers takes the Cloudflare token, permanent the hostname. */
 export function argsOf(mode, { cfToken = '', cfSubdomain = '', hostname = '' } = {}) {
@@ -19,7 +20,27 @@ export class AddressPanel extends React.Component {
   constructor(props) {
     super(props);
     this.state = { loaded: false, answer: null, mode: null, cfToken: '', cfSubdomain: '', hostname: '', busy: false, message: null, ...(props.initial || {}) };
-    this.read = this.read.bind(this); this.go = this.go.bind(this);
+    this.read = this.read.bind(this); this.go = this.go.bind(this); this.adopt = this.adopt.bind(this);
+  }
+  // TAKE PUBLIC_URL AS THE ADDRESS (kanban #3885): arena.conf names another address than the advertisement - the node posts the update
+  async adopt(url) {
+    this.setState({ busy: true, message: null });
+    let x; try { x = await this.props.api.post('/owner/reach', await this.props.api.signed('reach', { adopt: url })); } catch (e) { x = { ok: false, why: e.message }; }
+    if (!x || !x.ok) return this.setState({ busy: false, message: (x && x.why) || 'not started' });
+    await this.read();
+  }
+  mismatch(r) {
+    const m = r.follow && r.follow.mismatch;
+    if (!m) return null;
+    const a = r.follow.adopt && String(a0(r.follow.adopt.url)) === String(a0(m.conf)) ? r.follow.adopt : null;
+    return (
+      <div className="addr-mismatch" data-check="mismatch">
+        <p className="err"><b>Your node's address and its advertisement differ.</b> {m.confDiffers ? <>public_url in arena.conf is <code>{m.conf}</code>, but the network sends players and other nodes to <code>{(m.advertised && m.advertised.length ? m.advertised : [m.installer]).join(', ')}</code>.</> : <>This node runs on <code>{m.conf}</code>, but the network still names <code>{(m.advertised || []).join(', ')}</code>.</>} Changing public_url and restarting is not enough: the network reads the address from the advertisement on chain.</p>
+        {m.adoptable ? <p><Button primary disabled={this.state.busy} onClick={() => this.adopt(m.conf)}>{this.state.busy ? 'Posting…' : `Post the advertisement update for ${m.conf}`}</Button></p>
+          : m.quick ? <p className="sub">A quick tunnel's address changes at every restart and is never put on chain: choose a stable address below.</p>
+          : !m.bonded ? <p className="sub">This node has no bond yet: its bond's advertisement will name the address it runs on.</p> : null}
+        {a && !a.ok ? <p className="err">Not posted: {a.why}</p> : null}
+      </div>);
   }
   componentDidMount() { if (!this.state.loaded && this.props.api) this.read(); }
   componentWillUnmount() { clearTimeout(this.timer); }
@@ -88,6 +109,7 @@ export class AddressPanel extends React.Component {
             {url ? <button type="button" className="mini" onClick={() => this.copy(url)}>{copied ? 'Copied ✓' : 'Copy'}</button> : null}</div>
         </div>
         {r.stable ? null : <p className="warnline">This address changes when the node restarts. The node tells the network its new one by itself, but a stable address is better: choose one below.</p>}
+        {this.mismatch(r)}
         {this.progress(r.progress)}
         {this.follow(r)}
         {running(r.progress) ? null : (
