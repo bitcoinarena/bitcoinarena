@@ -52,6 +52,12 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   const epochs = new Map();          // epoch -> Map(node hex -> { probes, up, claim, modulePk })
   const volumes = new Map();         // epoch -> Map(gateway module key -> msat)
   let cursor = null;
+  // ONE GATEWAY STANDS FOR ONE CLAIM (kanban #2422): a claim's gatewayUrl and the module key its routing_info answers are the node's own
+  // word - nothing ties them to the node that signed it - so a seated guardian could name an honest operator's gateway, be credited with
+  // its availability and routed volume, and take the second seat with it (both seats one gateway). Like a peg-in outpoint (#559/#543), a
+  // gateway (its normalized URL, its module key) is held by the first node this guardian saw name it, for as long as that node still names
+  // it; a later claim naming it is probed as down and credited no volume. Kept with the rest of the state, so a restart keeps the holder
+  const owners = new Map();          // 'url:<normalized>' | 'pk:<module key>' -> node hex
   const seatedBy = new Map();        // epoch -> [node hex] this guardian ranked into the seats
   // a seat's advert names its endpoint as wss://... (the guardian socket's address); its HTTP doors are the same address over https
   // (measured 2026-10-19 21:1xZ: fetch refused every wss:// claim URL - "unknown scheme" - so no claim stood and no gateway was seated)
@@ -93,9 +99,9 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
   let current = null;
   const enter = (fid) => {
     if (fid === current) return;
-    current = fid; epochs.clear(); volumes.clear(); seatedBy.clear(); cursor = null; loaded = false; lastProbe = null;
+    current = fid; epochs.clear(); volumes.clear(); seatedBy.clear(); owners.clear(); cursor = null; loaded = false; lastProbe = null;
   };
-  const stateOut = () => ({ cursor, seatedBy: Object.fromEntries(seatedBy), volumes: Object.fromEntries([...volumes].map(([e, m]) => [e, Object.fromEntries([...m].map(([k, v]) => [k, String(v)]))])) });
+  const stateOut = () => ({ cursor, owners: Object.fromEntries(owners), seatedBy: Object.fromEntries(seatedBy), volumes: Object.fromEntries([...volumes].map(([e, m]) => [e, Object.fromEntries([...m].map(([k, v]) => [k, String(v)]))])) });
   const saveState = async (fid) => { if (keep && keep.state && fid === current) { try { await keep.state.save(fid, stateOut()); } catch { /* the next probe */ } } };
   const rowsOut = (rows) => Object.fromEntries([...rows].map(([k, r]) => [k, { probes: r.probes, up: r.up, claim: r.claim, modulePk: r.modulePk || null, fees: r.fees || null }]));
   async function loadKept(fid) {
@@ -114,10 +120,19 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       const st = keep.state ? (await keep.state.load(fid)) || {} : {};
       if (current !== fid) return;
       if (Number.isInteger(st.cursor)) cursor = st.cursor;
+      for (const [k, n] of Object.entries(st.owners || {})) if (/^[0-9a-f]{64}$/.test(String(n))) owners.set(k, String(n));
       for (const [e, list] of Object.entries(st.seatedBy || {})) if (Array.isArray(list)) seatedBy.set(Number(e), list.map(String));
       for (const [e, m] of Object.entries(st.volumes || {})) volumes.set(Number(e), new Map(Object.entries(m || {}).map(([k, v]) => [k, BigInt(v)])));
     } catch { /* none kept */ }
   }
+  const gatewayKeyOf = (u) => { try { const x = new URL(String(u)); return `url:${x.protocol}//${x.host.toLowerCase()}${x.pathname.replace(/\/+$/, '').toLowerCase()}`; } catch { return `url:${String(u).toLowerCase()}`; } };
+  // whether `key` is held by another node that still names it (its newest row, this epoch's or the one before)
+  const heldByOther = (key, node, epoch) => {
+    const o = owners.get(key);
+    if (!o || o === node) return false;
+    const r = (epochs.get(epoch) || new Map()).get(o) || (epochs.get(epoch - 1) || new Map()).get(o);
+    return !!(r && r.claim && (gatewayKeyOf(r.claim.gatewayUrl) === key || (r.modulePk && `pk:${r.modulePk}` === key)));
+  };
   async function probeOnce() {
     const fid = await federationId();
     if (fid) await loadKept(fid);
@@ -128,6 +143,8 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
     if (!epochs.has(epoch)) { epochs.set(epoch, new Map()); for (const e of [...epochs.keys()]) if (e < epoch - 1) epochs.delete(e); }
     for (const e of [...volumes.keys()]) if (e < epoch - 1) volumes.delete(e);
     for (const e of [...seatedBy.keys()]) if (e < epoch - 3) seatedBy.delete(e);
+    // a holder no longer standing in the kept epochs holds nothing (kanban #2422: the map stays the size of the standing claims)
+    for (const [k, n] of [...owners]) if (!heldByOther(k, null, epoch)) owners.delete(k);
     const rows = epochs.get(epoch);
     const all = (await entries()) || [];
     const seatedList = (await seated(fid)) || [];
@@ -147,10 +164,16 @@ export function createGatewayWatch({ federationId, seated, entries, tip, beaconA
       said.claims++;
       const row = rows.get(node) || { probes: 0, up: 0, claim };
       row.probes++; row.claim = claim;
+      // ANOTHER NODE'S GATEWAY (kanban #2422): counted as down, no module key - no availability, no volume
+      const urlKey = gatewayKeyOf(claim.gatewayUrl);
+      if (heldByOther(urlKey, node, epoch)) { delete row.modulePk; rows.set(node, row); continue; }
+      owners.set(urlKey, node);
       try {
         const r = await fetcher(`${claim.gatewayUrl}routing_info`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(fid), signal: AbortSignal.timeout(timeoutMs) });
         const body = r.status === 200 ? (await r.text()).trim() : 'null';
-        if (body && body !== 'null') { row.up++; try { const ri = JSON.parse(body), k = ri.module_public_key; if (/^0[23][0-9a-f]{64}$/.test(k || '')) row.modulePk = k;
+        if (body && body !== 'null') { row.up++; try { const ri = JSON.parse(body), k = ri.module_public_key; if (/^0[23][0-9a-f]{64}$/.test(k || '')) {
+          // another node's module key (kanban #2422): not up, no key
+          if (heldByOther(`pk:${k}`, node, epoch)) { row.up--; delete row.modulePk; } else { row.modulePk = k; owners.set(`pk:${k}`, node); } }
           // ITS PUBLISHED FEES, the newest probe's (kanban #1324, §23A.9): ranked against the federation's gateway fee cap
           const f = feesOfRoutingInfo(ri); if (f) row.fees = f; } catch { /* no key */ } }
       } catch { /* down this probe */ }

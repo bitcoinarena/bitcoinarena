@@ -10921,6 +10921,51 @@
  },
  {
   "method": "GET",
+  "path": "/reach-probe",
+  "params": "?node=<64 hex>",
+  "auth": "none",
+  "returns": "200 JSON {ok, node, census, announced, results:[{url, from, reached, ms, kind?, status?}]}; 400; 404; 429",
+  "purpose": "Can the network reach this node? The owner page's \"Check my node\" asks three seats. The seat dials only the addresses it holds for that node key (its census advert endpoints and the node's newest address announcement, each held to the peer address rules), asks GET /identity there and says per address whether that key answered, how long it took, and if not, why: dns, tls, timeout, refused, blocked, http (with the status), other-node, connect. It never says what the address sent. A node's answer is kept 30 s; at most 6 fresh checks a minute per address, 30 in all (kanban #3798).",
+  "audience": "player/page",
+  "line": 0,
+  "summary": "Visit a node at the addresses this seat holds for it",
+  "query": [
+   {
+    "name": "node",
+    "required": true,
+    "description": "the node key, 64 hex"
+   }
+  ],
+  "body": null,
+  "responses": [
+   {
+    "status": "200",
+    "contentType": "application/json",
+    "description": "{ok: true, node, census: [endpoint], announced: endpoint | null, results: [{url, from: ['census'|'announced'], reached, ms, kind?, status?}], keptMs?}."
+   },
+   {
+    "status": "400",
+    "contentType": "application/json",
+    "description": "No node key."
+   },
+   {
+    "status": "404",
+    "contentType": "application/json",
+    "description": "This seat holds no address for that node."
+   },
+   {
+    "status": "429",
+    "contentType": "application/json",
+    "description": "More than 6 fresh checks a minute from this address, or 30 in all."
+   }
+  ],
+  "headers": [],
+  "changesState": false,
+  "needsAuth": "none",
+  "pathParams": []
+ },
+ {
+  "method": "GET",
   "path": "/owner/bond",
   "params": "none",
   "auth": "none",

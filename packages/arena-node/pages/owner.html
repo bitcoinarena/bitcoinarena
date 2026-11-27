@@ -44,6 +44,8 @@ nav.side a:hover{background:var(--card)}nav.side a.on{background:var(--card);bor
 main section h2{margin-top:4px}.lead{color:var(--dim);margin:0 0 12px}h3.sh{font-size:15px;margin:18px 0 6px}
 details.more>summary,details>summary{cursor:pointer;color:var(--st);margin:8px 0}
 .warnline{border-left:3px solid var(--gv);padding-left:10px}.answer{font-size:17px;margin:0 0 8px}.mono{font-family:ui-monospace,monospace}
+/* kanban #3798: Check my node, one line per check */
+.rc-lines{list-style:none;padding:0;margin:14px 0 6px;display:flex;flex-direction:column;gap:8px}.rc{display:flex;gap:12px;align-items:flex-start;background:var(--card);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:10px;padding:10px 14px}.rc-ok{border-left-color:var(--ok)}.rc-bad{border-left-color:var(--bad)}.rc-warn{border-left-color:var(--gv)}.rc-mark{font-weight:700;min-width:1.2em;text-align:center}.rc-ok .rc-mark{color:var(--ok)}.rc-bad .rc-mark{color:var(--bad)}.rc-warn .rc-mark{color:var(--gv)}.rc-unknown .rc-mark{color:var(--dim)}.rc-says{overflow-wrap:anywhere}.rc-fix{color:var(--dim);margin-top:3px}
 .bar{height:12px;border-radius:6px;background:var(--line);overflow:hidden;margin:10px 0 2px}.bar>div{height:100%;background:var(--gv)}
 .steps{margin:12px 0;padding-left:20px}.steps li{margin:8px 0}.qr{background:#fff;padding:8px;border-radius:10px;width:200px;margin:8px 0}.qr svg{display:block;width:100%;height:auto}
 h3.offer{font-size:20px;color:var(--gv)}
@@ -556,6 +558,7 @@ async function area() {
   bondAnswer();
   servicesPanel();
   addressPanel();
+  reachCheckPanel();
   bondPanel();
   custodyPanel();
   liquidityPanel();
@@ -847,6 +850,15 @@ function servicesPanel() {
 }
 // THE NODE'S ADDRESS (kanban #563 / #562 2C): how the world reaches it, and a switch to another way
 function addressPanel() { mount('address', 'mountAddress', { api: { post, signed } }); }
+// CHECK MY NODE (kanban #3798): three seats visit this node at the addresses they hold for its key (GET /reach-probe); run on its own every few
+// minutes too, and a red line says so on the Overview
+async function reachCheckPanel() {
+  let seats = ['https://tn4.bitcoin-arena.io/guardian-1', 'https://tn4.bitcoin-arena.io/guardian-2', 'https://tn4.bitcoin-arena.io/guardian-3', 'https://tn4.bitcoin-arena.io/fed2-1'];
+  if (ON_SITE) { try { const d = await (await fetch('/daily.json', { cache: 'no-store' })).json(); const t = (d && d.testnet) || d || {}; if (Array.isArray(t.node) && t.node.length >= 2) seats = t.node.filter((u) => /^https:\/\//.test(u)); } catch {} }
+  seats = seats.map((u) => [Math.random(), u]).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+  mount('reach-check', 'mountReachCheck', { api: { get: getJson, post, signed }, node: state.node, seats, pageBase: BASE ? new URL(BASE, location.href).href.replace(/\/+$/, '') : location.origin,
+    onResult: (level) => need('reach', level === 'bad' ? 'bad' : level === 'warn' ? 'warn' : null, level === 'bad' ? 'Your node can\'t be reached from the network. Check my node.' : 'Your node has a warning. Check my node.', 'check') });
+}
 // THE RELEASE THIS NODE RUNS, and a new one on the Overview while it is out
 function releasePanel() {
   mount('release', 'mountRelease', { api: { get: getJson }, onNewer: (v) => need('release', v ? 'warn' : null, `A new release is out: ${v || ''}.`, 'release') });

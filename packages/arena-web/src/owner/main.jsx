@@ -28,6 +28,7 @@ import { ContributionsPanel } from './ContributionsPanel.jsx';
 import { GameDevsPanel } from './GameDevsPanel.jsx';
 import { ReferrerPanel } from './ReferrerPanel.jsx';
 import { RoundsPanel } from './RoundsPanel.jsx';
+import { ReachCheckPanel } from './ReachCheckPanel.jsx';
 import { flushSync } from 'react-dom';
 
 export function mountRoles(element, { api, node, initial } = {}) {
@@ -47,6 +48,8 @@ export function mountServices(element, { api, initial, onAttention, onServices }
   root.render(<ServicesPanel api={api} initial={initial} onAttention={onAttention} onServices={onServices} />);
   return root;
 }
+// CHECK MY NODE (kanban #3798)
+export function mountReachCheck(element, props = {}) { const root = createRoot(element); root.render(<ReachCheckPanel {...props} />); return root; }
 export function mountAddress(element, { api, initial } = {}) {
   const root = createRoot(element);
   root.render(<AddressPanel api={api} initial={initial} />);
@@ -103,4 +106,4 @@ export function drawInto(element, kind, props) {
 }
 // mountRounds too (kanban #728, found by owner-react-door.test: #715 left it out, so owner.html's roundsPanel() threw and every panel
 // mounted after it - the Bond section among them - stayed empty)
-if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountRounds, mountContributions, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountUptime, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };
+if (typeof window !== 'undefined') window.ArenaOwner = { areaInto, drawInto, mountKeySwitch, mountRounds, mountContributions, mountBondAnswer, mountPlea, mountLeave, mountStart, mountMessage, mountRoles, mountServices, mountAddress, mountReachCheck, mountSetup, mountBond, mountCustody, mountLiquidity, mountStanding, mountUptime, mountRelease, mountApps, mountNetworkApps, mountNetwork, needsInto };

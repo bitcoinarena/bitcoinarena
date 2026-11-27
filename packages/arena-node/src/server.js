@@ -43,6 +43,7 @@ import { guardianThreshold } from '../../arena-protocol/src/threshold.js';
 import { stateOf } from './settlement-state.js';
 import { nostrResults, publishRelays } from './nostr-results.js';
 import { createReachCheck, askerAddress } from './reach-check.js';
+import { createReachProbe } from './reach-probe.js';   // kanban #3798
 import { ownBondOf, ownBondsOf, outputOfEntry, ownOutputsOnChain, lockAt, withdrawSpend, withdrawToSign, withdrawWithOwnerSignature } from './bond-withdraw.js';
 import { BOND_TEMPLATE_V2, BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { latestReleaseReader } from './release-latest.js';
@@ -95,7 +96,7 @@ import { displayNameFromKey } from '../../arena-protocol/src/display-name.js';
 import { donationsReadMessage, DONATIONS_READ_WINDOW_MS, SECP256K1_SPKI_PREFIX } from '../../arena-protocol/src/donations-read.js';
 import { WebSocketServer, WebSocket as WsClient } from 'ws';
 import { createP2pTunnels, carryP2p, carryApi, P2P_TUNNEL_PATHS, GUARDIAN_NEXT_PATH, GUARDIAN_API_RELAY_PATH } from './p2p-tunnel.js';
-import { createAddressBook, announceOwn, pullAnnouncements } from './address-book.js';
+import { createAddressBook, announceOwn, pullAnnouncements, peerEndpointRefusal } from './address-book.js';
 import { reserveKeyCache, payeeReserveKeysAt } from './reserve-key-cache.js';
 import { ownServices } from './own-services.js';
 import { serviceSettings } from './service-settings.js';
@@ -6256,6 +6257,15 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       outcome: decided, entries } };
   };
   const reachCheck = createReachCheck({ allowPrivate: process.env.ARENA_REACH_ALLOW_PRIVATE === '1' });
+  // CAN THE NETWORK REACH THAT NODE (kanban #3798, reach-probe.js): the owner page's "Check my node" - this seat dials only the addresses it
+  // holds for the key asked (its newest census's advert endpoints and the node's newest announcement), each held to the peer rule
+  const reachProbe = createReachProbe({ refusal: (u) => peerEndpointRefusal(u, { localOk: seatsLocalOk() }),
+    targetsOf: (node) => {
+      const cn = fedRecords && fedRecords.censusNewestAt ? fedRecords.censusNewestAt() : null;
+      const census = cn ? cn.entries.filter((e) => e && e.pubkey && toHex(e.pubkey) === node && e.advert).map((e) => String(e.advert.endpoint || '')).filter(Boolean) : [];
+      const ann = addressBook.list({ node }).filter((x) => x && x.node === node).sort((x, y) => Number(y.atMs) - Number(x.atMs))[0];
+      return { census: [...new Set(census)], announced: ann ? ann.endpoint : null };
+    } });
   // THIS NODE'S BOND in the newest census this seat holds (bond-withdraw.js): { bond, network } or null
   // THE NEWEST RELEASE (release-latest.js): checked with the installer's release key when this node runs from a release (a seat
   // tree without the installer has no verifier and offers none)
@@ -12896,6 +12906,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'POST' && url.pathname === '/reach-check') {
         let j; try { j = JSON.parse(Buffer.from(await read(req)).toString('utf8')); } catch (e) { refusedBody(e); return text(res, 400, 'a reach check is JSON { port, nonce }'); }
         const r = await reachCheck(req, j);
+        res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
+        return res.end(JSON.stringify(r.body));
+      }
+      if (req.method === 'GET' && url.pathname === '/reach-probe') {
+        const r = await reachProbe(req, url.searchParams.get('node'));
         res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
         return res.end(JSON.stringify(r.body));
       }
