@@ -404,6 +404,7 @@ const refill = async () => {
         receive: async (gw) => JSON.parse(await w.lc.receive(String(BigInt(REFILL_SATS) * 1000n), gw)),
         ask: async (invoice) => (await fetch(env.REFILL_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ invoice, token }), signal: AbortSignal.timeout(90000) })).json(),
         awaitReceive: (op) => w.lc.awaitReceive(op),
+        listed: async () => JSON.parse(await w.lc.gateways()),   // kanban #3893b: only gateways joined to this federation; none when its guardians are out of reach
         log: (x) => log({ ...x, federation: fed.slice(0, 8) }) });
       if (r.ok) {
         topState.lastOk = { at: new Date().toISOString(), gateway: r.gateway }; topState.gateway[fed.slice(0, 8)] = r.gateway; backoff.delete(fed);
