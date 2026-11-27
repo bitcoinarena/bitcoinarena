@@ -427,6 +427,7 @@ const bountyPayerMayBe = (rowPayer) => !!BOUNTY_PAYER && rowPayer === `${BOUNTY_
 // THE ADMIN (kanban #1342 section 4): the owner's code, held to its hash as the explorer holds it (#1092); the rules, our keys, who played
 const ADMIN_SHA = String(env.FAUCET_ADMIN_SHA256 || '').trim().toLowerCase();
 const ADMIN_FAILS = new Map(), ADMIN_TRY_WINDOW_MS = 15 * 60 * 1000, ADMIN_TRIES_PER_CALLER = 5, ADMIN_TRIES_ALL = 30;   // kanban #3243
+const ADMIN_FAILS_MOST = 5000, ADMIN_GOOD = new Set();   // kanban #3823: the counts' bound; the /64s that showed the right code
 const isAdmin = (req) => { const code = String(req.headers['x-arena-admin'] || '').trim(); if (!/^[0-9a-f]{64}$/.test(ADMIN_SHA) || !code) return false;
   return timingSafeEqual(Buffer.from(createHash('sha256').update(code).digest('hex')), Buffer.from(ADMIN_SHA)); };
 const RULES = (() => { try { return JSON.parse(env.FAUCET_REWARD_RULES || '{}'); } catch { return {}; } })();
@@ -914,13 +915,21 @@ createServer((req, res) => {
     const who = `admin:${(typeof ipKey === 'function' ? ipKey(ipOf(req)) : ipOf(req)) || 'unnamed'}`, now0 = Date.now();
     for (const [k, v] of ADMIN_FAILS) if (now0 - v.since > ADMIN_TRY_WINDOW_MS) ADMIN_FAILS.delete(k);
     const mine = ADMIN_FAILS.get(who), all = ADMIN_FAILS.get('admin:*');
+    // kanban #3823 (audit r40): the networks the caller is in (IPv6 /48 and /32, IPv4 /24, ipNetsOf) count wrong codes too - every fresh /64
+    // of one /48 was a caller with no wrong code, so past the all-callers limit a stranger kept one checked guess per /64 without end
+    const nets = (typeof ipNetsOf === 'function' ? ipNetsOf(who.slice(6)) : []).map((n) => `admin:net:${n}`);
+    const netGuessed = nets.some((k) => (ADMIN_FAILS.get(k) || { n: 0 }).n > 0) && !ADMIN_GOOD.has(who);
     // kanban #3263 (audit r22): the all-callers count locks only callers that guessed wrong themselves - a caller with no wrong code (the
-    // owner) is never locked out by strangers; an IPv6 /64 is one caller (ipKey)
-    if ((mine && mine.n >= ADMIN_TRIES_PER_CALLER) || (all && all.n >= ADMIN_TRIES_ALL && mine && mine.n > 0)) return send(429, { ok: false, why: 'too many wrong admin codes - try again later' });
+    // owner) is never locked out by strangers; an IPv6 /64 is one caller (ipKey). #3823: a caller whose network guessed wrong is locked too,
+    // unless that /64 showed the right code before (ADMIN_GOOD); a caller from another network with no wrong code still gets in
+    if ((mine && mine.n >= ADMIN_TRIES_PER_CALLER) || (all && all.n >= ADMIN_TRIES_ALL && ((mine && mine.n > 0) || netGuessed))) return send(429, { ok: false, why: 'too many wrong admin codes - try again later' });
     if (!isAdmin(req)) {
-      for (const k of [who, 'admin:*']) { const v = ADMIN_FAILS.get(k) || { n: 0, since: now0 }; v.n++; ADMIN_FAILS.set(k, v); }
+      for (const k of [who, 'admin:*', ...nets]) { const v = ADMIN_FAILS.get(k) || { n: 0, since: now0 }; v.n++; ADMIN_FAILS.set(k, v); }
+      // kanban #3823: bounded - the oldest caller/network counts go first, never the all-callers count
+      for (const k of ADMIN_FAILS.keys()) { if (ADMIN_FAILS.size <= ADMIN_FAILS_MOST) break; if (k !== 'admin:*') ADMIN_FAILS.delete(k); }
       return send(403, { ok: false, why: 'not the admin code' });
     }
+    ADMIN_GOOD.delete(who); ADMIN_GOOD.add(who); if (ADMIN_GOOD.size > 1000) ADMIN_GOOD.delete(ADMIN_GOOD.values().next().value);   // kanban #3823
     const q = new URL(req.url, 'http://x').searchParams;
     const withReward = (r, ours) => { const w = FEEDBACK.rewards({ pubkey: r.pubkey }).find((x) => x.report === r.id);
       return { ...r, lnAddress: FEEDBACK.addressOf(r.id), ours: ours.has(r.pubkey), played: PLAYED.played(r.pubkey), rounds: PLAYED.history ? PLAYED.history(r.pubkey) : null, nodeBounty: FEEDBACK.nodeBountyFor(r), season2: S2 ? { approval: S2.approval(r.id), links: S2.links(r.pubkey), flags: S2.flagsOf(r.pubkey) } : null, realUser: S2 && S2.realUserOf ? S2.realUserOf(r.pubkey) : null, playedMark: S2 && S2.playedMarkOf ? S2.playedMarkOf(r.id) : null, reward: w ? { ...w, lnurl: w.state === 'paid' ? null : FEEDBACK.lnurlOf(w.k1, { base: PUBLIC_BASE }), page: `${PUBLIC_BASE}/lnurlw/${w.k1}` } : null }; };
