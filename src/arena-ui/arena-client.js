@@ -619,7 +619,7 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33, 35]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33, 35, 36]);
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -708,6 +708,18 @@ const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERS
 const POOL_FIRST_VERSION = 35;
 /** Whether a market round of protocol version `v` is a pool once it holds a backed plain pick, orders or not (kanban #3854). */
 const poolsFirst = (v) => Number.isInteger(v) && v >= POOL_FIRST_VERSION;
+/**
+ * 2026.0.36 - THE CENSUS MINIMUM COUNTS AT THE ROLE FLOOR (kanban #3855, audit #1489 r20-census-2, port of #3571 / PR #33; spec ruling
+ * 2026-11-27, comment 11812). Below this version meetsCensusMinimum counts node keys at the round's bond_min while selectCommittee admits
+ * only keys at the role's floor (contract.rules, §6): a creator naming bond_min at the floor in force and a role floor only their own bond
+ * reaches met census_min_nodes with honest nodes the draw never takes, and the committee was the creator's key alone. From 36 the minimum
+ * counts only keys at census.js drawFloorSats (the role's floor; the higher of the two for one draw for both roles) and eligible as the draw
+ * is (drawEligible), as 2.0 does. Gated by the round's version, not the seat's build: an old and a new seat judge a round below 36 alike
+ * (bond_min, byte for byte as before), and a seat on an older build does not speak 36. Round creators write 36 only once every seat lists it.
+ */
+const CENSUS_ROLE_FLOOR_VERSION = 36;
+/** Whether a round counts census_min_nodes at the role floor (kanban #3855): its contract names protocol version 36 or later. */
+const countsAtRoleFloor = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= CENSUS_ROLE_FLOOR_VERSION;
 /**
  * 2026.0.2 - A ROUND CONTRACT THAT DOES NOT NAME ITS DRAW (RULED 2026-10-13, path 1: "The contract stops
  * naming the draw. The node list leaves the hashed contract bytes. Seats and the page work out who serves from the census
@@ -7779,6 +7791,69 @@ function readProtocolVersionName(name) {
   return { ok: true, version: v, known: !!r };
 }
 
+// ---- arena-protocol/src/rules.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
+// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
+// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role2026.0.3). Until now these were bound only
+// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
+// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
+// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
+
+
+
+const te = new TextEncoder();
+const RULE_TEXTS = Object.freeze({
+  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
+    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
+    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
+  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
+    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
+    + 'entries ENTRY_VOID.',
+  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
+    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
+  slashing: 'ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
+    + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
+    + 'census nodes, 25 % to the donation set.',
+});
+/** A rule's hash: its text under the rule tag. */
+const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
+const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
+/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
+const DISCONNECT_LAST_MARK = 1;
+const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
+
+/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
+function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
+  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
+    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
+}
+
+/**
+ * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
+ * one naming them must name this build's four hashes and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
+ * role no lower than the round's bond_min.
+ */
+function rulesStand(contract) {
+  const r = contract && contract.rules;
+  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
+  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
+  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
+    if (!eq(r[k], RULE_HASHES[k])) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
+  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
+  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
+  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
+    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
+  return { ok: true, why: 'that round names the rules this build settles under' };
+}
+
+/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
+function roleFloorSats(contract, role) {
+  const r = contract && contract.rules;
+  if (!r) return contract.bondMinSats;
+  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
+}
+
 // ---- arena-protocol/src/operator-binding.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
@@ -9445,6 +9520,7 @@ function donationKeysFor(network) {
 
 
 
+
 // ONE PARSE PER TRANSACTION (kanban #586/#587, measured 2026-10-23 17:11Z on a test host seat after a restart: 10 min at 100 % CPU,
 // decodeAdvert 23 %, sha256 13 %, parseTransaction 7 %, readSlice 6 % - every census height parsed every transaction of its 2,017
 // blocks again, and decoded every advertisement again, though the blocks themselves are kept, one copy shared by every view): a
@@ -9585,14 +9661,35 @@ function eligibleFor(e, contract, role) {
   return hostsGame(e, contract && contract.gameId);
 }
 
+/**
+ * THE FLOOR THE DRAW ADMITS A KEY AT, FOR THAT ROLE (§5A.3 "bond_amount >= bond_min(role)", §6 bond_min per role): the role's own
+ * floor where the contract names its rules, its bond_min otherwise; one draw for both roles (a v2 round) takes the higher of the two.
+ * selectCommittee admits and weighs at this floor; from protocol 36 meetsCensusMinimum counts at it too (kanban #3571, #3855).
+ */
+function drawFloorSats(contract, role) {
+  return namesNoDraw(contract)
+    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
+    : roleFloorSats(contract, role);
+}
+
+/** MAY THE DRAW TAKE THIS ENTRY FOR THAT ROLE: eligibleFor the role, and for one draw for both roles (a v2 round) eligible for both. */
+const drawEligible = (e, contract, role) => (namesNoDraw(contract)
+  ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement')
+  : eligibleFor(e, contract, role));
+
 function meetsCensusMinimum(entries, contract, role) {
   const { network, minimum } = censusMinimumFor(contract);
   // DISTINCT NODE KEYS AT OR ABOVE THE ROUND'S FLOOR, NOT ROWS (kanban #2850, #1489 r26-census-1): protocol 19 keeps every bond output as its own
   // row, so one key with several outputs (or a row below bond_min) met census_min_nodes alone and selectCommittee then drew a committee of one key.
   // The rows are merged by key first - summed under protocol 19, each row on its own before - and only keys at the round's bond_min count.
-  const floor = contract && typeof contract.bondMinSats === 'bigint' ? contract.bondMinSats : null;
+  // AT THE ROLE'S FLOOR FROM PROTOCOL 36 (kanban #3855, port of #3571 / PR #33; spec ruling 2026-11-27): the draw admits only keys at the
+  // role's floor (selectCommittee), so a creator naming bond_min at the floor in force and a role floor only their own bonds reach met the
+  // minimum with nodes the draw never takes - a committee of the creator's keys alone. A round at 36 or later counts the keys the draw can
+  // take (drawFloorSats, drawEligible); a round below 36 keeps bond_min and eligibleFor byte for byte, so old and new seats judge it alike.
+  const atRole = countsAtRoleFloor(contract);
+  const floor = contract && typeof contract.bondMinSats === 'bigint' ? (atRole ? drawFloorSats(contract, role) : contract.bondMinSats) : null;
   const byKey = new Map();
-  for (const e of (entries || []).filter((x) => eligibleFor(x, contract, role))) {
+  for (const e of (entries || []).filter((x) => (atRole ? x && drawEligible(x, contract, role) : eligibleFor(x, contract, role)))) {
     if (!e || !(e.pubkey || (e.advert && e.advert.nodePubkey))) continue;
     const k = nodeKeyOf(e).split('|')[0], b = BigInt(e.bondSats || 0);
     byKey.set(k, sumsBonds(contract) ? (byKey.get(k) || 0n) + b : ((byKey.get(k) || 0n) > b ? byKey.get(k) : b));
@@ -15868,74 +15965,10 @@ function seatingBefore(drawnKeys, a, b) {
   return a.every((k, i) => r.has(k) && r.has(b[i]) && r.get(b[i]) <= r.get(k));
 }
 
-// ---- arena-protocol/src/rules.js
-// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
-// Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// THE RULES A ROUND IS SETTLED UNDER, NAMED IN ITS CONTRACT (§6 equivocation_rule_hash, no_quorum_rule_hash, finality_rule,
-// slashing_rules_hash, disconnect_rule, claim_window_days, bond_min per role2026.0.3). Until now these were bound only
-// implicitly - through the code a seat runs and the config_hash. A v3 contract may name them: each rule a fixed text whose tagged hash
-// the contract carries, so a seat running other rules refuses the round by name (as a config it does not run), and a player's client
-// shows which rules it stakes under. The texts are the rules as built; changing one is a new hash, i.e. a new rule.
-
-
-
-const te = new TextEncoder();
-const RULE_TEXTS = Object.freeze({
-  equivocation: 'ARENA rule equivocation v1 (§10, kanban #25, RULED 2026-10-05 (b)): two checkpoints of one entry, each signed by its session key, '
-    + 'with different ids and the same tick or the same parent, forfeit the entry (FORFEIT, its stake to the loser pool); a pair from one later '
-    + 'parent forfeits only when both marks were receipted by a seat. The pair is the proof; no replay.',
-  noQuorum: 'ARENA rule no-quorum v1 (§5A.7, §5A.13, §16): a round with fewer than its threshold of drawn nodes present never opens for entries; '
-    + 'signer nodes unavailable at a run\'s start make it ENTRY_VOID (refund); conflicts that leave a committee under its threshold make its '
-    + 'entries ENTRY_VOID.',
-  finality: 'ARENA rule finality v1 (§13A, WINDOW-10-SPEC 2026-10-01): a result is PROVISIONAL until its objection window of exactly 600000 ms '
-    + 'closes without a standing objection, then FINAL; a standing objection is decided by deterministic re-run, SUSPENDED meanwhile.',
-  slashing: 'ARENA rule slashing v1 (§5A.3, §5A.3B): the offences of §5A.3 (double result, signing a result the re-run contradicts, signing for a '
-    + 'round its operator played, a false operator declaration), each with its one-artifact proof, slash the bond; 75 % evenly to the active '
-    + 'census nodes, 25 % to the donation set.',
-});
-/** A rule's hash: its text under the rule tag. */
-const ruleHash = (text) => taggedHash(TAG.contractRule, te.encode(text));
-const RULE_HASHES = Object.freeze(Object.fromEntries(Object.entries(RULE_TEXTS).map(([k, t]) => [k, ruleHash(t)])));
-/** disconnect_rule: what a player who stops sending inputs gets - 1, the run ends at its last receipted checkpoint (§15). */
-const DISCONNECT_LAST_MARK = 1;
-const DISCONNECT_RULES = Object.freeze([DISCONNECT_LAST_MARK]);
-
-/** The rules this build settles under, as a contract names them (with the round's own claim window and floors). */
-function buildRules({ claimWindowDays = 1, bondMinGameVerifySats, bondMinSettlementSats } = {}) {
-  return { equivocation: RULE_HASHES.equivocation, noQuorum: RULE_HASHES.noQuorum, finality: RULE_HASHES.finality, slashing: RULE_HASHES.slashing,
-    disconnect: DISCONNECT_LAST_MARK, claimWindowDays, bondMinGameVerifySats, bondMinSettlementSats };
-}
-
-/**
- * DOES THIS BUILD SETTLE UNDER THE RULES A CONTRACT NAMES? { ok, why }. A contract naming none is bound only implicitly, as before;
- * one naming them must name this build's four hashes and a disconnect rule it runs, a claim window of 1 day or more, and a floor per
- * role no lower than the round's bond_min.
- */
-function rulesStand(contract) {
-  const r = contract && contract.rules;
-  if (!r) return { ok: true, why: 'that round names no rules: bound by its config only' };
-  const eq = (a, b) => a instanceof Uint8Array && b instanceof Uint8Array && a.length === b.length && a.every((x, i) => x === b[i]);
-  for (const k of ['equivocation', 'noQuorum', 'finality', 'slashing'])
-    if (!eq(r[k], RULE_HASHES[k])) return { ok: false, why: `that round names a ${k} rule this build does not run: it is not selectable here, not slashed` };
-  if (!DISCONNECT_RULES.includes(r.disconnect)) return { ok: false, why: `that round names disconnect rule ${r.disconnect}, which this build does not run` };
-  if (!Number.isInteger(r.claimWindowDays) || r.claimWindowDays < 1) return { ok: false, why: 'a claim window is 1 day or more' };
-  for (const k of ['bondMinGameVerifySats', 'bondMinSettlementSats'])
-    if (typeof r[k] !== 'bigint' || r[k] < contract.bondMinSats) return { ok: false, why: `that round's ${k} is under its bond_min: a role's floor is the round's or above` };
-  return { ok: true, why: 'that round names the rules this build settles under' };
-}
-
-/** The bond floor of a role: the contract's own for that role when it names its rules, its bond_min otherwise. */
-function roleFloorSats(contract, role) {
-  const r = contract && contract.rules;
-  if (!r) return contract.bondMinSats;
-  return role === 'game' || role === 'game-verify' ? r.bondMinGameVerifySats : role === 'settlement' ? r.bondMinSettlementSats : contract.bondMinSats;
-}
-
 // ---- arena-protocol/src/sortition.js
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // Committee selection: bond-weighted, linear, and decided in integers.
-
 
 
 
@@ -16060,9 +16093,8 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
     throw new Error('that round names no positive bond floor to weigh against');
   // A ROLE'S OWN FLOOR, WHERE THE CONTRACT NAMES ITS RULES (§6 bond_min per rolerules.js): the role's floor weighs and
   // admits; one draw for both roles (a v2 round) takes the higher. A contract naming no rules: its bond_min, as before.
-  const bondMin = namesNoDraw(contract)
-    ? [roleFloorSats(contract, 'game'), roleFloorSats(contract, 'settlement')].reduce((a, b) => (a > b ? a : b))
-    : roleFloorSats(contract, role);
+  // census.js drawFloorSats: from protocol 36 the floor meetsCensusMinimum counts at above is this one (kanban #3571, #3855).
+  const bondMin = drawFloorSats(contract, role);
 
   // AND THE CENSUS HAS TO BE BIG ENOUGH TO HOLD A ROUND AT ALL.
   //
@@ -16094,8 +16126,7 @@ function selectCommittee({ entries, contract, role, exclude, committeeSeed, coun
   for (const e of entries) {
     // the role, and for game/verify the round's game hosted (census.js eligibleFor)
     // ONE DRAW FOR BOTH ROLES (2026.0.2): a v2 round's node serves both, so it is eligible for both
-    if (!(namesNoDraw(contract) ? eligibleFor(e, contract, 'game') && eligibleFor(e, contract, 'settlement') : eligibleFor(e, contract, role))
-      || out.has(keyOf(e))) continue;
+    if (!drawEligible(e, contract, role) || out.has(keyOf(e))) continue;
     const had = byKey.get(keyOf(e));
     if (!had) { byKey.set(keyOf(e), { entry: e, bondSats: e.bondSats }); continue; }
     had.bondSats += e.bondSats;
