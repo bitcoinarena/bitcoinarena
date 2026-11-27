@@ -40,7 +40,7 @@ import { stateOf, isLate, PROPOSAL_STATE as S } from './proposals.js';
 
 /** THE FEWEST CONFIRMATIONS AN OUTCOME IS WRITTEN AT (kanban #1152): a one- or two-block reorg never moves a decided proposal - a repeal's included. */
 export const MIN_DECIDE_DEPTH = MIN_DEPTH;     // the protocol's (ballot.js), for a proposal published at or after BALLOT_DEPTH_HEIGHT (kanban #1196)
-/** HOW FAR ABOVE ITS OLD PUBLICATION HEIGHT AN ORPHANED PROPOSAL'S DEPOSIT IS LOOKED FOR (kanban #1941): about six hours of blocks. */
+/** HOW FAR ABOVE (kanban #1941) AND BELOW (kanban #3809) ITS OLD PUBLICATION HEIGHT AN ORPHANED PROPOSAL'S DEPOSIT IS LOOKED FOR: about six hours of blocks. */
 export const REFIND_SPAN = 36;
 
 /**
@@ -225,8 +225,12 @@ export function createBallotTally({ proposals, tipHeight, votesAt, censusAt, ver
       if (stateOf(p) !== S.ORPHANED || typeof p.proposal !== 'string' || !Number.isInteger(p.publishedAt)) continue;
       let seen = refindSeen.get(p.id);
       if (!seen) { seen = new Map(); refindSeen.set(p.id, seen); }
+      // AND BELOW IT TOO (kanban #3809): a reorg deeper than one block forks below the publication block, and the winning
+      // branch's miner may put the deposit (in its mempool then) into a block LOWER than the old one. The scan starts
+      // REFIND_SPAN below the old height; the once-per-hash rule keeps it bounded, and add() checks the schedule for the
+      // lower publication height again.
       const top = Math.min(tip === null ? p.publishedAt : tip, p.publishedAt + REFIND_SPAN);
-      for (let h = p.publishedAt; h <= top; h++) {
+      for (let h = Math.max(0, p.publishedAt - REFIND_SPAN); h <= top; h++) {
         const x = await blockHashAt(h);                        // throws on an RPC error: the pass is skipped
         if (!x) break;
         const hash = String(x).toLowerCase();
