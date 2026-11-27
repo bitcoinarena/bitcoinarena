@@ -2837,6 +2837,13 @@ export class Client {
           this.refusals++;
           this.refusedWhy = typeof r.answer === 'string' ? r.answer : 'the node did not say';
           this.refusedAt = this.nextTick;
+          // AN ORDINARY REFUSAL KEEPS THE FRAME TOO (kanban #3822, bypass of #1503): the frame left this client, so whoever
+          // was sent it may hold it. Measured before: a home seat kept batch A and answered 'error the batch breaks a rule of
+          // this seat', each peer refused A once, the resync found nothing, and the next drain signed a second batch B (774 B
+          // vs 474 B) on the same previousHash; the seat then handed the kept A to both honest peers, which took it and
+          // refused the player's real chain - peers 15 of 135 ticks for good. The next drain now sends A again as it is
+          // (a head the resync found moved drops it), and a seat that still refuses it after the resync ends the run.
+          this.unanswered = { b: r.batch, bytes: r.bytes };
           this.#afterRefusal(r);
         }
       }
