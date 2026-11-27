@@ -860,18 +860,26 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
    * another seating more than half of them hold replaces it when the two are ordered (keepCert `supersede`). */
   function confirmRead(w, answers) {
     const key = `${w.ridHex}:${w.role}`, mine = (certs.get(key) || []).join(',');
-    const by = new Map();   // seated list -> { n, cert }
+    // kanban #3877 (wf1489 r20 census-41): every DISTINCT certificate per seated list is kept, not only the first answer's bytes. The list is decoded,
+    // never verified, so one drawn seat answering the majority's seated list with junk signatures (listed first in draw order) had its bytes handed
+    // to keepCert on every pass: refused, and the honest holders' bytes of the same list were never tried - a late seat kept the superseded S for good.
+    const by = new Map();   // seated list -> { n, certs: distinct cert hex, in draw order }
     for (const b of w.others) {
       const a = answers.get(b); const cert = a && a[w.ridHex] && a[w.ridHex].cert && a[w.ridHex].cert[w.role];
       if (!cert) continue;
       let s; try { s = decodeSeated(fromHex(cert)).join(','); } catch { continue; }
-      const e = by.get(s) || by.set(s, { n: 0, cert }).get(s); e.n++;
+      const e = by.get(s) || by.set(s, { n: 0, certs: [] }).get(s); e.n++;
+      if (!e.certs.includes(cert)) e.certs.push(cert);
     }
     const half = w.drawnKeys.length / 2;
     if (((by.get(mine) || { n: 0 }).n + (w.amDrawn ? 1 : 0)) > half) { confirm(key); return; }
     for (const [s, e] of by) {
       if (s === mine || e.n <= half) continue;
-      const k = keepCert(w.t.rid, w.role, fromHex(e.cert), { supersede: true, index: w.index ?? null });
+      let k = null;
+      for (const cert of e.certs) {   // kanban #3877: the next distinct bytes of that list when one is refused (junk signatures), until one is kept
+        k = keepCert(w.t.rid, w.role, fromHex(cert), { supersede: true, index: w.index ?? null });
+        if (k.ok) break;
+      }
       if (k.replaced) confirm(key);
       else if (!k.ok) log(`[seating] ${w.ridHex.slice(0, 16)} ${w.role}: the seating most drawn seats hold refused here: ${k.why}`);
       return;
