@@ -847,7 +847,10 @@ export async function startRelay({ port = 0, host = '127.0.0.1', dbPath = ':memo
                     // signer login the only copy - so the newcomer rule let a stranger's next fresh-key 30078 erase the seed of the player admitted just
                     // before. A kept seed is never taken for another author's room: a full seed pool with nobody holding more than the writer refuses.
                     const over = h && (h[dim] > mine[dim] || (!seed && dim === 'n' && h.n === 1 && mine.n <= 2));
-                    if (h && (over || keepSet.has(e.pubkey))) victim = oldestIn.get(h.pubkey, P, e.id);   // a kept author's write takes from the largest other (#2146)
+                    // kanban #3865 (audit r41-nostr-2): a kept author's write takes from the largest other (#2146) only when that holder has
+                    // two or more seeds - never a player's only one (for a signer login the only copy of its wallet seed). One seat's node key
+                    // writing fresh-d 30078s erased every player's seed, newest first; now it rolls its own oldest out (step 3) or is refused
+                    if (h && (over || (keepSet.has(e.pubkey) && h.n >= 2))) victim = oldestIn.get(h.pubkey, P, e.id);
                   }
                   if (!victim && P !== 1) victim = oldestIn.get(e.pubkey, P, e.id);   // 3. (a state event, or a seed)
                   // 3b. AN AUTHOR WITH A LOG OF ITS OWN ROLLS ITS OLDEST OUT (kanban #2848, #1489 r25-nostr-1): after a one-event-per-fresh-key flood the
