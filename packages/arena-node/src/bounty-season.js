@@ -274,7 +274,13 @@ export function openBountySeason(path = ':memory:', { startMs = null, s2EndMs = 
     if (!PLATFORMS.includes(platform)) return { ok: false, why: 'no such platform' };
     if (!userId) return { ok: false, why: 'no account' };
     const held = db.prepare('SELECT pubkey FROM links WHERE platform = ? AND user_id = ?').get(platform, String(userId));
-    if (held && held.pubkey !== pubkey) return { ok: false, why: 'that account is linked to another report key' };
+    // A REPORT KEY'S OWN NOSTR KEY IS ITS OWNER'S (kanban #3858, audit r30-nostr-1): a Nostr account (nostr, armada) is a key, and the signed-in
+    // report key proves itself on every request. A stranger who typed an honest reporter's public report key first held that account here, and the
+    // owner's own link was refused for good (his Nostr +20 % lost on every report). A claim of the signed-in key itself takes the account from
+    // whichever other key holds it; any other claim is refused as before
+    const ownKey = (platform === 'nostr' || platform === 'armada') && String(userId).toLowerCase() === String(pubkey).toLowerCase();
+    if (held && held.pubkey !== pubkey && ownKey) db.prepare('DELETE FROM links WHERE platform = ? AND user_id = ?').run(platform, String(userId));
+    else if (held && held.pubkey !== pubkey) return { ok: false, why: 'that account is linked to another report key' };
     const had = db.prepare('SELECT user_id FROM links WHERE pubkey = ? AND platform = ?').get(pubkey, platform);
     if (had && had.user_id === String(userId)) {
       db.prepare('UPDATE links SET username = ? WHERE pubkey = ? AND platform = ?').run(username ? String(username).slice(0, 64) : null, pubkey, platform);
