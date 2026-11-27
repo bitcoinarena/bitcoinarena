@@ -308,12 +308,14 @@ export function keepLockSessionFloor({ round, port, roundId, federationId, outpo
  * The key's stake and fee locks now stand on one entry: the entry whose lock (of either kind) stood first owns the key, the other's are refused
  * at the door. `kind` stays for the callers' wording.
  */
-function otherStakedUnderKey(round, entry, entryIdBytes, kind, { yieldNow = false, peerStakedLower = false } = {}) {
+function otherStakedUnderKey(round, entry, entryIdBytes, kind, { yieldNow = false, peerStakedLower = false, except = null } = {}) {
   if (typeof round.entriesOf !== 'function') return false;
   const lockOfs = [round.stakeLock, round.feeLock].filter((f) => typeof f === 'function');
   if (!lockOfs.length) return false;
   const me = Buffer.from(entryIdBytes), key = Buffer.from(entry.playerPubkey);
+  // `except`: the holder claimTakesBack lets go at the write (kanban #3808) - not yet gone while the lock is verified, and not a second holder
   const holders = round.entriesOf(entry.roundId).filter((x) => !Buffer.from(x.entryId).equals(me) && Buffer.from(x.entry.playerPubkey).equals(key)
+    && !(except && Buffer.from(x.entryId).equals(Buffer.from(except)))
     && lockOfs.some((lockOf) => !!lockOf.call(round, x.entryId)));
   if (!holders.length) return false;
   // THE KEY'S ENTRY IS THE SAME AT EVERY SEAT (kanban #2477, state audit 2026-11-12 sm1-entry-4): first come per seat was each seat's own arrival
@@ -443,14 +445,24 @@ function namedFirstByAnother(round, entry, entryIdBytes, kind, outpoint, atPeers
 // stakes another entry"): the player's stake backed an entry whose session key the copier holds. The claim decides who the lock is for, so a lock
 // held by an entry of the same player key that this seat holds NO fitting claim for is let go (round.yieldEntryLocks: its stake and fee locks and
 // donation rows, only while nothing was built on them) when the claimed entry hands that lock. Only this seat's own claims count here.
-function claimTakesBack(round, entry, entryIdBytes, kind, outpoint, heldBy) {
+// A REFUSED HAND-OVER LETS NOTHING GO (kanban #3808, #1489 state audit 2026-11-27 sm1-entry-5): the holder's rows went at the FIRST guard of
+// verifyStakeLock, before the federation was asked and before lockFieldsMatchEntry. A stranger's copy of a staked entry - the player's key and
+// lock outpoints, his own handout and stake point P', his own claim by p' - was "claimed" (claimFits reads the asker's own stake point) and the
+// honest holder (claim under P) was not: its stake lock, fee lock, seen and donation rows went at every seat, then the copy was refused (the
+// lock's image is P). Now (1) a STAKE lock is taken back only by an entry of the holder's own stake point - the holder's lock was verified
+// with its stake point as payment image, so an asker of another point can never be that lock's entry; with the points equal, a fitting claim of
+// the holder keeps it (the check above); (2) `yieldNow` false only asks whether the holder could be let go (a read, like yieldable): the
+// stake lock's rows go at verifyStakeLock's last re-check, with no await before the write, after every check passed.
+function claimTakesBack(round, entry, entryIdBytes, kind, outpoint, heldBy, { yieldNow = true } = {}) {
   if (!heldBy || typeof round.yieldEntryLocks !== 'function' || typeof round.entry !== 'function') return false;
   const claimed = claimedHere(round, entry, kind, outpoint).map((c) => hexOf(c.entryId));
   if (!claimed.includes(hexOf(entryIdBytes)) || claimed.includes(hexOf(heldBy))) return false;
   const held = round.entry(heldBy);
   let e; try { e = held ? decodeEntryContract(new Uint8Array(held)) : null; } catch { e = null; }
   if (!e || !Buffer.from(e.playerPubkey).equals(Buffer.from(entry.playerPubkey))) return false;
+  if (kind === 'stake' && (zero(entry.stakePoint) || hexOf(e.stakePoint) !== hexOf(entry.stakePoint))) return false;   // kanban #3808 (1)
   if (!yieldable(round, heldBy)) return false;
+  if (!yieldNow) return true;   // kanban #3808 (2)
   return round.yieldEntryLocks(heldBy, e.roundId);
 }
 
@@ -556,9 +568,12 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
     return { ok: false, why: 'this node accepted no handout for that entry, so it could not open its stake point to claim the lock: publish the handout first' };
   // ONE LOCK IS ONE ENTRY. A lock this signer node already counted for another entry
   // cannot stake a second: two signer nodes on one stake is one signer node played free.
+  // kanban #3808: only whether a claimed entry could take it back - the holder's rows go at the last re-check, never for a refused hand-over
   const taken = round.stakeLockAt ? round.stakeLockAt(outpoint) : null;
-  if (taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes)) && !claimTakesBack(round, entry, entryIdBytes, 'stake', outpoint, taken.entryId))
+  const takesBack = !!taken && !Buffer.from(taken.entryId).equals(Buffer.from(entryIdBytes));
+  if (takesBack && !claimTakesBack(round, entry, entryIdBytes, 'stake', outpoint, taken.entryId, { yieldNow: false }))
     return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
+  const backFrom = takesBack ? taken.entryId : null;
   const stakeNamedFirstWhy = 'that stake lock outpoint was named first by another entry (in this round or another, at this seat or another of the round): '
     + 'a lock stakes the entry that named it first (kanban #1489, #1692, #1758)';
   // this seat's own answer at once; the other seats' is asked beside the federation below
@@ -567,7 +582,7 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   // key, so a second staked entry under one key took the first one's place in the plan - a loser could make his own lock unclaimable,
   // void the round's settlement and take a lost stake back, or have one lock claimed twice
   // kanban #3369: before the seats are asked, a holder kept only by the no-receipts rule (#3320) does not refuse yet - the answer below decides
-  if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake', { peerStakedLower: true }))
+  if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake', { peerStakedLower: true, except: backFrom }))
     return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
   { const back = returnedHere(round, outpoint); if (back) return { ok: false, why: back }; }
   // FIELDS THAT CAN NEVER BE THE ENTRY'S LOCK COST NO FEDERATION QUESTION (kanban #2752, #1489 r7-entry-2): checked here, before the
@@ -634,7 +649,9 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
   // asked, and two hand-overs of one lock for two entries at the same moment both passed it - one lock staked two entries. Read again
   // here, with no await between this read and the write below.
   { const now = round.stakeLockAt ? round.stakeLockAt(outpoint) : null;
-    if (now && !Buffer.from(now.entryId).equals(Buffer.from(entryIdBytes)))
+    const nowBack = !!now && !Buffer.from(now.entryId).equals(Buffer.from(entryIdBytes));
+    // kanban #3808: the holder a claimed entry takes the lock back from is asked again (a read) here, let go only after every re-check below
+    if (nowBack && !claimTakesBack(round, entry, entryIdBytes, 'stake', outpoint, now.entryId, { yieldNow: false }))
       return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
     if (namedFirstByAnother(round, entry, entryIdBytes, 'stake', outpoint, stakeNamers)) return { ok: false, why: stakeNamedFirstWhy };
     const back = returnedHere(round, outpoint);
@@ -648,7 +665,13 @@ export async function verifyStakeLock({ round, port, entryIdBytes, fields, claim
       if (outputClaimedByAnother(round, held, entryIdBytes, r.outpoint))   // kanban #2662
         return { ok: false, why: 'that donation output already pays for another entry: one output is one entry\'s' };
     }
-    if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake', { yieldNow: true, peerStakedLower: stakedAtPeer(stakeNamers, entryIdBytes) }))   // last: it may let another entry's rows go (kanban #2477)
+    const backNow = nowBack ? now.entryId : null;
+    if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake', { peerStakedLower: stakedAtPeer(stakeNamers, entryIdBytes), except: backNow }))
+      return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' };
+    // the writes, no await between them and the reads above: the taken-back holder's rows (kanban #3808), then any other the key's lower entry takes (#2477)
+    if (backNow && !claimTakesBack(round, entry, entryIdBytes, 'stake', outpoint, backNow))
+      return { ok: false, why: 'that stake lock already stakes another entry in this round: one lock is one entry' };
+    if (otherStakedUnderKey(round, entry, entryIdBytes, 'stake', { yieldNow: true, peerStakedLower: stakedAtPeer(stakeNamers, entryIdBytes), except: backNow }))   // last: it may let another entry's rows go (kanban #2477)
       return { ok: false, why: 'another entry of that player key is already staked in this round: one player key stakes one entry' }; }
   if (donated.rows.length && round.putDonationOutputs) round.putDonationOutputs(donated.rows);
   round.putStakeLock({ entryId: entryIdBytes, roundId: entry.roundId, outpoint, fields: lockFieldsToJson(fields), contractId: String(id), atMs });
