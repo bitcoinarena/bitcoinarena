@@ -143,4 +143,34 @@ export async function txSeen(chain, txid, { sinceTip = null, maxBlocks = 300, se
   finally { s.close(); }
 }
 
+/**
+ * HOW DEEP IS A TRANSACTION (kanban #3889: the owner page shows the advertisement update's confirmations). { depth, height } - depth 0 in the
+ * mempool, null when not found. `height` the block it was found in before (one getblockcount then); else Core reads the blocks since
+ * `sinceTip` (at most `maxBlocks`), Electrum asks the verbose transaction. Throws when the chain does not answer.
+ */
+export async function txDepth(chain, txid, { sinceTip = null, height = null, maxBlocks = 30, session = electrumSession, fetcher = fetch } = {}) {
+  if (chain.kind === 'core') {
+    const rpc = coreRpc({ ...chain, fetcher, timeoutMs: 60000 });
+    const tip = await rpc('getblockcount');
+    if (Number.isInteger(height)) return { depth: Math.max(0, tip - height + 1), height, tip };
+    try {
+      const t = await rpc('getrawtransaction', [txid, true]);
+      if (t) {
+        if (!t.confirmations) return { depth: 0, height: null, tip };
+        return { depth: t.confirmations, height: tip - t.confirmations + 1, tip };
+      }
+    } catch (e) { if (!/no such mempool|no such transaction|not found/i.test(e.message)) throw e; }
+    if (!Number.isInteger(sinceTip)) return { depth: null, height: null, tip };
+    for (let h = tip; h >= Math.max(sinceTip, tip - maxBlocks); h--) {
+      const b = await rpc('getblock', [await rpc('getblockhash', [h]), 1]);
+      if ((b.tx || []).includes(txid)) return { depth: tip - h + 1, height: h, tip };
+    }
+    return { depth: null, height: null, tip };
+  }
+  const s = await session({ ...chain, timeoutMs: 20000 });
+  try { const t = await s.call('blockchain.transaction.get', [txid, true]); const c = Number(t && t.confirmations) || 0; return { depth: c, height: null, tip: null }; }
+  catch (e) { if (/no such|not found|unknown|missing/i.test(String(e && e.message))) return { depth: null, height: null, tip: null }; throw e; }
+  finally { s.close(); }
+}
+
 export { fromHex };

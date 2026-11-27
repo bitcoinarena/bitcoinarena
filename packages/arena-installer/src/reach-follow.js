@@ -37,7 +37,7 @@ export function switchPlan(was, mode, nowMs = Date.now()) {
  * removeProgram for the tunnel; `startedMs` when this seat started. Answers { did: [...], view } - the view for GET /owner/reach.
  */
 export async function followReach({ home, state = null, publicEndpoint, censusRead = false, ownEndpoints = [], refresh, removeTunnel, nowMs = Date.now(),
-  startedMs = null, retryMs = UPDATE_RETRY_MS, adoptUrl = null, accept = null, feeCheck = null }) {
+  startedMs = null, retryMs = UPDATE_RETRY_MS, adoptUrl = null, accept = null, feeCheck = null, depthOf = null }) {
   const st = state || nodeState(home);
   const did = [];
   let s = st.read();
@@ -106,6 +106,16 @@ export async function followReach({ home, state = null, publicEndpoint, censusRe
       }
     }
   }
+  // HOW FAR THE UPDATE IS (kanban #3889): its confirmations, read on this clock while the census does not name it yet
+  if (depthOf && censusRead && !namesNew) {
+    const s3 = st.read(), u = s3.endpointUpdate;
+    if (u && u.txid && s3.reach && norm(u.endpoint) === norm(s3.reach.url)) {
+      try {
+        const d = await depthOf(s3.chain, u.txid, { sinceTip: Number.isInteger(u.tip) ? u.tip : null, height: Number.isInteger(u.height) ? u.height : null });
+        if (d) st.update((n) => (n.endpointUpdate && n.endpointUpdate.txid === u.txid ? { endpointUpdate: { ...n.endpointUpdate, depth: d.depth, ...(Number.isInteger(d.height) ? { height: d.height } : {}), depthAtMs: nowMs } } : null));
+      } catch { /* the chain did not answer: the last depth stays */ }
+    }
+  }
   const after = st.read();
   return { did, view: viewOf(after, { censusRead, ownEndpoints, namesNew, mismatch: addressMismatch({ s: after, publicEndpoint, censusRead, ownEndpoints, switching: switchRunning(st.home, nowMs) }) }) };
 }
@@ -146,7 +156,23 @@ export function addressMismatch({ s, publicEndpoint, censusRead = false, ownEndp
 export function viewOf(s, { censusRead = false, ownEndpoints = [], namesNew = false, mismatch = null } = {}) {
   const r = (s && s.reach) || {};
   const u = s && s.endpointUpdate && norm(s.endpointUpdate.endpoint) === norm(r.url) ? s.endpointUpdate : null;
-  return { censusRead, advertised: censusRead ? [...new Set(ownEndpoints.map(String))] : null, censusNamesNew: !!namesNew, update: u,
+  return { censusRead, advertised: censusRead ? [...new Set(ownEndpoints.map(String))] : null, censusNamesNew: !!namesNew, update: u, progress: progressOf(u, { namesNew, censusRead }),
     previous: r.previous || null, bonded: !!(s && s.bond && s.bond.txid), takesBlocks: CENSUS_TAKES_BLOCKS, takesMinutes: CENSUS_TAKES_BLOCKS * BLOCK_MINUTES,
     mismatch, adopt: (s && s.addressAdopt) || null };
+}
+
+/** The update's confirmations the census waits for (6 deep), then its next 6-block step. */
+export const UPDATE_DEPTH = 6;
+/**
+ * THE ADVERTISEMENT UPDATE'S PROGRESS (kanban #3889: operators asked us whether their update arrived): sent (txid) -> n of 6 confirmations ->
+ * 6 deep, the census takes it at its next 6-block step -> taken (the census names the address). { step: sent | confirming | deep | taken,
+ * txid, depth, need, minutesLeft } or null when no update is on its way.
+ */
+export function progressOf(u, { namesNew = false, censusRead = false } = {}) {
+  if (censusRead && namesNew) return { step: 'taken', txid: (u && u.txid) || null, depth: u && Number.isInteger(u.depth) ? u.depth : null, need: UPDATE_DEPTH, minutesLeft: 0 };
+  if (!u || !u.txid) return null;
+  const depth = Number.isInteger(u.depth) ? u.depth : null;
+  const left = Math.max(0, CENSUS_TAKES_BLOCKS - (depth || 0));
+  const step = depth === null || depth === 0 ? 'sent' : depth < UPDATE_DEPTH ? 'confirming' : 'deep';
+  return { step, txid: u.txid, depth, need: UPDATE_DEPTH, minutesLeft: left * BLOCK_MINUTES };
 }

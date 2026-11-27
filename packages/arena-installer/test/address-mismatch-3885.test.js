@@ -107,3 +107,26 @@ test('kanban #3887: a public_url that is http, an IP or another port is said wit
     assert.equal(n.posted.length, 0, bad); assert.equal(n.state.read().reach.url, OLD, bad);
   }
 });
+
+test('kanban #3889: the update\'s progress - sent, n of 6 confirmations (the block it was found in kept), 6 deep, taken', async () => {
+  const { progressOf } = await import('../src/reach-follow.js');
+  const n = node({ mode: 'permanent', port: 8470, url: NEW });
+  n.state.save({ chain: { kind: 'core' }, advertEndpoint: NEW, endpointUpdate: { txid: 'cc'.repeat(32), endpoint: NEW, tip: 100, atMs: 1 } });
+  const asks = [];
+  let answer = { depth: 0, height: null };
+  const depthOf = async (chain, txid, o) => { asks.push({ chain: chain.kind, txid, ...o }); return answer; };
+  const go = () => followReach({ home: n.home, state: n.state, publicEndpoint: NEW, censusRead: true, ownEndpoints: [OLD], refresh: n.refresh, removeTunnel: n.removeTunnel, nowMs: 5, depthOf });
+  let f = await go();
+  assert.deepEqual(asks[0], { chain: 'core', txid: 'cc'.repeat(32), sinceTip: 100, height: null });
+  assert.equal(f.view.progress.step, 'sent'); assert.equal(f.view.progress.minutesLeft, 120);
+  answer = { depth: 3, height: 101 };
+  f = await go();
+  assert.equal(f.view.progress.step, 'confirming'); assert.equal(f.view.progress.depth, 3); assert.equal(f.view.progress.minutesLeft, 90);
+  answer = { depth: 6, height: 101 };
+  f = await go();
+  assert.equal(asks[2].height, 101, 'the block it was found in is kept: one getblockcount');
+  assert.equal(f.view.progress.step, 'deep');
+  f = await followReach({ home: n.home, state: n.state, publicEndpoint: NEW, censusRead: true, ownEndpoints: [NEW], refresh: n.refresh, removeTunnel: n.removeTunnel, nowMs: 6, depthOf });
+  assert.equal(f.view.progress.step, 'taken'); assert.equal(asks.length, 3, 'taken: not asked again');
+  assert.equal(progressOf(null), null);
+});
