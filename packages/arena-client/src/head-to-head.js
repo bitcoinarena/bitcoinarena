@@ -120,16 +120,24 @@ export async function revealsOfRound({ roundIdHex, nodes, fetcher = fetch, timeo
     } catch { /* a seat that is down says nothing */ }
   }));
   const votes = new Map();   // entry -> Map(move -> hosts naming it)
+  const named = new Map();   // entry -> Map(move -> listed addresses naming it) (kanban #3829)
   for (const h of said.values()) for (const [entry, moves] of h) {
+    if (!named.has(entry)) named.set(entry, new Map());
+    const a = named.get(entry); for (const v of moves) a.set(v, (a.get(v) || 0) + 1);
     const move = hostWord(moves); if (move === undefined) continue;
     if (!votes.has(entry)) votes.set(entry, new Map());
     const m = votes.get(entry); m.set(move, (m.get(move) || 0) + 1);
   }
   const need = Math.min(2, hosts.length);
+  // TWO ADDRESSES, NOT ONE, ON A ONE-HOST LIST (kanban #3829, audit r40-h2h-1): the live seats sit on one tunnel host, so need was 1 and the host's
+  // word was the plurality of the addresses that answered a move - in a protocol-28 round the honest seats serve none before the certified lock set,
+  // so one seat of seven serving a made-up opponent move was the agreed move. A move now also needs two listed addresses naming it (one on a one-seat list)
+  const needAddresses = Math.min(2, listed.length);
   const out = {};
   for (const [entry, m] of votes) {
     const ranked = [...m].sort((a, b) => b[1] - a[1]);
-    if (ranked[0][1] >= need && (ranked.length === 1 || ranked[0][1] > ranked[1][1])) out[entry] = ranked[0][0];
+    if (ranked[0][1] >= need && (ranked.length === 1 || ranked[0][1] > ranked[1][1])
+      && (named.get(entry).get(ranked[0][0]) || 0) >= needAddresses) out[entry] = ranked[0][0];
   }
   return out;
 }
