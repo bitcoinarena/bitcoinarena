@@ -10,7 +10,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { eventId } from '../src/nostr-relay.js';
 import { HTTP_AUTH_KIND } from '../src/feedback-store.js';
@@ -32,8 +32,9 @@ async function burst(extraEnv) {
   const base = `http://127.0.0.1:${port}`;
   try {
     for (let i = 0; i < 80; i++) { try { await fetch(`${base}/feedback/paid-log`); break; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+    // kanban #3881: a POST sign-in names its body's SHA-256 (payload)
     const ask = (k) => fetch(`${base}/feedback/verify`, { method: 'POST', headers: { 'content-type': 'application/json',
-      authorization: `Nostr ${Buffer.from(JSON.stringify(signed(k, HTTP_AUTH_KIND, [['u', `${STAGE}/verify`], ['method', 'POST']]))).toString('base64')}` },
+      authorization: `Nostr ${Buffer.from(JSON.stringify(signed(k, HTTP_AUTH_KIND, [['u', `${STAGE}/verify`], ['method', 'POST'], ['payload', createHash('sha256').update('{}').digest('hex')]]))).toString('base64')}` },
       body: '{}' }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => ({})) }));
     return await Promise.all(Array.from({ length: 30 }, () => ask(freshKey())));
   } finally { faucet.kill(); }
