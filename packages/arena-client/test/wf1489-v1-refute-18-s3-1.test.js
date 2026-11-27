@@ -18,6 +18,8 @@ const urlOf = (s) => `http://127.0.0.1:${s.address().port}`;
 
 test('#1489 v1-refute-18-s3-1: one seat trickling its /reveals body holds the page\'s revealsOfRound forever', async () => {
   const honest = await serve((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(honestBody); });
+  // kanban #3829: two honest seats, not one listed twice - one address (#2709 asks it once) naming a move no longer decides it on a one-host list
+  const honest2 = await serve((req, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(honestBody); });
   const timers = [];
   const slow = await serve((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' }); res.write('{"reveals":[');
@@ -27,13 +29,13 @@ test('#1489 v1-refute-18-s3-1: one seat trickling its /reveals body holds the pa
   try {
     const t0 = Date.now();
     const got = await Promise.race([
-      revealsOfRound({ roundIdHex: 'cc'.repeat(32), nodes: [urlOf(honest), urlOf(honest), urlOf(slow)] }),
+      revealsOfRound({ roundIdHex: 'cc'.repeat(32), nodes: [urlOf(honest), urlOf(honest2), urlOf(slow)] }),
       new Promise((r) => setTimeout(() => r('STALLED'), 15000)),
     ]);
     console.log(`  FACTS after ${Date.now() - t0} ms: ${JSON.stringify(got)}`);
     assert.notEqual(got, 'STALLED', 'one trickling seat held revealsOfRound past 15 s (no deadline on the page\'s /reveals pull)');
     assert.equal(got[ME], 1); assert.equal(got[THEM], 0);
-  } finally { for (const t of timers) clearInterval(t); honest.closeAllConnections(); slow.closeAllConnections(); honest.close(); slow.close(); }
+  } finally { for (const t of timers) clearInterval(t); honest.closeAllConnections(); honest2.closeAllConnections(); slow.closeAllConnections(); honest.close(); honest2.close(); slow.close(); }
 });
 
 test('#1489 v1-refute-18-s3-1b: one seat streaming a huge /reveals body is buffered whole by the page', async () => {
