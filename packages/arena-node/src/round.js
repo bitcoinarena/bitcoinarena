@@ -839,10 +839,14 @@ export class Round {
       // or its stake lock verified - what seats it, seatedEntriesOf), and in a free round only one that names the same player key - the same player entering
       // again, which is what #1479 saw. A lockless entry of another player that names the key shuts no one out; it can never play (every batch, mark,
       // reveal and address must be signed by the session key).
+      // AND IN A PAYING ROUND TOO, ONLY ONE OF THE SAME PLAYER KEY (kanban #3825, a bypass of #1597): a lock proves only that someone paid, not that he owns
+      // the key - the copier locked his own refundable stake and fee from his own player key, and the seat the copy reached first refused the honest entry
+      // for good. An earlier entry holds the key only when it is backed by a lock (paying) AND names the same player key - a stake lock's refund key is
+      // the entry's player key (stake-lock-signer-node.js), so a copier who also copies the player key pays the honest player. One player entering again
+      // under one session key (#1479) is still refused; entries of other player keys are other players, as under fresh session keys (bypass-session-key-1).
       if (!accepted) { const mine = entryId(contract);
-        const holders = asks.stakeMsat === 0n
-          ? this.entriesOf(contract.roundId).filter((x) => same(x.entry.playerPubkey, contract.playerPubkey))
-          : this.seatedEntriesOf(contract.roundId, asks.stakeMsat);
+        const holders = (asks.stakeMsat === 0n ? this.entriesOf(contract.roundId) : this.seatedEntriesOf(contract.roundId, asks.stakeMsat))
+          .filter((x) => same(x.entry.playerPubkey, contract.playerPubkey));
         if (holders.some((x) => same(x.entry.sessionPubkey, contract.sessionPubkey) && !same(x.entryId, mine)))
           throw new Error('that session key already has an entry in this round: one entry per session key'); }
       // THE HIDDEN MOVE: an entry into a head-to-head round names its commitment, before entry close, and the
