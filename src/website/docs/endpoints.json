@@ -7,7 +7,7 @@
   "returns": "204 with CORS headers",
   "purpose": "CORS preflight for any path; changes nothing.",
   "audience": "player/page",
-  "line": 3448,
+  "line": 10389,
   "summary": "CORS preflight",
   "query": [],
   "body": null,
@@ -32,7 +32,7 @@
   "returns": "200 JSON {guardian:true, endpoint} or {guardian:false}",
   "purpose": "Says whether this node runs a federation guardian and its public endpoint. Behind a gateway that maps <prefix>/guardian to the guardian's own API (testnet4 federation A: tn4.bitcoin-arena.io/guardian-N/guardian is the guardian websocket), use GET /guardian-info, which answers the same.",
   "audience": "operator/monitoring",
-  "line": 9380,
+  "line": 10442,
   "summary": "Whether this node is a guardian",
   "query": [],
   "body": null,
@@ -56,7 +56,7 @@
   "returns": "200 JSON {guardian:true, endpoint} or {guardian:false}",
   "purpose": "The same answer as GET /guardian, at a path no gateway maps to the guardian itself: on testnet4 federation A seats GET <seat>/guardian reaches the guardian's websocket API (405), GET <seat>/guardian-info reaches the seat.",
   "audience": "operator/monitoring",
-  "line": 9380,
+  "line": 10442,
   "summary": "Whether this node is a guardian (same as GET /guardian)",
   "query": [],
   "body": null,
@@ -80,7 +80,7 @@
   "returns": "200 raw bytes: the node public key",
   "purpose": "Returns this node's identity public key.",
   "audience": "operator/monitoring",
-  "line": 3455,
+  "line": 10551,
   "summary": "Node identity public key",
   "query": [],
   "body": null,
@@ -104,7 +104,7 @@
   "returns": "200 text: the nonce the installer wrote into this node's home, while it is under 5 minutes old; else 404",
   "purpose": "Lets the installer's direct check reach an installed node on its own port: the seats ask this address, and the node answers with the installer's nonce (kanban #734).",
   "audience": "operator/monitoring",
-  "line": 7850,
+  "line": 12888,
   "summary": "Direct-check nonce for the installer",
   "query": [],
   "body": null,
@@ -133,7 +133,7 @@
   "returns": "200 text/html, no-store",
   "purpose": "Serves the operator dashboard page (earned, spent, activity).",
   "audience": "operator/monitoring",
-  "line": 3461,
+  "line": 10570,
   "summary": "Operator dashboard page",
   "query": [],
   "body": null,
@@ -158,7 +158,7 @@
   "returns": "200 text/html owner page, no-store; 404 when the node runs without an owner area",
   "purpose": "Serves the node owner page (claim, leave/stay, plugin and network store).",
   "audience": "operator/monitoring",
-  "line": 3466,
+  "line": 10575,
   "summary": "Owner page",
   "query": [],
   "body": null,
@@ -188,7 +188,7 @@
   "returns": "200 text/javascript",
   "purpose": "Serves the owner page script that signs owner requests.",
   "audience": "operator/monitoring",
-  "line": 3471,
+  "line": 10605,
   "summary": "Owner page script",
   "query": [],
   "body": null,
@@ -212,7 +212,7 @@
   "returns": "200 JSON {ok, node, owner, roundsHeld, federations:[{federation, status, load}]}; 401/403; 404 without operator tokens",
   "purpose": "Status read for the operator UI.",
   "audience": "operator/monitoring",
-  "line": 3483,
+  "line": 10613,
   "summary": "Operator status read",
   "query": [],
   "body": null,
@@ -251,7 +251,7 @@
   "returns": "200 JSON {ok, node, proposalId, choice, opReturn hex, broadcast}; 400/401/403/405",
   "purpose": "Signs a ballot vote with the node bond key and returns the OP_RETURN payload; broadcasts nothing.",
   "audience": "operator/monitoring",
-  "line": 3491,
+  "line": 10613,
   "summary": "Sign a ballot vote",
   "query": [],
   "body": {
@@ -304,7 +304,7 @@
   "returns": "501 JSON {ok:false, scope, why} (not built yet); 401/403",
   "purpose": "Placeholder for config-token edits; always answers 501.",
   "audience": "operator/monitoring",
-  "line": 3507,
+  "line": 10613,
   "summary": "Config token edits (not built)",
   "query": [],
   "body": null,
@@ -344,7 +344,7 @@
   "returns": "200 JSON {node, claimed, owner, claimedAtMs, leavingAtMs}; 404 without owner area",
   "purpose": "Says whether the node has an owner and whether it is leaving.",
   "audience": "operator/monitoring",
-  "line": 3512,
+  "line": 10686,
   "summary": "Owner state",
   "query": [],
   "body": null,
@@ -373,7 +373,7 @@
   "returns": "200 JSON leave status (rounds still held, custody check, leavingAtMs)",
   "purpose": "What a leaving seat still owes: held rounds and its guardian custody.",
   "audience": "operator/monitoring",
-  "line": 3517,
+  "line": 10693,
   "summary": "What a leaving seat still owes",
   "query": [],
   "body": null,
@@ -402,7 +402,7 @@
   "returns": "200 JSON {missedInARow, warning, rounds[up to 20]}",
   "purpose": "Seatings this node was drawn for and missed, with a warning from three in a row.",
   "audience": "operator/monitoring",
-  "line": 3537,
+  "line": 10714,
   "summary": "Missed seatings",
   "query": [],
   "body": null,
@@ -431,7 +431,7 @@
   "returns": "200 JSON node standing (own weight, brackets, headroom) + bondMin {inForce, noticeBlocks, censuses, pending} + warnings[]",
   "purpose": "This node's standing in recent censuses and the bond_min floor and rises.",
   "audience": "operator/monitoring",
-  "line": 3553,
+  "line": 10856,
   "summary": "Node standing and bond_min",
   "query": [],
   "body": null,
@@ -460,7 +460,7 @@
   "returns": "200 JSON {hosted[], installed[], settings}",
   "purpose": "Games hosted and installed on this seat, and the store settings.",
   "audience": "operator/monitoring",
-  "line": 3580,
+  "line": 10938,
   "summary": "Hosted and installed games",
   "query": [],
   "body": null,
@@ -489,7 +489,7 @@
   "returns": "200 JSON {chain, networkId, own, draining[], installed[]}",
   "purpose": "The chain this seat reads, its own network package and installed network packages.",
   "audience": "operator/monitoring",
-  "line": 3592,
+  "line": 10955,
   "summary": "Network store view of this seat",
   "query": [],
   "body": null,
@@ -518,7 +518,7 @@
   "returns": "200 JSON {managed, clients:[{slug, ...snapshot, imported, running, pid, waiting, requests[], split}], beside}; 404 without owner area",
   "purpose": "The owner's dev clients: what each was given (protocol and per-game split), its wallets and what withdrawals answered.",
   "audience": "operator/monitoring",
-  "line": 3605,
+  "line": 10984,
   "summary": "Owner dev clients",
   "query": [],
   "body": null,
@@ -547,7 +547,7 @@
   "returns": "200 JSON donation report (protocol sets and each hosted game's set, with rows held)",
   "purpose": "What this seat verified for the protocol and game donation sets.",
   "audience": "operator/monitoring",
-  "line": 3609,
+  "line": 10999,
   "summary": "Donation sets verified here",
   "query": [],
   "body": null,
@@ -576,7 +576,7 @@
   "returns": "200 {ok, owner}; 401/403/409 {ok:false, why}",
   "purpose": "Binds the first owner key to the node.",
   "audience": "operator/monitoring",
-  "line": 3619,
+  "line": 11009,
   "summary": "Claim the node",
   "query": [],
   "body": {
@@ -629,7 +629,7 @@
   "returns": "200 {ok, tokens[]}; 401/403/404/409",
   "purpose": "Lists operator tokens.",
   "audience": "operator/monitoring",
-  "line": 3621,
+  "line": 11011,
   "summary": "List operator tokens",
   "query": [],
   "body": {
@@ -682,7 +682,7 @@
   "returns": "200 {ok, id, scopes, uri (arena-operator: pairing URI; an old blwp-operator: URI still pairs)}; 400/401/403/404/409",
   "purpose": "Mints a scoped operator token.",
   "audience": "operator/monitoring",
-  "line": 3621,
+  "line": 11011,
   "summary": "Mint an operator token",
   "query": [],
   "body": {
@@ -735,7 +735,7 @@
   "returns": "200 {ok}; 401/403/404/409",
   "purpose": "Revokes an operator token.",
   "audience": "operator/monitoring",
-  "line": 3621,
+  "line": 11011,
   "summary": "Revoke an operator token",
   "query": [],
   "body": {
@@ -793,7 +793,7 @@
   "returns": "200 {ok, leavingAtMs, already?, departure?}; 401/403/409",
   "purpose": "Seat stops taking new rounds; a guardian node also signs and posts a departure notice to every seat.",
   "audience": "operator/monitoring",
-  "line": 3633,
+  "line": 10693,
   "summary": "Leave: stop taking new rounds",
   "query": [],
   "body": {
@@ -846,7 +846,7 @@
   "returns": "200 or status JSON result; 422 when refused",
   "purpose": "Fetches a game from another seat, checks it and activates it at once.",
   "audience": "operator/monitoring",
-  "line": 3656,
+  "line": 11107,
   "summary": "Install a game",
   "query": [],
   "body": {
@@ -904,7 +904,7 @@
   "returns": "200 or status JSON result; 422 when refused",
   "purpose": "Installs a newer version of a hosted game in place of the one it replaces.",
   "audience": "operator/monitoring",
-  "line": 3656,
+  "line": 11107,
   "summary": "Update a hosted game",
   "query": [],
   "body": {
@@ -962,7 +962,7 @@
   "returns": "200 or status JSON result; 409 when refused",
   "purpose": "Removes a hosted game.",
   "audience": "operator/monitoring",
-  "line": 3664,
+  "line": 11137,
   "summary": "Remove a hosted game",
   "query": [],
   "body": {
@@ -1015,7 +1015,7 @@
   "returns": "200 or status JSON result; 422 when refused",
   "purpose": "Installs a network package from another seat after checks.",
   "audience": "operator/monitoring",
-  "line": 3672,
+  "line": 11145,
   "summary": "Install a network package",
   "query": [],
   "body": {
@@ -1073,7 +1073,7 @@
   "returns": "200 or status JSON result; 422 when refused",
   "purpose": "Updates an installed network package.",
   "audience": "operator/monitoring",
-  "line": 3672,
+  "line": 11145,
   "summary": "Update a network package",
   "query": [],
   "body": {
@@ -1131,7 +1131,7 @@
   "returns": "200 or status JSON result; 409 when refused",
   "purpose": "Removes an installed network package.",
   "audience": "operator/monitoring",
-  "line": 3680,
+  "line": 11155,
   "summary": "Remove a network package",
   "query": [],
   "body": {
@@ -1184,7 +1184,7 @@
   "returns": "200 {ok, node, pubnonce}; 400/401/403/409",
   "purpose": "Node draws its MuSig2 nonce for a cooperative key-path spend of its bond.",
   "audience": "operator/monitoring",
-  "line": 3694,
+  "line": 11165,
   "summary": "MuSig2 nonce for a bond spend",
   "query": [],
   "body": {
@@ -1247,7 +1247,7 @@
   "returns": "200 {ok, psig}; 404 no session; 409 no chain named (regtest/testnet4 only); 422",
   "purpose": "Node signs its MuSig2 partial signature once for that session.",
   "audience": "operator/monitoring",
-  "line": 3702,
+  "line": 11165,
   "summary": "MuSig2 partial signature of the bond",
   "query": [],
   "body": {
@@ -1315,7 +1315,7 @@
   "returns": "200 {ok, slug, recipientPk, imported}; 400/401/403/409; 501 without dev clients",
   "purpose": "Sets up a dev client (new or imported key) and starts it.",
   "audience": "operator/monitoring",
-  "line": 3714,
+  "line": 11622,
   "summary": "Set up a dev client",
   "query": [],
   "body": {
@@ -1383,7 +1383,7 @@
   "returns": "200 {ok, id}; 400/401/403/404/409; 501 without dev clients",
   "purpose": "Leaves a withdrawal request for a dev client to pay out to an invoice or Lightning address.",
   "audience": "operator/monitoring",
-  "line": 3714,
+  "line": 11622,
   "summary": "Withdraw from a dev client",
   "query": [],
   "body": {
@@ -1456,7 +1456,7 @@
   "returns": "200 {ok, kept}; 401/403/404; 501 without dev clients",
   "purpose": "Stops a dev client; its directory and key are kept, renamed.",
   "audience": "operator/monitoring",
-  "line": 3714,
+  "line": 11622,
   "summary": "Remove a dev client",
   "query": [],
   "body": {
@@ -1519,7 +1519,7 @@
   "returns": "200 {ok, settings}; 401/403/409",
   "purpose": "Sets the store settings (automatic updates, source seats).",
   "audience": "operator/monitoring",
-  "line": 3726,
+  "line": 11693,
   "summary": "Set store settings",
   "query": [],
   "body": {
@@ -1572,7 +1572,7 @@
   "returns": "200 {ok, leavingAtMs:null}; 401/403/409",
   "purpose": "Takes back a leave; new rounds are taken again.",
   "audience": "operator/monitoring",
-  "line": 3727,
+  "line": 11694,
   "summary": "Take back a leave",
   "query": [],
   "body": {
@@ -1625,7 +1625,7 @@
   "returns": "200 {ok, node, guardian, games[]}; 401/403/409",
   "purpose": "Checks an owner signature and returns the node summary for the owner page.",
   "audience": "operator/monitoring",
-  "line": 3728,
+  "line": 11831,
   "summary": "Owner login check",
   "query": [],
   "body": {
@@ -1678,7 +1678,7 @@
   "returns": "200 JSON dashboard data (cached 30 s)",
   "purpose": "Data behind the dashboard: node earnings, pools, hosts, hosted games, dev clients.",
   "audience": "operator/monitoring",
-  "line": 3736,
+  "line": 11868,
   "summary": "Dashboard data",
   "query": [],
   "body": null,
@@ -1702,7 +1702,7 @@
   "returns": "200 octet-stream: 80-byte Bitcoin headers back to back; 404 if the operator gave no chain",
   "purpose": "Serves a Bitcoin header chain only when the operator configured one (ARENA_ATTACH_PROOF_DIR headers.bin).",
   "audience": "operator/monitoring",
-  "line": 3754,
+  "line": 11886,
   "summary": "Bitcoin header chain",
   "query": [],
   "body": null,
@@ -1731,7 +1731,7 @@
   "returns": "200 JSON bond proof (transaction + merkle branch); 404 if none",
   "purpose": "Serves this node's bond proof so a client can check it against headers.",
   "audience": "operator/monitoring",
-  "line": 3767,
+  "line": 11899,
   "summary": "Node bond proof",
   "query": [],
   "body": null,
@@ -1760,7 +1760,7 @@
   "returns": "200 {ok, game, already?}; 400 no manifest, or one that names no source; 401; 403 not a bonded node; 409 no installed apps or no donation set in force; 422",
   "purpose": "Publishes a signed market from the owner's page: a bonded node takes the manifest, which must name a source, and hosts it. Other seats host it from there.",
   "audience": "operator/monitoring",
-  "line": 6547,
+  "line": 11091,
   "summary": "Publish a signed market",
   "query": [],
   "body": {
@@ -1807,7 +1807,7 @@
   "returns": "200 the test's answer, {ok, why?} on a refusal; 401",
   "purpose": "Runs a market's source once, or a proposed source's example, in the node's sandbox and answers what it read, against the listed sources.",
   "audience": "operator/monitoring",
-  "line": 7004,
+  "line": 11560,
   "summary": "Test a market source",
   "query": [],
   "body": {
@@ -1839,7 +1839,7 @@
   "returns": "200 {ok, paid, depositSats, outputs?, txid?} without txid, the signed proposal with a confirmed one; 400; 401; 422 the example did not answer; 501 no ballot",
   "purpose": "Proposes a new market source from the owner's page. Without txid: the deposit, paid from the bond wallet, or what to pay where the node has none. With a confirmed txid: the node's key signs the proposal and every seat is asked to take it. The example is read again at each step.",
   "audience": "operator/monitoring",
-  "line": 7017,
+  "line": 11573,
   "summary": "Propose a market source",
   "query": [],
   "body": {
@@ -1886,7 +1886,7 @@
   "returns": "200 {ok, sent, opReturn?, txid?}; 400 no kept proposal or no choice; 401; 422 an added source did not answer",
   "purpose": "The node's vote on a kept source list proposal: YES, NO or ABSTAIN, as an OP_RETURN signed by its key, sent from the bond wallet or handed back to be sent by hand. Before a YES each added source's example is read here.",
   "audience": "operator/monitoring",
-  "line": 7048,
+  "line": 11604,
   "summary": "Vote on a market source list",
   "query": [],
   "body": {
@@ -1928,7 +1928,7 @@
   "returns": "200 JSON {hosts[], entries[], since, by, history[], donationSetId}",
   "purpose": "The market source list live on this seat's chain, as the bonded nodes voted it, and the donation set id in force. network names the chain; this seat's by default.",
   "audience": "game/market developer",
-  "line": 7276,
+  "line": 11929,
   "summary": "The market source list",
   "query": [
    {
@@ -1958,7 +1958,7 @@
   "returns": "200 JSON {proposals[]}",
   "purpose": "Lists the ballot config proposals this seat holds.",
   "audience": "operator/monitoring",
-  "line": 3781,
+  "line": 11923,
   "summary": "Ballot proposals held",
   "query": [],
   "body": null,
@@ -1987,7 +1987,7 @@
   "returns": "201 or 200 (already) JSON kept proposal; 400/422 {ok:false, why}",
   "purpose": "Submits a config proposal for the ballot.",
   "audience": "operator/monitoring",
-  "line": 3785,
+  "line": 11946,
   "summary": "Submit a config proposal",
   "query": [],
   "body": {
@@ -2035,7 +2035,7 @@
   "returns": "200 JSON {node, censusHeight, nodes:[{node, endpoint, roles, guardianCapable, serving, custody[], guardianOf[]}]} (cache 60 s); 503",
   "purpose": "Each census node's advertised roles and the federations it guards, for the lobby node list.",
   "audience": "player/page",
-  "line": 3794,
+  "line": 11955,
   "summary": "Roles of each census node",
   "query": [],
   "body": null,
@@ -2064,7 +2064,7 @@
   "returns": "200 JSON census evidence (bonds, merkle branches, updates) (cache 60 s); 404",
   "purpose": "The round's census as evidence, so a client can build the committee itself.",
   "audience": "player/page",
-  "line": 3815,
+  "line": 11989,
   "summary": "Round census evidence",
   "query": [
    {
@@ -2100,7 +2100,7 @@
   "returns": "200 JSON bonds of the round's guardians; 404 with reason",
   "purpose": "Lists the round's guardians' bond transactions and merkle branches for the page to verify.",
   "audience": "player/page",
-  "line": 3821,
+  "line": 11997,
   "summary": "Bonds of a round's guardians",
   "query": [
    {
@@ -2136,7 +2136,7 @@
   "returns": "201 round id bytes; 202 id (stored, beacon not yet); 400/402/403/409/503 text reason",
   "purpose": "Opens (stores) a round contract on this node after creator, rules, committee, bond-min, game (a template round must carry its question, any other must not), series, federation, gateway, fee and bond checks.",
   "audience": "game/market developer",
-  "line": 3828,
+  "line": 12004,
   "summary": "Open a round contract",
   "query": [
    {
@@ -2201,7 +2201,7 @@
   "returns": "200 {receipt}; 400/404/409 {why, forfeit?/entryVoid?}",
   "purpose": "Takes a player's first signed mark forwarded by another signer node and receipts it, or records VOID/FORFEIT.",
   "audience": "node-to-node",
-  "line": 3988,
+  "line": 12183,
   "summary": "Forward a player's first mark",
   "query": [],
   "body": {
@@ -2244,7 +2244,7 @@
   "returns": "200 JSON {outcome:ENTRY_VOID, why, firstMark, evidenceKind, evidence, receipt, receipts[], offers}; 404",
   "purpose": "Serves the ENTRY_VOID record this node holds for an entry.",
   "audience": "node-to-node",
-  "line": 4042,
+  "line": 12257,
   "summary": "ENTRY_VOID record of an entry",
   "query": [
    {
@@ -2285,7 +2285,7 @@
   "returns": "201 {kept:true}; 200 {kept:false, why}; 400/404/409 {why}",
   "purpose": "Stores a joined player's signed display name for a round.",
   "audience": "player/page",
-  "line": 4061,
+  "line": 12276,
   "summary": "Store a player's display name",
   "query": [],
   "body": {
@@ -2333,7 +2333,7 @@
   "returns": "200 JSON {round, names}",
   "purpose": "Lists the signed player names held for a round.",
   "audience": "player/page",
-  "line": 4085,
+  "line": 12334,
   "summary": "Signed player names of a round",
   "query": [
    {
@@ -2369,7 +2369,7 @@
   "returns": "200 JSON {mark, why}; 404",
   "purpose": "Serves an on-time first mark this node refused, for peers closing the round.",
   "audience": "node-to-node",
-  "line": 4097,
+  "line": 12346,
   "summary": "First mark this node refused",
   "query": [
    {
@@ -2410,7 +2410,7 @@
   "returns": "200 JSON {marks:[{mark, block, seenMs}]}",
   "purpose": "Lists each mark of an entry held as evidence with the block it names.",
   "audience": "node-to-node",
-  "line": 4109,
+  "line": 12358,
   "summary": "Marks held as evidence, with blocks",
   "query": [
    {
@@ -2446,7 +2446,7 @@
   "returns": "200 JSON {outcome:FORFEIT, markTick, lastTick, why, mark, forwarded}; 404",
   "purpose": "Serves the FORFEIT record for a late first mark of an entry.",
   "audience": "node-to-node",
-  "line": 4116,
+  "line": 12365,
   "summary": "FORFEIT record for a late start",
   "query": [
    {
@@ -2487,7 +2487,7 @@
   "returns": "200 image/svg+xml (cache 1 h); 404",
   "purpose": "Serves a hosted game's square icon.",
   "audience": "player/page",
-  "line": 4135,
+  "line": 12384,
   "summary": "Game icon",
   "query": [
    {
@@ -2523,7 +2523,7 @@
   "returns": "200 JSON network package; 404/409/500",
   "purpose": "This seat's network as a package for another seat's network store.",
   "audience": "node-to-node",
-  "line": 4148,
+  "line": 12397,
   "summary": "This seat's network package",
   "query": [
    {
@@ -2569,7 +2569,7 @@
   "returns": "200 JSON game package (manifest, donation set, adapters, clients) (cache 60 s); 404/409/500",
   "purpose": "A hosted game as a package for another seat's plugin store.",
   "audience": "node-to-node",
-  "line": 4156,
+  "line": 12405,
   "summary": "Hosted game as a package",
   "query": [
    {
@@ -2615,7 +2615,7 @@
   "returns": "200 JSON {node, atMs, seats, games:[{..., hostedHere, updateOf}]}",
   "purpose": "Games and markets this seat found on the network.",
   "audience": "operator/monitoring",
-  "line": 4165,
+  "line": 12414,
   "summary": "Games found on the network",
   "query": [
    {
@@ -2647,7 +2647,7 @@
   "returns": "200 JSON {node, games:[{id, name, title, icon, attested, type, version, info, live:{rounds, players}, manifest hex}]} (cache 10 s)",
   "purpose": "Lists the games this node hosts, each with its signed manifest.",
   "audience": "game/market developer",
-  "line": 4172,
+  "line": 12421,
   "summary": "Games this node hosts",
   "query": [],
   "body": null,
@@ -2671,7 +2671,7 @@
   "returns": "200 text/html (pages/rounds.html)",
   "purpose": "Serves the human rounds page when a browser asks for HTML.",
   "audience": "player/page",
-  "line": 4184,
+  "line": 12433,
   "summary": "Human rounds page",
   "query": [],
   "body": null,
@@ -2697,7 +2697,7 @@
   "returns": "200 JSON {node, nowMs, rounds:[{id, phase, entryOpen, game, event? {question, outcomes, resolveAtMs}, outcome, startTime, endTime, committee, stakeMsat, free (development rounds only), wallet, joined, playing, watching, names, needed, signerNodes, sig, ...}], games}",
   "purpose": "Lobby listing of announced rounds this node holds, each row signed by the node.",
   "audience": "player/page",
-  "line": 4188,
+  "line": 12433,
   "summary": "Lobby listing of announced rounds",
   "query": [
    {
@@ -2748,7 +2748,7 @@
   "returns": "200 JSON {node, nowMs, upcoming[] (rows as /rounds, with event for a template round), finished[] (up to 200), games}",
   "purpose": "Upcoming and finished rounds of hosted games, with times, committee, game and outcome.",
   "audience": "game/market developer",
-  "line": 4225,
+  "line": 12503,
   "summary": "Upcoming and finished rounds",
   "query": [
    {
@@ -2787,7 +2787,7 @@
   "returns": "200 JSON {id, state, free (development rounds only), players:[{entry, player, name, stakeMsat, outcome, score, signedBy, wonMsat, winningsState, ...balance}], match (head-to-head record or null)}; 400/404",
   "purpose": "Who played a round, their signed outcome/score and what they won or lost.",
   "audience": "game/market developer",
-  "line": 4258,
+  "line": 12540,
   "summary": "Players, outcomes and winnings of a round",
   "query": [
    {
@@ -2828,7 +2828,7 @@
   "returns": "200 JSON {node, game {name, ids}, days, from, to, rows:[{rank, player, name, rounds, wins, netMsat, stakedMsat, paidMsat, bestScore, lastPlayed}], rounds, leftOut, unchecked} (cache 30 s); with scope=network also {scope, agree, seats {asked, answered}}; 400/404/500",
   "purpose": "One game's leaderboard per player over its FINAL rounds in a time window. It is for display, not an authority. By default it uses this node's own rounds; with scope=network it uses every seat's rounds, and a round counts only when 3 seats hand in byte-identical accounts of it.",
   "audience": "player/page",
-  "line": 4412,
+  "line": 12613,
   "summary": "Leaderboard of a game",
   "query": [
    {
@@ -2889,7 +2889,7 @@
   "returns": "200 JSON {node, game {ids}, days, fromMs, toMs, roundKeys: true, signed: true, rounds:[{roundId, gameId, startMs, void, entries:[{player, name, stakeMsat, payoutMsat, outcome, score, roundKey}], contract, sigs:[{node, sig}]}]} - msat and startMs as decimal strings, payoutMsat null while not settled here, roundKey the key the entry joined under, contract the round contract (hex), sigs this seat's BIP-340 signature over the round's account once every entry is settled here (empty before) (cache 30 s); 400/404",
   "purpose": "The rounds this node's own leaderboard is built from: FINAL results and the amounts its ACCEPTED settlements paid. Another node merges them into its network leaderboard. A leaderboard payout and the weekly top-3 badge count a round only when the threshold of the round's own draw (5 of 7) signed the same account of it, its contract checked by id (kanban #1153).",
   "audience": "player/page",
-  "line": 4440,
+  "line": 12663,
   "summary": "Leaderboard rounds held by this node",
   "query": [
    {
@@ -2938,7 +2938,7 @@
   "returns": "200 JSON signed kind-30762 Nostr event, header x-nostr-published (ISO time or \"no\"); 400; 404 round not held or game not hosted; 409 settlement not ACCEPTED yet",
   "purpose": "The node's signed Nostr event for a round's result, so a client checks its id and signature itself.",
   "audience": "game/market developer",
-  "line": 4350,
+  "line": 12706,
   "summary": "Signed Nostr event of a round result",
   "query": [
    {
@@ -2991,7 +2991,7 @@
   "returns": "200 JSON {node, player, on, awards[{d, game, scope, evidence, event, awardedMs, publishedMs}], definitions[{event, publishedMs}]}; 400",
   "purpose": "The NIP-58 badges this node awarded to one player identity: the kind-8 award events and their kind-30009 definitions, exactly as signed, so a client can check ids and signatures itself. Each award names the round ids or the board week that earned it. A week's place also names how many nodes the network board was merged from and the 3 that had to agree on a round. on=false: the node awards no badges (ARENA_NOSTR_BADGES unset).",
   "audience": "player/page",
-  "line": 4507,
+  "line": 12721,
   "summary": "A player's badges (NIP-58)",
   "query": [
    {
@@ -3027,7 +3027,7 @@
   "returns": "200 JSON {node, on, version, definitions[{event, publishedMs}]}",
   "purpose": "The node's signed NIP-58 Badge Definition events (kind 30009), one per catalogue badge: first win, five rounds, perfect run, leaderboard top 3.",
   "audience": "player/page",
-  "line": 4503,
+  "line": 12717,
   "summary": "Badge definitions (NIP-58)",
   "query": [],
   "body": null,
@@ -3052,7 +3052,7 @@
   "returns": "200 image/svg+xml; 404",
   "purpose": "A badge's image, as its definition's image tag names it under the node's public base.",
   "audience": "player/page",
-  "line": 4517,
+  "line": 12731,
   "summary": "A badge's image",
   "query": [],
   "body": null,
@@ -3088,7 +3088,7 @@
   "returns": "200 JSON {ok, series, rounds, held}; 400/402/403/409 text",
   "purpose": "Takes a grid series (one post per table) whose rounds this node then writes.",
   "audience": "game/market developer",
-  "line": 4358,
+  "line": 12740,
   "summary": "Take a grid series",
   "query": [],
   "body": {
@@ -3136,7 +3136,7 @@
   "returns": "200 JSON {node, nowMs, series:[summary]}",
   "purpose": "Lists the round series this node writes and how far ahead.",
   "audience": "game/market developer",
-  "line": 4367,
+  "line": 12965,
   "summary": "Series this node writes",
   "query": [],
   "body": null,
@@ -3160,7 +3160,7 @@
   "returns": "200 octet-stream round contract, header x-state; a template round also x-question, x-outcomes (URI-encoded JSON list), x-resolve-at-ms; 404",
   "purpose": "Returns a stored round contract by id.",
   "audience": "game/market developer",
-  "line": 4373,
+  "line": 12971,
   "summary": "Round contract by id",
   "query": [
    {
@@ -3201,7 +3201,7 @@
   "returns": "201 handout id bytes, header x-signer-node; 400/404/409",
   "purpose": "Accepts a player's sealed stake-preimage shares dealt at the round's threshold.",
   "audience": "player/page",
-  "line": 4404,
+  "line": 13002,
   "summary": "Hand in sealed stake shares",
   "query": [],
   "body": {
@@ -3246,7 +3246,7 @@
   "returns": "200 octet-stream handout bytes; 404",
   "purpose": "Returns a handout this node accepted.",
   "audience": "node-to-node",
-  "line": 4442,
+  "line": 13015,
   "summary": "Handout this node accepted",
   "query": [
    {
@@ -3282,7 +3282,7 @@
   "returns": "200 JSON {upheld:true, round, why}; 400/404/409 (not upheld)/503",
   "purpose": "Objects to a round's census; if upheld the round takes no new entry here.",
   "audience": "player/page",
-  "line": 4452,
+  "line": 13025,
   "summary": "Object to a round's census",
   "query": [],
   "body": {
@@ -3330,7 +3330,7 @@
   "returns": "201 entry id bytes; 402/409/503 text (409 also: round not seated yet or seated twice when seating is on, census objected, stake over the census-health ceiling off test networks)",
   "purpose": "Joins a player into a round (federation, gateway, fee-lock and donation-output checks for paying rounds).",
   "audience": "player/page",
-  "line": 4471,
+  "line": 13048,
   "summary": "Join a player into a round",
   "query": [],
   "body": {
@@ -3378,7 +3378,7 @@
   "returns": "200 JSON {entry, state, paidMsat}; 404/409",
   "purpose": "Says whether this node has seen the entry's stake.",
   "audience": "player/page",
-  "line": 4598,
+  "line": 13215,
   "summary": "Whether the entry's stake is seen",
   "query": [
    {
@@ -3424,7 +3424,7 @@
   "returns": "200 JSON {entry, stake FREE (development rounds only)|SEEN|UNSEEN, finality, finalityWhy, windowClosesAtMs}; 404",
   "purpose": "Where an entry's stake and result finality stand.",
   "audience": "player/page",
-  "line": 4625,
+  "line": 13242,
   "summary": "Stake and finality of an entry",
   "query": [
    {
@@ -3465,7 +3465,7 @@
   "returns": "200 JSON {round, paymentHash, amountMsat, request}; 400/404/409/502/503",
   "purpose": "Gets a federation LNv2 invoice for the entry's net stake before joining a paying round.",
   "audience": "player/page",
-  "line": 4657,
+  "line": 13276,
   "summary": "Federation invoice for a stake",
   "query": [
    {
@@ -3528,7 +3528,7 @@
   "returns": "200 octet-stream entry contract; 404",
   "purpose": "Returns a stored entry contract (makes equivocation proofs portable).",
   "audience": "game/market developer",
-  "line": 4705,
+  "line": 13525,
   "summary": "Entry contract by id",
   "query": [
    {
@@ -3564,7 +3564,7 @@
   "returns": "200 octet-stream receipts, header x-foreign-receipts; 204 none",
   "purpose": "Lists receipts seen for marks this node does not hold (gossip signal).",
   "audience": "node-to-node",
-  "line": 4718,
+  "line": 13538,
   "summary": "Receipts for marks not held",
   "query": [],
   "body": null,
@@ -3595,7 +3595,7 @@
   "returns": "200 octet-stream pairs of signed marks, headers x-equivocations, x-ticks-at; 204 none",
   "purpose": "Publishes proof that a player signed two marks for the same tick.",
   "audience": "node-to-node",
-  "line": 4733,
+  "line": 13553,
   "summary": "Two-marks equivocation proof",
   "query": [
    {
@@ -3640,7 +3640,7 @@
   "returns": "200 text \"proven\" | \"no proof\"; 400/404",
   "purpose": "Asks this node to pull and verify a two-first-marks proof now.",
   "audience": "node-to-node",
-  "line": 4759,
+  "line": 13586,
   "summary": "Pull a two-first-marks proof now",
   "query": [
    {
@@ -3687,7 +3687,7 @@
   "returns": "200 octet-stream mark; 204 none",
   "purpose": "Serves the player's late first mark this node keeps.",
   "audience": "node-to-node",
-  "line": 4768,
+  "line": 13597,
   "summary": "Player's late first mark",
   "query": [
    {
@@ -3728,7 +3728,7 @@
   "returns": "200 octet-stream canonical transcript, headers x-transcript-hash, x-ticks, x-marks, x-dropped, x-through-tick; 409",
   "purpose": "Returns the committee-carried canonical transcript of a run.",
   "audience": "node-to-node",
-  "line": 4782,
+  "line": 13611,
   "summary": "Canonical transcript of a run",
   "query": [
    {
@@ -3776,7 +3776,7 @@
   "returns": "200 text/html game replay page; 400/404",
   "purpose": "Serves the round's game replay page.",
   "audience": "game/market developer",
-  "line": 4805,
+  "line": 13634,
   "summary": "Game replay page",
   "query": [
    {
@@ -3823,7 +3823,7 @@
   "returns": "200 text/javascript core bundle the round names; 404/409",
   "purpose": "Serves the game rules (core) the round names, for replay.",
   "audience": "game/market developer",
-  "line": 4819,
+  "line": 13648,
   "summary": "Game core for a replay",
   "query": [
    {
@@ -3869,7 +3869,7 @@
   "returns": "200 text/javascript arena-client bundle",
   "purpose": "Serves the protocol decoders/client bundle for the replay page.",
   "audience": "game/market developer",
-  "line": 4842,
+  "line": 13671,
   "summary": "Client bundle for the replay page",
   "query": [],
   "body": null,
@@ -3893,7 +3893,7 @@
   "returns": "200 JSON transcript (ticks, ...) + clock {firstTick, firstMs, lastTick, lastMs}; 400/404",
   "purpose": "The run as this node replays it, as JSON.",
   "audience": "game/market developer",
-  "line": 4848,
+  "line": 13677,
   "summary": "Run as JSON for replay",
   "query": [
    {
@@ -3940,7 +3940,7 @@
   "returns": "200 JSON {stable, endpoints[] https}",
   "purpose": "Other committee endpoints that may hold the run.",
   "audience": "game/market developer",
-  "line": 4865,
+  "line": 13693,
   "summary": "Other endpoints holding the run",
   "query": [
    {
@@ -3976,7 +3976,7 @@
   "returns": "200 octet-stream transcript, headers x-transcript-hash, x-ticks",
   "purpose": "Everything this node received for a run (input transcript).",
   "audience": "node-to-node",
-  "line": 4879,
+  "line": 13718,
   "summary": "Input transcript of a run",
   "query": [
    {
@@ -4016,7 +4016,7 @@
   "returns": "200 octet-stream sealed share answer, header x-signer-node; 400/409",
   "purpose": "Hands one signer node's share of a stake preimage to another signer node.",
   "audience": "node-to-node",
-  "line": 4910,
+  "line": 13749,
   "summary": "Sealed stake share for a signer node",
   "query": [
    {
@@ -4078,7 +4078,7 @@
   "returns": "200 JSON array of close states (HOLDING/SIGNED)",
   "purpose": "Runs this node could not sign at close and their state.",
   "audience": "operator/monitoring",
-  "line": 4945,
+  "line": 13784,
   "summary": "Runs not signed at close",
   "query": [
    {
@@ -4109,7 +4109,7 @@
   "returns": "200 octet-stream fixed-size signed results, headers x-results, x-no-quorum?",
   "purpose": "Signed player results held for a run.",
   "audience": "game/market developer",
-  "line": 4951,
+  "line": 13790,
   "summary": "Signed player results of a run",
   "query": [
    {
@@ -4149,7 +4149,7 @@
   "returns": "200 octet-stream fixed-size signed postings, header x-postings",
   "purpose": "Each signer node's signed word that it posted the run's transcript.",
   "audience": "node-to-node",
-  "line": 4969,
+  "line": 13808,
   "summary": "Signed transcript postings",
   "query": [
    {
@@ -4188,7 +4188,7 @@
   "returns": "201/200 JSON {held, fresh, why, state, ...}; 400/404/409",
   "purpose": "Submits the attested outcome of an oracle or market round, or a scalar market's observed value. A conflicting one marks the round DISPUTED.",
   "audience": "game/market developer",
-  "line": 5223,
+  "line": 13829,
   "summary": "Submit an outcome attestation",
   "query": [
    {
@@ -4243,7 +4243,7 @@
   "returns": "201/200 JSON {round, held, fresh, ok, outcome?, label?, refund?, void?, value, signers, threshold, source, voided, why, state, ...}; 400/404/409",
   "purpose": "Hands a seat the source round's signed result for a market on a game's outcome (protocol 2026.0.6). The seat checks it and holds it where it would hold an attestation; the market then settles like an attested one (pari-mutuel). A refund (Tick Tock FLAT), or a source that can never fit, is held as VOID at once. Seats also fetch the result themselves.",
   "audience": "game/market developer",
-  "line": 5226,
+  "line": 13882,
   "summary": "Hand in a market-on-a-game outcome",
   "query": [
    {
@@ -4298,7 +4298,7 @@
   "returns": "200 JSON {round, state OPEN|ATTESTED|DISPUTED|VOID, outcomes (the round's own labels for a template round), question?, resolveAtMs?, scalar? {low, high, unit}, outcome?, label?, value?, clamped?, valuesNamed?, attestation? | gameOutcome?, table?, ...}; 400/404/409",
   "purpose": "The current outcome of an attested round, with the round's own question and labels if it has one. For a market on a game: the held source result (gameOutcome: RoundResult, signatures, source contract) instead of an attestation, and VOID at once on a refund. For a scalar market: its bounds, the attested value, where it pays (clamped) and the scalar table.",
   "audience": "game/market developer",
-  "line": 5278,
+  "line": 13907,
   "summary": "Outcome of an attested round",
   "query": [
    {
@@ -4344,7 +4344,7 @@
   "returns": "200 JSON {nowMs, wants:{game: atMs}}",
   "purpose": "When each head-to-head game was last wanted.",
   "audience": "operator/monitoring",
-  "line": 5033,
+  "line": 13928,
   "summary": "When each head-to-head game was wanted",
   "query": [],
   "body": null,
@@ -4368,7 +4368,7 @@
   "returns": "200 JSON {ok, game, atMs}; 404",
   "purpose": "A page says it wants a head-to-head table; the grid keeper reads it to publish rounds (memory only).",
   "audience": "player/page",
-  "line": 5037,
+  "line": 13928,
   "summary": "Ask for a head-to-head table",
   "query": [
    {
@@ -4404,7 +4404,7 @@
   "returns": "200 JSON {round, here:[{key, name, agoMs}]}; 400/404/409",
   "purpose": "Who sits at a head-to-head round's table now.",
   "audience": "player/page",
-  "line": 5044,
+  "line": 13941,
   "summary": "Who sits at a table",
   "query": [
    {
@@ -4450,7 +4450,7 @@
   "returns": "200 JSON {round, here:[{key, name, agoMs}]}; 400/403/404/409/503",
   "purpose": "Says this tab sits at a head-to-head round's table (memory only).",
   "audience": "player/page",
-  "line": 5055,
+  "line": 13941,
   "summary": "Say this tab sits at a table",
   "query": [
    {
@@ -4510,7 +4510,7 @@
   "returns": "201 (taken) / 200 (held already) JSON {held, fresh}; 400/403 (identity proof does not verify)/404/409 with the reason",
   "purpose": "A head-to-head player reveals its hidden move (e.g. Rock Paper Scissors).",
   "audience": "player/page",
-  "line": 5078,
+  "line": 14041,
   "summary": "Reveal a head-to-head move",
   "query": [
    {
@@ -4570,7 +4570,7 @@
   "returns": "200 JSON {round, samples[], tape, feed}; 400",
   "purpose": "Attested price samples and tape this seat holds for a price round.",
   "audience": "player/page",
-  "line": 5132,
+  "line": 14127,
   "summary": "Attested price samples of a round",
   "query": [
    {
@@ -4620,7 +4620,7 @@
   "returns": "200 JSON {ok, round, openCents, closeCents, front, samples, openTick, closeTick, committee, needed, key, signature}; 400/404/409",
   "purpose": "This seat's signed result of a price round, once the round has ended.",
   "audience": "player/page",
-  "line": 5141,
+  "line": 14136,
   "summary": "Signed result of a price round",
   "query": [
    {
@@ -4666,7 +4666,7 @@
   "returns": "200 JSON {ok}; 400/409",
   "purpose": "Hands over an attested price sample or tape to keep.",
   "audience": "node-to-node",
-  "line": 5147,
+  "line": 14144,
   "summary": "Hand over an attested price",
   "query": [],
   "body": {
@@ -4709,7 +4709,7 @@
   "returns": "200 JSON {ok, key, signature}; 400/404/409",
   "purpose": "Asks this seat to sign a price sample or opening tape it read too.",
   "audience": "node-to-node",
-  "line": 5147,
+  "line": 14144,
   "summary": "Ask this seat to sign a price",
   "query": [],
   "body": {
@@ -4752,7 +4752,7 @@
   "returns": "200 JSON {seat, k, orders[], cancels[], sells[], pending[]}; 400",
   "purpose": "This seat's unbatched orders, cancels and sells before batch k's cutoff (market order book).",
   "audience": "node-to-node",
-  "line": 5159,
+  "line": 14159,
   "summary": "Seat's proposal for batch k",
   "query": [
    {
@@ -4795,7 +4795,7 @@
   "returns": "200 JSON {certificates[]}; 400",
   "purpose": "Every certified batch of a market round, for a seat that missed one.",
   "audience": "node-to-node",
-  "line": 5163,
+  "line": 14159,
   "summary": "Certified batches of a market",
   "query": [
    {
@@ -4831,7 +4831,7 @@
   "returns": "200 JSON {ok, batches[], refused, resting, pending, positions[]}; 400/409",
   "purpose": "The market order book as this seat clears it, with every position.",
   "audience": "player/page",
-  "line": 5164,
+  "line": 14159,
   "summary": "Market order book as cleared here",
   "query": [
    {
@@ -4872,7 +4872,7 @@
   "returns": "201 JSON {ok, seat, signature, storedAtMs, fresh}; 200 when held already; 400/403/409",
   "purpose": "The leader's set for batch k; this seat holds and signs it or refuses.",
   "audience": "node-to-node",
-  "line": 5175,
+  "line": 14187,
   "summary": "Leader's set for batch k",
   "query": [
    {
@@ -4927,7 +4927,7 @@
   "returns": "201 {ok, fresh:true}; 200 held already; 400/403/409",
   "purpose": "Hands over a certified batch; it is in the book from then on.",
   "audience": "node-to-node",
-  "line": 5176,
+  "line": 14188,
   "summary": "Hand over a certified batch",
   "query": [
    {
@@ -4982,7 +4982,7 @@
   "returns": "201/200 JSON result; 400/403/409",
   "purpose": "Voids batch k; its orders wait for a later batch.",
   "audience": "node-to-node",
-  "line": 5177,
+  "line": 14189,
   "summary": "Void batch k",
   "query": [
    {
@@ -5037,7 +5037,7 @@
   "returns": "201 JSON {ok, id, fresh}; 200 held already; 400/403/409 (after market close)",
   "purpose": "A market player sells shares its entry holds; matched in a batch, paid at settlement.",
   "audience": "player/page",
-  "line": 5178,
+  "line": 14190,
   "summary": "Sell shares an entry holds",
   "query": [
    {
@@ -5092,7 +5092,7 @@
   "returns": "201 JSON {ok, seat, signed, batchId} or {ok, seat, declined}; 400",
   "purpose": "Asks this seat for its signature on batch k, else its signed decline (it never signs k after).",
   "audience": "node-to-node",
-  "line": 5179,
+  "line": 14180,
   "summary": "Ask a seat to sign or decline batch k",
   "query": [
    {
@@ -5145,7 +5145,7 @@
   "returns": "201 JSON {cancelled:true, fresh:true}; 200 {cancelled:true, fresh:false} (held already); for an order-book order 202/200 {cancelled:false, inNextBatch:true, id} (takes effect in a batch); 400/403/404/409",
   "purpose": "A market player cancels an order before its round's entry close, at no cost: the entry leaves the round and its stake and fee locks come back at once (GET /forfeit, GET /forfeit?lock=fee). Post it to every seat.",
   "audience": "player/page",
-  "line": 5193,
+  "line": 14205,
   "summary": "Cancel a market order",
   "query": [
    {
@@ -5210,7 +5210,7 @@
   "returns": "200 JSON {round, cancels:[{entry, signature}]}; 400/404",
   "purpose": "Every cancel this seat holds for a market round; the other seats pull them before they settle.",
   "audience": "node-to-node",
-  "line": 5225,
+  "line": 14259,
   "summary": "Cancels held for a market round",
   "query": [
    {
@@ -5251,7 +5251,7 @@
   "returns": "200 JSON {round, reveals:[{entry, move, salt, identity?:{key, sig}}]}; 400/404",
   "purpose": "Every reveal this node holds for a head-to-head round; the other nodes pull these at the round's close so all decide from the same moves.",
   "audience": "node-to-node",
-  "line": 5235,
+  "line": 14269,
   "summary": "Reveals held for a head-to-head round",
   "query": [
    {
@@ -5292,7 +5292,7 @@
   "returns": "200 JSON {key, donations[]}; 400",
   "purpose": "Donation outputs this node verified for a recipient key.",
   "audience": "game/market developer",
-  "line": 5248,
+  "line": 14309,
   "summary": "Donations verified for a key",
   "query": [
    {
@@ -5335,7 +5335,7 @@
   "returns": "200 JSON {deleted}; 400/403/409",
   "purpose": "Recipient acknowledges donations read; node deletes those rows.",
   "audience": "game/market developer",
-  "line": 5259,
+  "line": 14320,
   "summary": "Acknowledge donations read",
   "query": [],
   "body": {
@@ -5378,7 +5378,7 @@
   "returns": "201 text \"stake lock verified ...\"; 400/404/409",
   "purpose": "Hands over a player's federation stake lock for verification.",
   "audience": "player/page",
-  "line": 5286,
+  "line": 14360,
   "summary": "Hand over a stake lock",
   "query": [
    {
@@ -5428,7 +5428,7 @@
   "returns": "201 text \"fee lock verified ...\"; 400/404/409",
   "purpose": "Hands over a player's fee lock for verification.",
   "audience": "player/page",
-  "line": 5314,
+  "line": 14396,
   "summary": "Hand over a fee lock",
   "query": [
    {
@@ -5478,7 +5478,7 @@
   "returns": "201 text with forfeit link; 400/404/409",
   "purpose": "Registers a stake locked for a round this node refuses so it can be returned at once.",
   "audience": "player/page",
-  "line": 5342,
+  "line": 14430,
   "summary": "Register a lock for a refused round",
   "query": [
    {
@@ -5528,7 +5528,7 @@
   "returns": "200 JSON array of verified (and refused-round) locks",
   "purpose": "Finds a player's stake locks by refund key (seed recovery).",
   "audience": "player/page",
-  "line": 5400,
+  "line": 14603,
   "summary": "Find stake locks by refund key",
   "query": [
    {
@@ -5570,7 +5570,7 @@
   "returns": "200 octet-stream nonce commitment; 400/409",
   "purpose": "Round one of the committee signing of a qualifier's lock forfeit.",
   "audience": "node-to-node",
-  "line": 5423,
+  "line": 14628,
   "summary": "Forfeit signing, round one",
   "query": [
    {
@@ -5623,7 +5623,7 @@
   "returns": "200 octet-stream signature share; 400/409",
   "purpose": "Round two of the forfeit signing.",
   "audience": "node-to-node",
-  "line": 5429,
+  "line": 14636,
   "summary": "Forfeit signing, round two",
   "query": [
    {
@@ -5680,7 +5680,7 @@
   "returns": "201 \"forfeit kept\"; 400/409",
   "purpose": "Hands over the combined forfeit signature.",
   "audience": "node-to-node",
-  "line": 5437,
+  "line": 14620,
   "summary": "Hand over the forfeit signature",
   "query": [
    {
@@ -5737,7 +5737,7 @@
   "returns": "200 octet-stream signed SettlementAck (195 bytes); 400/409",
   "purpose": "A seat's signed word on the table it computed and the transaction it rebuilt, given before it joins the FROST signing (protocol 22).",
   "audience": "node-to-node",
-  "line": 5459,
+  "line": 14672,
   "summary": "A seat's SettlementAck",
   "query": [
    {
@@ -5796,7 +5796,7 @@
   "returns": "200 octet-stream nonce commitment, from protocol 26 with the seat's signed commit in the x-settlement-commit header (hex); 400/409",
   "purpose": "Round one of signing the round's settlement of losers' locks. From protocol 22 a seat joins only with acks from at least the threshold in the body.",
   "audience": "node-to-node",
-  "line": 5459,
+  "line": 14681,
   "summary": "Settlement signing, round one",
   "query": [
    {
@@ -5855,7 +5855,7 @@
   "returns": "200 octet-stream signature share; 400/409",
   "purpose": "Round two of the settlement signing.",
   "audience": "node-to-node",
-  "line": 5465,
+  "line": 14691,
   "summary": "Settlement signing, round two",
   "query": [
    {
@@ -5912,7 +5912,7 @@
   "returns": "201 \"settlement signature kept\"; 400/409",
   "purpose": "Hands over the combined settlement signature.",
   "audience": "node-to-node",
-  "line": 5473,
+  "line": 14655,
   "summary": "Hand over the settlement signature",
   "query": [
    {
@@ -5969,7 +5969,7 @@
   "returns": "200 JSON {signed, signature}; 404 when no signed address is held",
   "purpose": "The Lightning address an entry named, as signed, for a seat that took the entry from a peer (kanban #1071).",
   "audience": "node-to-node",
-  "line": 0
+  "line": 14707
  },
  {
   "method": "POST",
@@ -5979,7 +5979,7 @@
   "returns": "201 JSON {entry, address, state:NAMED, why}; 400/403/404/409",
   "purpose": "Names where a player's winnings are sent.",
   "audience": "player/page",
-  "line": 5482,
+  "line": 14743,
   "summary": "Name where winnings are sent",
   "query": [
    {
@@ -6034,7 +6034,7 @@
   "returns": "200 JSON kept send plan; 400/409",
   "purpose": "The winnings send plan this node keeps for a round.",
   "audience": "node-to-node",
-  "line": 5510,
+  "line": 14773,
   "summary": "Kept winnings send plan",
   "query": [
    {
@@ -6081,7 +6081,7 @@
   "returns": "201 octet-stream this seat's signature over the plan id; 400/409",
   "purpose": "Coordinator proposes winnings send plans; seat signs if they stand.",
   "audience": "node-to-node",
-  "line": 5523,
+  "line": 14793,
   "summary": "Propose winnings send plans",
   "query": [
    {
@@ -6132,7 +6132,7 @@
   "returns": "201 text \"N of M seats' signed agreement kept\"; 400/409",
   "purpose": "Hands in the seats' signed agreement on a send plan.",
   "audience": "node-to-node",
-  "line": 5544,
+  "line": 14818,
   "summary": "Hand in signed plan agreement",
   "query": [
    {
@@ -6183,7 +6183,7 @@
   "returns": "200 JSON {planId, certificate}; 404",
   "purpose": "Serves the signed agreement a settlement plan was taken by.",
   "audience": "node-to-node",
-  "line": 5554,
+  "line": 14842,
   "summary": "Signed agreement of a send plan",
   "query": [
    {
@@ -6230,7 +6230,7 @@
   "returns": "200 JSON {round, settlements: [{scope, txid, payoutTableId, table, acks, madeMs}]}; 400; 404",
   "purpose": "The signed acks and the table each settlement of a round stood on, as this seat joined it, landed or not.",
   "audience": "node-to-node",
-  "line": 5554,
+  "line": 14830,
   "summary": "Acks published with a settlement",
   "query": [
    {
@@ -6277,7 +6277,7 @@
   "returns": "201 \"the winning is kept as paid\"; 400/409",
   "purpose": "Reports a winnings payment preimage.",
   "audience": "node-to-node",
-  "line": 5579,
+  "line": 14867,
   "summary": "Report a winnings preimage",
   "query": [
    {
@@ -6334,7 +6334,7 @@
   "returns": "200 octet-stream nonce commitment; 400/409",
   "purpose": "Round one of authorising a winnings send.",
   "audience": "node-to-node",
-  "line": 5589,
+  "line": 14883,
   "summary": "Winnings send auth, round one",
   "query": [
    {
@@ -6406,7 +6406,7 @@
   "returns": "200 octet-stream signature share; 400/409",
   "purpose": "Round two of authorising a winnings send.",
   "audience": "node-to-node",
-  "line": 5595,
+  "line": 14855,
   "summary": "Winnings send auth, round two",
   "query": [
    {
@@ -6476,7 +6476,7 @@
   "returns": "201 \"re-send checked and kept\"; 400/409",
   "purpose": "Proposes a re-send of an expired winnings payment.",
   "audience": "node-to-node",
-  "line": 5605,
+  "line": 14903,
   "summary": "Propose a winnings re-send",
   "query": [
    {
@@ -6527,7 +6527,7 @@
   "returns": "200 JSON {entry, round, nowMs, ...standing (state, payout row, window open/close; heldByNoQuorum and the later close when the round waits on a no-quorum entry)}; 404",
   "purpose": "Pending-line figure: entry state and payout row so far.",
   "audience": "player/page",
-  "line": 5626,
+  "line": 14928,
   "summary": "Pending-line standing of an entry",
   "query": [
    {
@@ -6568,7 +6568,7 @@
   "returns": "200 JSON {entry, send, winnings {state, owedMsat, request, paidMs}}; 404",
   "purpose": "Where an entry's winnings stand.",
   "audience": "player/page",
-  "line": 5640,
+  "line": 14958,
   "summary": "Where an entry's winnings stand",
   "query": [
    {
@@ -6609,7 +6609,7 @@
   "returns": "200 JSON {bondMinSats, proposalDepositSats, declaring, of}; 400/404/409",
   "purpose": "Bond-weighted medians of what the round's census nodes declare.",
   "audience": "game/market developer",
-  "line": 5656,
+  "line": 14974,
   "summary": "Bond-weighted census medians",
   "query": [
    {
@@ -6655,7 +6655,7 @@
   "returns": "200 JSON {speedX, samples, runMs, maxPlayersPerRound, retention, lastPrune{atMs, pruned, kept, rows}, unusedRounds{deleted, rows, passes, lastAtMs, caughtUpAtMs}}",
   "purpose": "This seat's measured replay speed and how many players a round can hold in the result window. Also its storage cleanup: transcripts are deleted when the claim window ends (lastPrune), and unused rounds are deleted with their committee and seating records after their windows (unusedRounds).",
   "audience": "operator/monitoring",
-  "line": 5670,
+  "line": 14988,
   "summary": "Measured replay speed and capacity",
   "query": [
    {
@@ -6687,7 +6687,7 @@
   "returns": "200 JSON {ok, stakeSats, ceilingSats, why, enforced}; 400/404/409",
   "purpose": "A round's stake against the ceiling its census supports; enforced only off test networks.",
   "audience": "game/market developer",
-  "line": 5681,
+  "line": 15001,
   "summary": "Stake against the census ceiling",
   "query": [
    {
@@ -6733,7 +6733,7 @@
   "returns": "200 JSON {txid, feeSats, payoutSats}; 400/404/409/422/503",
   "purpose": "Proves a series' on-chain publication and its fee, for the publisher payout.",
   "audience": "game/market developer",
-  "line": 5698,
+  "line": 15016,
   "summary": "Prove a series publication",
   "query": [],
   "body": {
@@ -6786,7 +6786,7 @@
   "returns": "200 text: creator signature hex; 400/404",
   "purpose": "The creator signature kept beside a round contract that names its creator.",
   "audience": "node-to-node",
-  "line": 5720,
+  "line": 15043,
   "summary": "Creator signature of a round",
   "query": [
    {
@@ -6827,7 +6827,7 @@
   "returns": "200 JSON {state, txid, why, signature, message, madeMs, moved} or {state:NONE}; for a round that takes any federation {state ACCEPTED|REFUSED|SUBMITTING, federations[]}",
   "purpose": "Where the round's settlement of losers' locks stands. `moved` is what the settlement paid: `moved.payouts[]`, each {kind, pk, sats}. These are the winners (kind qualifier) and, from 2026.0.16, the four 1 % node pools: game/verify, settlement, custody (guardians ⅔, gateways ⅓) and liquidity providers (by weight).",
   "audience": "game/market developer",
-  "line": 5728,
+  "line": 15051,
   "summary": "Losers' lock settlement state",
   "query": [
    {
@@ -6863,7 +6863,7 @@
   "returns": "200 JSON {node, nowMs, since, rounds:[{id, state, madeMs, payouts[], refunds}]}",
   "purpose": "Rounds settled since a time, for seed-only recovery on another device.",
   "audience": "player/page",
-  "line": 5753,
+  "line": 15101,
   "summary": "Rounds settled since a time",
   "query": [
    {
@@ -6900,7 +6900,7 @@
   "returns": "200 JSON {signature, contractId, claimPk, kept}; 400/409",
   "purpose": "Returns the forfeit of a qualifier's lock, or of a cancelled market order's stake and fee locks. If needed, the node makes it with the other signer nodes first.",
   "audience": "player/page",
-  "line": 5772,
+  "line": 15123,
   "summary": "Get or make a lock forfeit",
   "query": [
    {
@@ -6953,7 +6953,7 @@
   "returns": "200 JSON {rotations:[{body, signature}]}; 404",
   "purpose": "Donation-authority rotations held for the round's network.",
   "audience": "player/page",
-  "line": 5796,
+  "line": 15147,
   "summary": "Donation-authority rotations",
   "query": [
    {
@@ -6994,7 +6994,7 @@
   "returns": "200 octet-stream encoded game donation set; 404",
   "purpose": "The round's game developer donation set.",
   "audience": "game/market developer",
-  "line": 5810,
+  "line": 15161,
   "summary": "Round's game donation set",
   "query": [
    {
@@ -7035,7 +7035,7 @@
   "returns": "200 octet-stream signed game manifest; 404",
   "purpose": "The signed manifest of the round's game.",
   "audience": "game/market developer",
-  "line": 5824,
+  "line": 15175,
   "summary": "Round's signed game manifest",
   "query": [
    {
@@ -7076,7 +7076,7 @@
   "returns": "200 octet-stream donation set body + 64-byte Ed25519 signature; 404",
   "purpose": "The signed network donation set the round names.",
   "audience": "player/page",
-  "line": 5835,
+  "line": 15352,
   "summary": "Round's signed network donation set",
   "query": [
    {
@@ -7117,7 +7117,7 @@
   "returns": "200 octet-stream claim-key attestation + BIP-340 signature; 404/409",
   "purpose": "This assigned signer node's signed claim key for the round (players lock to it).",
   "audience": "player/page",
-  "line": 5850,
+  "line": 15462,
   "summary": "Signed claim key of a round",
   "query": [
    {
@@ -7163,7 +7163,7 @@
   "returns": "200 octet-stream fixed-size signed re-run results, header x-reruns",
   "purpose": "Signer nodes' re-runs of a suspended result (own one re-signed now).",
   "audience": "node-to-node",
-  "line": 5885,
+  "line": 15497,
   "summary": "Signed re-runs of a result",
   "query": [
    {
@@ -7202,7 +7202,7 @@
   "returns": "200 JSON {slashHeight, tipHeight, owing:[{node, bond, offence, bondSats, playersMsat, reservesMsat, shortMsat, players[]}]}; 400/404/409",
   "purpose": "What filed slash proofs owe and to whom at a given height; records nothing.",
   "audience": "operator/monitoring",
-  "line": 5916,
+  "line": 15523,
   "summary": "What filed slash proofs owe",
   "query": [
    {
@@ -7260,7 +7260,7 @@
   "returns": "200 JSON {node, slashes:[{round, entry, node, proof, seenMs, objection}], auditSlashes:[...], doubleSlashes:[{round, entry, node, proof, seenMs}], tableSlashes:[{round, entry (zeros), node, proof, seenMs}]}",
   "purpose": "Every slash proof this node filed, for the arbitration set to fetch.",
   "audience": "node-to-node",
-  "line": 5986,
+  "line": 15616,
   "summary": "Slash proofs this node filed",
   "query": [],
   "body": null,
@@ -7284,7 +7284,7 @@
   "returns": "200 octet-stream objection bundle; 404",
   "purpose": "The objection that held against a run, as checked here, for the arbiter to replay.",
   "audience": "node-to-node",
-  "line": 5993,
+  "line": 15675,
   "summary": "Objection that held against a run",
   "query": [
    {
@@ -7326,7 +7326,7 @@
   "returns": "200 JSON {ok, height, nodePubkey, body, signature, leaving, leaveSig}; 400/404 {ok:false, why}",
   "purpose": "This guardian node's signature over its federation record (optionally with named guardians gone).",
   "audience": "node-to-node",
-  "line": 6001,
+  "line": 15683,
   "summary": "Guardian signature over a federation record",
   "query": [
    {
@@ -7397,7 +7397,7 @@
   "returns": "201/200 JSON {ok, kept}; 400/404/409 text (404 when the seat runs no founding, ARENA_FOUNDING)",
   "purpose": "A drawn node hands in its signed federation setup code.",
   "audience": "node-to-node",
-  "line": 6025,
+  "line": 15729,
   "summary": "Hand in a federation setup code",
   "query": [],
   "body": {
@@ -7445,7 +7445,7 @@
   "returns": "200 JSON {node, ...founding state} or {node, off:true} / {none:true}",
   "purpose": "This seat's view of a federation founding.",
   "audience": "operator/monitoring",
-  "line": 6031,
+  "line": 15735,
   "summary": "Founding state of this seat",
   "query": [],
   "body": null,
@@ -7469,7 +7469,7 @@
   "returns": "201 (kept) / 200 JSON {ok, kept}; 400/422",
   "purpose": "Hands over a signed attestation that a guardian peer is absent.",
   "audience": "node-to-node",
-  "line": 6034,
+  "line": 15742,
   "summary": "Hand over an absence attestation",
   "query": [],
   "body": {
@@ -7512,7 +7512,7 @@
   "returns": "200 JSON {node, absences[], departures[]} (hex)",
   "purpose": "Absence attestations and departure notices this seat holds.",
   "audience": "node-to-node",
-  "line": 6039,
+  "line": 15747,
   "summary": "Absences and departures held",
   "query": [
    {
@@ -7543,7 +7543,7 @@
   "returns": "201 (kept) / 200 JSON {ok, kept}; 400/422",
   "purpose": "A guardian's notice that it leaves its federation.",
   "audience": "node-to-node",
-  "line": 6043,
+  "line": 15782,
   "summary": "Hand over a departure notice",
   "query": [],
   "body": {
@@ -7586,7 +7586,7 @@
   "returns": "201 JSON (kept) / 200 (equivocation proof); 400/409",
   "purpose": "Hands over a seating certificate; a differing one is kept as proof of equivocation.",
   "audience": "node-to-node",
-  "line": 6050,
+  "line": 15790,
   "summary": "Hand over a seating certificate",
   "query": [],
   "body": {
@@ -7634,7 +7634,7 @@
   "returns": "201 \"present kept\"; 409",
   "purpose": "A drawn node says it is present for a round's seating.",
   "audience": "node-to-node",
-  "line": 6057,
+  "line": 15800,
   "summary": "Say present for a seating",
   "query": [],
   "body": {
@@ -7672,7 +7672,7 @@
   "returns": "201 JSON {ok, taken, refused[]}; 400",
   "purpose": "Many PRESENTs in one post.",
   "audience": "node-to-node",
-  "line": 6063,
+  "line": 15885,
   "summary": "Many PRESENTs in one post",
   "query": [],
   "body": {
@@ -7710,7 +7710,7 @@
   "returns": "201 JSON {ok, taken, refused[]}; 400",
   "purpose": "A node's HEARTBEATs for 22 rounds' heartbeat slots (§5A.3, kanban #727): the committee member keeps each until the slot closes and lists it in its HEARD.",
   "audience": "node-to-node",
-  "line": 6063,
+  "line": 15869,
   "summary": "Hand HEARTBEATs to a heartbeat committee member",
   "query": [],
   "body": {
@@ -7748,7 +7748,7 @@
   "returns": "201 JSON {ok, taken, refused[]}; 400",
   "purpose": "Other members' HEARDs of a heartbeat slot (§5A.3, kanban #727): with 5 of the committee's, the slot's certificate is kept.",
   "audience": "node-to-node",
-  "line": 6063,
+  "line": 15873,
   "summary": "Hand HEARDs to the other members of a heartbeat committee",
   "query": [],
   "body": {
@@ -7786,7 +7786,7 @@
   "returns": "200 JSON {cert}; 400; 404",
   "purpose": "The heartbeat certificate of one slot of a 22 round held here (§5A.3, kanban #727): who 5 or more of its committee heard; every census node it does not list missed that slot.",
   "audience": "node-to-node",
-  "line": 6063,
+  "line": 15878,
   "summary": "A heartbeat slot's certificate",
   "query": [
    {
@@ -7831,7 +7831,7 @@
   "returns": "200 JSON { round, node, txid, vout, signature, panels } / 400 / 404",
   "purpose": "A template-3 bond's slash_presig, the one of the round named, or with no round the newest this seat holds, with the panels its hold output names.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 15900,
   "summary": "A bond's slash_presig",
   "query": [
    {
@@ -7881,7 +7881,7 @@
   "returns": "200 JSON {rounds:{id:{presents, sig, cert}}}; 400",
   "purpose": "Seating state of many rounds in one read.",
   "audience": "node-to-node",
-  "line": 6067,
+  "line": 15914,
   "summary": "Seating state of many rounds",
   "query": [
    {
@@ -7922,7 +7922,7 @@
   "returns": "200 JSON {node, presents:[hex], certs:[hex]}; 400",
   "purpose": "The PRESENTs this seat holds of those nodes for seatings in the 24 h before a census, and the protocol-22 seating certificates it holds that name them present or missed (§5A.3, kanban #727): a posting node asks before it leaves a node out of the census as absent, and leaves out only a node the certificates prove absent.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 15813,
   "summary": "Presence proofs of nodes",
   "query": [
    {
@@ -7964,7 +7964,7 @@
   "returns": "201 JSON {took, of}; 400",
   "purpose": "PRESENTs handed over as presence proofs: each kept when signed by the node it names for a round this seat holds whose seating closes in the 24 h (§5A.3, kanban #727).",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 15819,
   "summary": "Hand over presence proofs",
   "query": [
    {
@@ -8003,7 +8003,7 @@
   "returns": "200 JSON {root, claims:[{node, proofs}], certs, stalled?, contracts}; 400; 404",
   "purpose": "The absent claim of a protocol-22 census root: each node its posting node left out, with the 3 seatings (3 different closes in the 24 h) whose threshold-signed certificates show it drawn, or left out already, and present at none; the certificates; and the contracts of those rounds, so a client draws each itself (§5A.3, kanban #727). Every seat and the client check the proofs; a wrong one makes the census invalid. From protocol 26 the claim also carries `stalled`: each node left out with the 3 rounds whose seats named it, the notes and the certificates of those rounds' seatings (§5A.3 \"Stalled in its rounds\", kanban #1052).",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 15826,
   "summary": "Absent claim of a census",
   "query": [
    {
@@ -8044,7 +8044,7 @@
   "returns": "201 JSON {ok, root, nodes, certs}; 400",
   "purpose": "Keep the absent claim of a census root, as the posting node sends it before its grid (§5A.3, kanban #727). Kept as given; the root decides whether it is the census's, and the seat checks every proof - the certificates against its own draw of each seating - before it serves.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 15847,
   "summary": "Hand over an absent claim",
   "query": [],
   "body": {
@@ -8076,7 +8076,7 @@
   "returns": "200 JSON {node, notes:[hex], certs:[hex]}; 400",
   "purpose": "The StallNotes this seat holds of rounds whose final_after lies in (from, to], and the seating certificates of those rounds it holds (§5A.3 \"Stalled in its rounds\", protocol 26, kanban #1052). A duty node asks every seat before it posts a census: a node named by 4 seats of 3 duty rounds in the 72 h leaves the census as stalled.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 15856,
   "summary": "Stall notes of a window",
   "query": [
    {
@@ -8118,7 +8118,7 @@
   "returns": "201 JSON {took, of}",
   "purpose": "StallNotes handed over: each kept when signed by the seat it names, listing other seats, for a protocol-26 round this seat holds (§5A.3 \"Stalled in its rounds\", kanban #1052).",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 15861,
   "summary": "Hand over stall notes",
   "query": [],
   "body": {
@@ -8145,7 +8145,7 @@
   "returns": "200 JSON {presents:[{role, node, present}]}; 400",
   "purpose": "PRESENTs held for a round.",
   "audience": "node-to-node",
-  "line": 6076,
+  "line": 15800,
   "summary": "PRESENTs held for a round",
   "query": [
    {
@@ -8186,7 +8186,7 @@
   "returns": "200 JSON {equivocations[]}; 400",
   "purpose": "Proofs of two seatings for one round.",
   "audience": "node-to-node",
-  "line": 6077,
+  "line": 15924,
   "summary": "Seating equivocation proofs",
   "query": [
    {
@@ -8227,7 +8227,7 @@
   "returns": "200 JSON this node's seating signature; 400/404",
   "purpose": "This node's signature over a round's seating.",
   "audience": "node-to-node",
-  "line": 6079,
+  "line": 15926,
   "summary": "This node's seating signature",
   "query": [
    {
@@ -8275,7 +8275,7 @@
   "returns": "200 JSON {cert, index}; 400/404",
   "purpose": "The seating certificate held for a round and role.",
   "audience": "node-to-node",
-  "line": 6080,
+  "line": 15790,
   "summary": "Seating certificate of a round",
   "query": [
    {
@@ -8329,7 +8329,7 @@
   "returns": "200 JSON {node, federations[], drainPools}",
   "purpose": "Every federation record this seat mirrors, and who a drain pays.",
   "audience": "player/page",
-  "line": 6083,
+  "line": 15998,
   "summary": "Federation records mirrored here",
   "query": [
    {
@@ -8361,7 +8361,7 @@
   "returns": "201/200 JSON {ok, status, kept}; 400/409; 503 without a chain",
   "purpose": "A peer seat's signed observation of a federation halt.",
   "audience": "node-to-node",
-  "line": 6094,
+  "line": 16018,
   "summary": "Hand over a halt observation",
   "query": [],
   "body": {
@@ -8409,7 +8409,7 @@
   "returns": "200 JSON {node, federation, observations[], seen, proof}; 400",
   "purpose": "Halt observations held for a federation and the halt proof if one stands.",
   "audience": "node-to-node",
-  "line": 6100,
+  "line": 16032,
   "summary": "Halt observations of a federation",
   "query": [
    {
@@ -8445,7 +8445,7 @@
   "returns": "200 JSON {node, liquidations:[{federation, haltHeight, haltProof, claims, liquidatesAt, claim windows, spentSet}]}",
   "purpose": "Halted federations' liquidation schedules and where claims go.",
   "audience": "player/page",
-  "line": 6107,
+  "line": 16041,
   "summary": "Liquidation schedules",
   "query": [],
   "body": null,
@@ -8469,7 +8469,7 @@
   "returns": "201 (kept) / 200 JSON {ok, kept, session}; 400/422; 503",
   "purpose": "A guardian's signed spent-nonce set for a halted federation.",
   "audience": "node-to-node",
-  "line": 6112,
+  "line": 16061,
   "summary": "Hand over a spent-nonce set",
   "query": [],
   "body": {
@@ -8517,7 +8517,7 @@
   "returns": "200 octet-stream fixed-size slash evidence, header x-slash-proofs",
   "purpose": "Slash proofs this node filed for a run.",
   "audience": "node-to-node",
-  "line": 6118,
+  "line": 16067,
   "summary": "Slash proofs filed for a run",
   "query": [
    {
@@ -8556,7 +8556,7 @@
   "returns": "201 \"kept\"; 400/409",
   "purpose": "Relay stores a complete fraud proof under H(fraud_proof), the hash of its own bytes.",
   "audience": "node-to-node",
-  "line": 6131,
+  "line": 16080,
   "summary": "Relay stores a slash proof",
   "query": [],
   "body": {
@@ -8600,7 +8600,7 @@
   "returns": "200 octet-stream complete proof; 404",
   "purpose": "Relay serves the bytes under H(fraud_proof).",
   "audience": "node-to-node",
-  "line": 6155,
+  "line": 16080,
   "summary": "Relay serves a slash proof",
   "query": [],
   "body": null,
@@ -8635,7 +8635,7 @@
   "returns": "201 \"kept\"; 409",
   "purpose": "Publication relay stores a transcript under its hash.",
   "audience": "node-to-node",
-  "line": 6166,
+  "line": 16284,
   "summary": "Relay stores a transcript",
   "query": [],
   "body": {
@@ -8674,7 +8674,7 @@
   "returns": "200 octet-stream transcript; 404",
   "purpose": "Publication relay serves a transcript by hash.",
   "audience": "game/market developer",
-  "line": 6173,
+  "line": 16284,
   "summary": "Relay serves a transcript",
   "query": [],
   "body": null,
@@ -8709,7 +8709,7 @@
   "returns": "200 JSON {node, height, records}; 400 text",
   "purpose": "The signed record of each named federation this seat holds at or below a height, so a seat can read the same records as its peers.",
   "audience": "node-to-node",
-  "line": 6183,
+  "line": 15987,
   "summary": "Federation records at a height",
   "query": [
    {
@@ -8751,7 +8751,7 @@
   "returns": "200 octet-stream signed FINAL record; 409 text reason",
   "purpose": "This seat's FINAL signature on a run once the window has closed.",
   "audience": "node-to-node",
-  "line": 6183,
+  "line": 16424,
   "summary": "This seat's FINAL signature on a run",
   "query": [
    {
@@ -8793,7 +8793,7 @@
   "returns": "200 JSON {evidence:[{signer,signed,seenMs,why}]}; 400 text",
   "purpose": "FINAL signatures this seat refused for their time, each with its signed bytes: evidence against the signer (§13A rule 3).",
   "audience": "node-to-node",
-  "line": 6183,
+  "line": 16438,
   "summary": "FINAL signatures refused for their time",
   "query": [
    {
@@ -8835,7 +8835,7 @@
   "returns": "201 \"kept\"; 400/409",
   "purpose": "Peer pushes its FINAL signature on a run.",
   "audience": "node-to-node",
-  "line": 6197,
+  "line": 16445,
   "summary": "Push a FINAL signature",
   "query": [
    {
@@ -8886,7 +8886,7 @@
   "returns": "201/200/400/404/422 text",
   "purpose": "Files an objection against a run result; a holding one suspends it and triggers a re-run.",
   "audience": "player/page",
-  "line": 6210,
+  "line": 16542,
   "summary": "Object to a run result",
   "query": [
    {
@@ -8953,7 +8953,7 @@
   "returns": "200 octet-stream checkpoints, header x-checkpoints",
   "purpose": "Checkpoints (marks) of a run as received.",
   "audience": "node-to-node",
-  "line": 6277,
+  "line": 16618,
   "summary": "Checkpoints of a run",
   "query": [
    {
@@ -8992,7 +8992,7 @@
   "returns": "200 octet-stream receipts, header x-receipts",
   "purpose": "Receipts for a run's marks, so a reconnecting client can recover them.",
   "audience": "player/page",
-  "line": 6295,
+  "line": 16636,
   "summary": "Receipts of a run's marks",
   "query": [
    {
@@ -9031,7 +9031,7 @@
   "returns": "200 octet-stream 32-byte beacon block hash, header x-height; 404/409",
   "purpose": "The round's randomness beacon so the client seeds the same world.",
   "audience": "player/page",
-  "line": 6328,
+  "line": 16669,
   "summary": "Round randomness beacon",
   "query": [
    {
@@ -9079,7 +9079,7 @@
   "returns": "201 \"taken\" / 200 \"already\"; 409",
   "purpose": "Hands over a signer node's contribution to the committee key.",
   "audience": "node-to-node",
-  "line": 6363,
+  "line": 16704,
   "summary": "Hand over a DKG contribution",
   "query": [],
   "body": {
@@ -9117,7 +9117,7 @@
   "returns": "200 octet-stream this node's contribution; 404",
   "purpose": "Serves this node's own DKG contribution for an epoch.",
   "audience": "node-to-node",
-  "line": 6370,
+  "line": 16713,
   "summary": "This node's DKG contribution",
   "query": [
    {
@@ -9158,7 +9158,7 @@
   "returns": "200 octet-stream signed agreement bytes; 409",
   "purpose": "Which contributions this node combined, signed.",
   "audience": "node-to-node",
-  "line": 6382,
+  "line": 16727,
   "summary": "Signed DKG agreement",
   "query": [
    {
@@ -9199,7 +9199,7 @@
   "returns": "200 JSON { firstHeight, scannedTo, failing, keys, anchors, run, reshare, recent, lastWhy }; 404",
   "purpose": "The census keys standing on this seat's chain, how far its scan read, the closed epochs in a row a key was due and did not come (`failing`), and the runs it is in, a keygen and a reshare. A convenience: a key stands by its anchor on the chain alone.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16738,
   "summary": "Census keys and the current run",
   "query": [],
   "body": null,
@@ -9228,7 +9228,7 @@
   "returns": "200 JSON { firstHeight, records }; 404",
   "purpose": "Each standing key's anchor with its transaction and merkle branch. A page proves each into the chain it agreed and checks its signatures, so a seat can withhold a key and cannot make one up.",
   "audience": "player/page",
-  "line": 0,
+  "line": 16745,
   "summary": "Census key anchors with proofs",
   "query": [],
   "body": null,
@@ -9257,7 +9257,7 @@
   "returns": "200 JSON { height, entries }; 404; 503",
   "purpose": "The census a key's record is held to, as evidence of the same form as GET /census.",
   "audience": "player/page",
-  "line": 0,
+  "line": 16750,
   "summary": "A census key's census as evidence",
   "query": [
    {
@@ -9293,7 +9293,7 @@
   "returns": "200 { ok, session, node, xs, hiding, binding } or { ok: false, why }; 400",
   "purpose": "A filer's request that a census key holder sign a slash start, or a fallback (spec 5A.3B). For a start the holder replays the proof and holds the transaction to its own census and hold outputs; for a fallback it rebuilds the fallback and its payout table itself and signs only if its own table id is the one named. Only then does it commit a nonce.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16760,
   "summary": "Ask a census key holder to sign",
   "query": [],
   "body": {
@@ -9331,7 +9331,7 @@
   "returns": "200 { ok, z } or { ok: false, why }; 400",
   "purpose": "A holder's share of that signature. A nonce is used once: the session ends here whatever comes of it.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16760,
   "summary": "A census key holder's signature share",
   "query": [],
   "body": {
@@ -9369,7 +9369,7 @@
   "returns": "200 \"taken\"; 400; 409",
   "purpose": "An old holder's ReshareReady for the reshare going round. Signatures covering the old threshold go on the chain in an 'ARN' 'R' anchor, and that anchor says who is present.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16786,
   "summary": "Say ready for a reshare",
   "query": [],
   "body": {
@@ -9407,7 +9407,7 @@
   "returns": "200 JSON { key, run, signatures }; 404",
   "purpose": "The ReshareReady signatures this node holds, so an old holder that missed one asks a peer.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16791,
   "summary": "ReshareReady signatures held",
   "query": [
    {
@@ -9449,7 +9449,7 @@
   "returns": "200 JSON { run, epoch, dealers, set, recordId, statements, complaints }; 404",
   "purpose": "What this node holds of a census key run, all of it public, so a holder can pull what it missed.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16812,
   "summary": "What a node holds of a census key run",
   "query": [
    {
@@ -9485,7 +9485,7 @@
   "returns": "201 \"taken\" / 200 \"already\"; 409",
   "purpose": "Hands over a census key deal, signed by its dealer. The first signed deal per dealer stands, and the deals close at the run's midpoint.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16797,
   "summary": "Hand over a census key deal",
   "query": [],
   "body": {
@@ -9523,7 +9523,7 @@
   "returns": "200 binary; 404",
   "purpose": "Serves a signed deal this node holds, so a holder that missed it asks a peer and not the dealer.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16818,
   "summary": "Fetch a census key deal",
   "query": [
    {
@@ -9565,7 +9565,7 @@
   "returns": "200 \"taken\"; 400; 409",
   "purpose": "Proves a deal bad, in a form anyone can check, so every honest node drops it before it signs.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16803,
   "summary": "Prove a census key deal bad",
   "query": [],
   "body": {
@@ -9603,7 +9603,7 @@
   "returns": "200 \"taken\"; 400; 409",
   "purpose": "A holder's signature on the CensusKeyRecord of the deals it holds. Holders of the threshold on one record make the key.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16807,
   "summary": "Sign a census key record",
   "query": [],
   "body": {
@@ -9641,7 +9641,7 @@
   "returns": "200 octet-stream 32-byte pubkeys, headers x-eligible, x-signer-nodes, x-census-root; 409",
   "purpose": "The round's committee drawn from the chain census.",
   "audience": "game/market developer",
-  "line": 6391,
+  "line": 16825,
   "summary": "Round committee from the census",
   "query": [
    {
@@ -9693,7 +9693,7 @@
   "returns": "binary receipts, ghost frames; text watching N / closed / error ...",
   "purpose": "Game socket: sends signed marks, receives receipts and other players' ghosts; peers gossip receipts.",
   "audience": "player/page",
-  "line": 6426,
+  "line": 16973,
   "summary": "Game WebSocket",
   "query": [],
   "body": null,
@@ -9719,7 +9719,7 @@
   "returns": "byte-for-byte proxy to 127.0.0.1:guardian.apiPort",
   "purpose": "Proxies a websocket to this node's federation guardian (only on a guardian node with a local API port).",
   "audience": "player/page",
-  "line": 6427,
+  "line": 10442,
   "summary": "Guardian WebSocket proxy",
   "query": [],
   "body": null,
@@ -9750,7 +9750,7 @@
   "returns": "200 JSON {tip, inForce, today, height?, atHeight?, schedule, limits{fee:{min,max,today,donation}}, sums{roundMaxBps,itemPct,marketMaxBps}, proposals[]}",
   "purpose": "The protocol fees in force at this seat's tip (and at a named height), each fee's limits and the sums, and every fee proposal with its signal, vote, the protocol developers' answers and its decision.",
   "audience": "player/page",
-  "line": 6948,
+  "line": 15322,
   "summary": "Fees in force and fee proposals",
   "query": [
    {
@@ -9781,7 +9781,7 @@
   "returns": "200 JSON {proposal, items[{kind, hex, atMs}]}; 400",
   "purpose": "The signals and fee approvals this seat holds for one funding proposal, as signed, each with when this seat first held it (atMs). A seat pulls them from every network seat it reaches before it decides a fee proposal or a signal, so every seat decides on the same set (kanban #1231, #1279).",
   "audience": "node-to-node",
-  "line": 10118,
+  "line": 15275,
   "summary": "A proposal's signals and fee approvals",
   "query": [
    {
@@ -9817,7 +9817,7 @@
   "returns": "200 JSON {tip, schedule, signalPct, proposals[], leaderboards[], names[]}",
   "purpose": "Every project funding proposal with its signal, comments and vote, every leaderboard payout request and its 25 % vote, and every player's newest name.",
   "audience": "player/page",
-  "line": 6920,
+  "line": 15281,
   "summary": "Funding proposals and leaderboard payouts",
   "query": [],
   "body": null,
@@ -9841,7 +9841,7 @@
   "returns": "200 JSON {ok, id, fresh, ...}; 4xx {ok:false, why}; 501",
   "purpose": "Checks and keeps a signed funding record (proposal, signal, comment, vote, fee proposal, fee approval or leaderboard payout request), and passes a new one on to every seat once.",
   "audience": "player/page",
-  "line": 6920,
+  "line": 15334,
   "summary": "Submit a funding record",
   "query": [],
   "body": {
@@ -9884,7 +9884,7 @@
   "returns": "200 JSON {node, totalMsat, entries, federations[{federationId, members, needed, key, heldMsat, paidIn, ...}], paidIn[], payouts[]}",
   "purpose": "Per federation this node knows guardians of: its reserve key (guardian seats, threshold, group key, public shares), what the reserves hold and what came in, and the reserve payouts (§27A.9.2).",
   "audience": "player/page",
-  "line": 6875,
+  "line": 15190,
   "summary": "Protocol reserves per federation",
   "query": [
    {
@@ -9915,7 +9915,7 @@
   "returns": "200 JSON {ok, proposal, state (OPEN|FROZEN|PLANNED), winnersId, winners:[{player, payoutPk, msat, places}], pairs:[[roundId, accountId]], evidence:[{roundId, accountId, contract, round, sigs:[{node, sig}]}]}; 400; 501 on a node that pays no reserves",
   "purpose": "A leaderboard payout's winners at this seat: its own frozen read of the season's signed accounts, or the list it planned for, with every signed account it stands on. The coordinator merges the guardians' records into its plan; a co-signer checks a plan's rounds against them (kanban #1153).",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 15310,
   "summary": "Leaderboard payout winners",
   "query": [
    {
@@ -9957,7 +9957,7 @@
   "returns": "200 JSON {payouts[]}",
   "purpose": "Every payout from the protocol reserves this seat knows: funding proposals and leaderboard payouts, with plan, state and txid.",
   "audience": "player/page",
-  "line": 6942,
+  "line": 15316,
   "summary": "Reserve payouts",
   "query": [],
   "body": null,
@@ -9981,7 +9981,7 @@
   "returns": "200 JSON {ok, ...}; 400; 501",
   "purpose": "The reserve payout ceremony between guardian seats: a guardian seat's FROST commitment for a payout plan it rebuilt itself.",
   "audience": "node-to-node",
-  "line": 6929,
+  "line": 15291,
   "summary": "Reserve payout: commit",
   "query": [],
   "body": {
@@ -10019,7 +10019,7 @@
   "returns": "200 JSON {ok, ...}; 400; 501",
   "purpose": "The reserve payout ceremony between guardian seats: a guardian seat's FROST signature share for that plan, given the commitments.",
   "audience": "node-to-node",
-  "line": 6929,
+  "line": 15291,
   "summary": "Reserve payout: share",
   "query": [],
   "body": {
@@ -10057,7 +10057,7 @@
   "returns": "200 JSON {ok, ...}; 400; 501",
   "purpose": "The reserve payout ceremony between guardian seats: a payout record any seat keeps (a PAID one only with the invoice's preimage).",
   "audience": "node-to-node",
-  "line": 6929,
+  "line": 15291,
   "summary": "Reserve payout: record",
   "query": [],
   "body": {
@@ -10095,7 +10095,7 @@
   "returns": "200 JSON {node, items[]}; 400",
   "purpose": "The in-game items a player bought (e.g. the larger truck), from the purchase records this seat keeps.",
   "audience": "player/page",
-  "line": 5296,
+  "line": 12877,
   "summary": "Items a player owns",
   "query": [
    {
@@ -10143,7 +10143,7 @@
   "returns": "200 JSON {id, kept}; 400/404/422",
   "purpose": "Keeps a buyer's signed item purchase record after checking it against the hosted game's terms, the donation sets and the federation output by output; hands a new one on to every seat.",
   "audience": "player/page",
-  "line": 5206,
+  "line": 12761,
   "summary": "Record an item purchase",
   "query": [],
   "body": {
@@ -10186,7 +10186,7 @@
   "returns": "200 JSON {ballots[], approved[{serial, validFrom, setId, approvedBy}]}",
   "purpose": "Every proposal and approval of the protocol developers' donation set this seat holds, with its tally, and the sets approved (§27A.4.1).",
   "audience": "player/page",
-  "line": 6913,
+  "line": 15267,
   "summary": "Developers' ballots",
   "query": [],
   "body": null,
@@ -10210,7 +10210,7 @@
   "returns": "200 JSON {ok, ...}; 4xx; 501",
   "purpose": "Keeps a signed proposal or approval of the developers' donation set and hands it on once.",
   "audience": "player/page",
-  "line": 6968,
+  "line": 15344,
   "summary": "Submit a developers' ballot record",
   "query": [],
   "body": {
@@ -10248,7 +10248,7 @@
   "returns": "200 JSON {donor, gifts[]}; 400",
   "purpose": "The donations a donor made outside any round (to a game's set, the protocol developers, or a player as a zap), as this seat keeps them.",
   "audience": "player/page",
-  "line": 5290,
+  "line": 12871,
   "summary": "A donor's gifts",
   "query": [
    {
@@ -10284,7 +10284,7 @@
   "returns": "200 JSON {seat, gifts[], items[]}",
   "purpose": "Every donation, zap and item purchase this seat kept after a time, oldest first - what the explorer reads besides /txs. Each seat keeps every one of its network.",
   "audience": "operator/monitoring",
-  "line": 7531,
+  "line": 13453,
   "summary": "Gifts, zaps and items bought since a time",
   "query": [
    {
@@ -10321,7 +10321,7 @@
   "returns": "200 JSON {id, kept, outputs}; 400/404/422/503",
   "purpose": "Checks and keeps a donor's signed gift record to a hosted game's donation set, the network's set in force, or a player (a zap). It is checked against the set and the federation output by output, indexed for GET /donations?key= and passed on to every seat.",
   "audience": "player/page",
-  "line": 5257,
+  "line": 12830,
   "summary": "Record a donation gift",
   "query": [],
   "body": {
@@ -10364,7 +10364,7 @@
   "returns": "200 JSON {rounds[]}; 400",
   "purpose": "The market rounds that took orders on this seat since a time, so a page reads a player's own orders back from the nodes after a reload, closed ones too.",
   "audience": "player/page",
-  "line": 6176,
+  "line": 14153,
   "summary": "Rounds that took orders",
   "query": [
    {
@@ -10400,7 +10400,7 @@
   "returns": "200 text/plain the template line (cache 1 h); 400; 404",
   "purpose": "A series' template as its text line, for a page checking a series round it was given. The reader trusts it only if it hashes to the id it asked for.",
   "audience": "game/market developer",
-  "line": 5335,
+  "line": 12957,
   "summary": "A series template",
   "query": [
    {
@@ -10441,7 +10441,7 @@
   "returns": "200 JSON {node, fromMs, toMs, rounds, root, nodes, refused, held?}; 400",
   "purpose": "The nodes that served rounds in a time window, from the FINAL signatures this seat holds, each checked against its committee; the root lets seats compare.",
   "audience": "player/page",
-  "line": 5302,
+  "line": 12902,
   "summary": "Who served rounds in a window",
   "query": [
    {
@@ -10489,7 +10489,7 @@
   "returns": "200 JSON {node, tip, depth, ...draw}; 400/409/503",
   "purpose": "Numbers drawn from the hash of a block that is deep enough, labelled with what they are for. Anyone with the chain can reproduce them.",
   "audience": "game/market developer",
-  "line": 5317,
+  "line": 12939,
   "summary": "Randomness from a block",
   "query": [
    {
@@ -10553,7 +10553,7 @@
   "returns": "200 JSON; 400/409",
   "purpose": "A committee seat's own signed price reading for a price round; a sample is the median of the readings, nobody proposes a price (protocol 5).",
   "audience": "node-to-node",
-  "line": 6167,
+  "line": 14144,
   "summary": "A committee seat's price reading",
   "query": [],
   "body": {
@@ -10591,7 +10591,7 @@
   "returns": "200 JSON {configHash, since, by, history}; 400; 404",
   "purpose": "The game config in force on this seat's chain and its history (genesis first): what a round created now names, and what a repeal is read against (§27A.7.5).",
   "audience": "game/market developer",
-  "line": 4546,
+  "line": 11936,
   "summary": "The config live on the chain",
   "query": [
    {
@@ -10632,7 +10632,7 @@
   "returns": "200 JSON {ok, ...}; 400/401/404/501",
   "purpose": "From the owner page: a dev client of this node approves or denies a fee proposal, signed with that client's key, kept and handed on.",
   "audience": "operator/monitoring",
-  "line": 4460,
+  "line": 11678,
   "summary": "A developer's answer to a fee proposal",
   "query": [],
   "body": {
@@ -10675,7 +10675,7 @@
   "returns": "200 JSON {ok, ...}; 401/404/409/501",
   "purpose": "From the owner page: a dev client of this node proposes a new split of the protocol developers' donation set (with optional vesting), signed with its recipient key, kept and handed on (§27A.4.1).",
   "audience": "operator/monitoring",
-  "line": 4419,
+  "line": 11637,
   "summary": "Propose a developers' set",
   "query": [],
   "body": {
@@ -10718,7 +10718,7 @@
   "returns": "200 JSON {ok, ...}; 401/404/501",
   "purpose": "From the owner page: a dev client of this node accepts or denies a proposed developers' set, signed with its recipient key, kept and handed on.",
   "audience": "operator/monitoring",
-  "line": 4419,
+  "line": 11637,
   "summary": "Vote on a developers' set",
   "query": [],
   "body": {
@@ -10761,7 +10761,7 @@
   "returns": "200 JSON {ok, id, ...}; 401/404/503",
   "purpose": "From the owner page: a funding proposal authored by this node (amount, LNURL, purpose), written and signed with the node's own key, kept and handed on (§27A.9.3).",
   "audience": "operator/monitoring",
-  "line": 4296,
+  "line": 11024,
   "summary": "Owner: propose (funding)",
   "query": [],
   "body": {
@@ -10804,7 +10804,7 @@
   "returns": "200 JSON {ok, id, ...}; 401/404/503",
   "purpose": "From the owner page: this node's signal for a funding proposal, written and signed with the node's own key, kept and handed on (§27A.9.3).",
   "audience": "operator/monitoring",
-  "line": 4296,
+  "line": 11024,
   "summary": "Owner: signal (funding)",
   "query": [],
   "body": {
@@ -10847,7 +10847,7 @@
   "returns": "200 JSON {ok, id, ...}; 401/404/503",
   "purpose": "From the owner page: a comment by this node on a funding proposal, written and signed with the node's own key, kept and handed on (§27A.9.3).",
   "audience": "operator/monitoring",
-  "line": 4296,
+  "line": 11024,
   "summary": "Owner: comment (funding)",
   "query": [],
   "body": {
@@ -10890,7 +10890,7 @@
   "returns": "200 JSON {ok, reached, address, port, ms?}; 400; 429",
   "purpose": "Checks whether the internet can reach a new node. The seat connects back only to the asking address (it must be public), on the named port, asks GET /reach-nonce and says only whether the nonce came back. It does not say what it read, or whether the port refused or did not answer. Limit: 6 checks a minute per address, 60 in all. The node installer's direct-connection test uses it (ruling 7).",
   "audience": "node-to-node",
-  "line": 5317,
+  "line": 12896,
   "summary": "Connect back to the asker (installer reach test)",
   "query": [],
   "body": {
@@ -10927,7 +10927,7 @@
   "returns": "200 JSON {node, bond, network, tip, lock, says}",
   "purpose": "This node's bond as the newest census this seat holds names it (outpoint, amount, confirmation height, maturity, template) and its lock at the tip: the maturity block, the blocks to it, an estimated date and whether it can be withdrawn now. Public, as /owner/standing.",
   "audience": "operator/monitoring",
-  "line": 4246,
+  "line": 10812,
   "summary": "This node's bond and its lock",
   "query": [],
   "body": null,
@@ -10951,7 +10951,7 @@
   "returns": "200 JSON {ok, txid, value, fee}; 400; 401/403; 409; 503",
   "purpose": "From the bond's maturity block on, sends the whole bond to the owner's address through its template-2 recovery leaf: signed with this node's key, checked with testmempoolaccept, then broadcast. Before maturity it refuses and names the height, the blocks left and the date. The node leaves the census from the next census height.",
   "audience": "operator/monitoring",
-  "line": 4524,
+  "line": 11697,
   "summary": "Withdraw the bond after its lock",
   "query": [],
   "body": {
@@ -11003,7 +11003,7 @@
   "returns": "200 {ok, plan: {addSats, bondSats, totalSats, fees, maturity, lock, countsAfter}, bond: {txid} or null}; 400 with why; 401/403 when not the owner; 501 without an installer home or a bond wallet (ARENA_BOND_CLI)",
   "purpose": "Adds to this node's bond: a second bond output next to the first, with the node's newest advertisement as its body. From protocol 19 both outputs count together (kanban #544). Without post: the plan (amount, new total, fees, maturity, about when), checked with testmempoolaccept. With post: true, the funding and bond transactions are broadcast. Paid from the installer's wallet or, on a seat set up by hand, from the bond wallet it names (kanban #553).",
   "audience": "operator/monitoring",
-  "line": 4744,
+  "line": 11326,
   "summary": "Add to the bond (a second output)",
   "query": [],
   "body": {
@@ -11046,7 +11046,7 @@
   "returns": "200 JSON {ok, plan{before{roles, custody}, after{roles, custody}, bond, feeSats, countsAfter}, update{txid}|null}; 400 {ok:false, why} (no bond, no change, an unknown role, the wallet too small, the mempool refuses); 401 not the owner; 501 no bond wallet named (ARENA_BOND_CLI), or an installed node",
   "purpose": "Changes the roles the node advertises (owner-signed, {action: 'roles', args: {roles, custody, post}}): any of game, verify, settlement and relay, plus custody (guardian_capable). It does this with an advertisement update of its bond, paid from the bond wallet. Without post: the plan (fee), checked with testmempoolaccept. With post: true, both transactions are sent. The census reads the new roles 6 blocks later.",
   "audience": "operator/monitoring",
-  "line": 4744,
+  "line": 11404,
   "summary": "Change the node's advertised roles",
   "query": [],
   "body": {
@@ -11089,7 +11089,7 @@
   "returns": "200 {ok, address}; 401/403 when not the owner; 501 without a bond wallet (ARENA_BOND_CLI); 500 when the wallet does not answer",
   "purpose": "A new top-up address of the bond wallet a seat set up by hand names (ARENA_BOND_CLI), for the owner page's \"Top-up address\" button beside Add to bond (kanban #553).",
   "audience": "operator/monitoring",
-  "line": 4775,
+  "line": 11433,
   "summary": "A top-up address for the bond wallet",
   "query": [],
   "body": {
@@ -11132,7 +11132,7 @@
   "returns": "200 JSON {node, version, commit, latest, protocols, update}",
   "purpose": "The release this node runs: its VERSION and COMMIT (the release root's files, null when run from a source checkout), the protocol versions it speaks, and how it is updated. Public, as /owner/standing.",
   "audience": "operator/monitoring",
-  "line": 4248,
+  "line": 10796,
   "summary": "The release this node runs",
   "query": [],
   "body": null,
@@ -11157,7 +11157,7 @@
   "returns": "the gateway's own answer, byte for byte; 502 text when the gateway on this machine does not answer; 404 \"no such door\" on a seat without ARENA_GATEWAY_PORT",
   "purpose": "The node's Lightning gateway at the node's public address. /gateway/... is passed byte for byte to the gateway on the same machine (ARENA_GATEWAY_PORT, set by the installer on a custody node). Clients of its federation reach the gateway at its api-addr (<public address>/gateway/), the same way /guardian reaches the guardian (spec §23A.9).",
   "audience": "node-to-node",
-  "line": 4272,
+  "line": 10250,
   "summary": "The node's Lightning gateway (passthrough)",
   "query": [],
   "body": null,
@@ -11196,7 +11196,7 @@
   "returns": "200 JSON signed gateway claim {node, federationId, gatewayUrl, lightningPubkey, capacitySats, pegInSats, atMs, inboundSats, outboundSats, lightningAddr, outsideInboundSats, signature}; 404 JSON {ok:false, why}",
   "purpose": "This node's claim to a gateway seat of its federation (2026.0.15, spec §23A.9), signed by its custody agent with the node key. It names the federation, where the gateway answers, its Lightning node key, inbound and outbound of its public channels (inbound from outside the federation counted separately), its peg-in, and the time. The federation's guardians read it, probe the gateway and rank the claims. Measured on seat guardian-1 (2026-10-18 22:20Z): 404 {\"ok\":false,\"why\":\"this node stands for no gateway seat\"}.",
   "audience": "node-to-node",
-  "line": 4305,
+  "line": 10450,
   "summary": "This node's gateway claim",
   "query": [],
   "body": null,
@@ -11225,7 +11225,7 @@
   "returns": "200 JSON signed liquidity claim {node, lightningPubkey, lightningAddr, freeSats, atMs, depositAddress, channels[{peer, capacitySats}], funds[{txid, vout, address, sats, signature}], signature}; 404 JSON {ok:false, why}",
   "purpose": "This node's liquidity provider claim (2026.0.16, the fourth service, spec §23A.10), signed by its provider service. It names its Lightning node, the free coins it holds with one signed proof per coin (at most 50), and the channels it gave. Each proof is the address key's signature over the claim message: BIP-322-style compact ECDSA, P2TR by the BIP-86 tweak. Guardians count the provider only while free + channels given >= 5 x L on testnet4 (10 x L on mainnet), where L is the 100,000 sat channel; that amount is its weight. Measured on guardian-1 (22:20Z): 200, freeSats 538022, 1 channel of 100,000, funds with signatures; on guardian-3: 404.",
   "audience": "node-to-node",
-  "line": 4311,
+  "line": 10522,
   "summary": "This node's liquidity provider claim",
   "query": [],
   "body": null,
@@ -11254,7 +11254,7 @@
   "returns": "200 JSON {federationId, epoch, providers[{node, weight}], guardian, signature}; 404 JSON {ok:false, why}",
   "purpose": "The liquidity providers this guardian signed for a federation and epoch (2026.0.16): every provider whose proven coins meet the minimum, with its weight. A new node's inbound channels are drawn from them (at most 2 providers per node, each once); the liquidity pool (1 % of each round) is split by weight. Measured on guardian-1, federation 337ae01a, epoch 1089: providers 2fca1090 (600000) and f4bfe620 (800000).",
   "audience": "node-to-node",
-  "line": 4316,
+  "line": 10529,
   "summary": "A guardian's signed liquidity seating",
   "query": [
    {
@@ -11298,7 +11298,7 @@
   "returns": "200 JSON {federationId, epoch, seats[], guardian, signature}; 404 JSON {ok:false, why}",
   "purpose": "The gateway seats this guardian signed for a federation and epoch (2026.0.15): at most 2 seated gateways, drawn by ticket from the eligible claims; a seating holds when 7 of the 10 guardians sign the same one. The gateways share a third of the custody pool. Measured on guardian-1, federation 337ae01a, epoch 1089: seats [] (no eligible claim yet).",
   "audience": "node-to-node",
-  "line": 4320,
+  "line": 10537,
   "summary": "A guardian's signed gateway seating",
   "query": [
    {
@@ -11342,7 +11342,7 @@
   "returns": "200 JSON {ok, federationId, tip, epoch, proofHeight, window:{from,to}, open, claimPk, minBlocksLeft, threshold, guardians:[{node,url}]}; 400, 404 or 503 JSON {ok:false, why}",
   "purpose": "The held proof of the running epoch as a gateway needs it: the read window on Bitcoin height, the fixed claim key of a held lock, how many reads count and which seated guardians to ask.",
   "audience": "node-to-node",
-  "line": 4320,
+  "line": 10464,
   "summary": "The running epoch's held proof",
   "query": [
    {
@@ -11379,7 +11379,7 @@
   "returns": "200 JSON HeldRead {federationId, epoch, gateway, outpoint, contractId, amountMsat, blocksLeft, tipHeight, guardian, signature}; 400, 409, 429 or 503 JSON {ok:false, why}",
   "purpose": "A seated guardian reads a gateway's held lock once inside the read window. It recomputes the contract id from the fixed fields and signs a HeldRead if the lock holds with at least 6 blocks left in the guardians' count. A claim's held lock carries the threshold of these reads.",
   "audience": "node-to-node",
-  "line": 4320,
+  "line": 10478,
   "summary": "A guardian's signed read of a held lock",
   "query": [],
   "body": {
@@ -11416,7 +11416,7 @@
   "returns": "200 JSON {ok, federationId, epoch, measuredEpoch, seated[], empty, ranked[], ineligible[], why, gateways{}}; 503 when the view cannot be read; 404 JSON on a node with no guardian",
   "purpose": "How this guardian ranks its federation's gateway claims in the current epoch: who is seated, how many seats are empty, the ranked candidates and why the others are ineligible (minimums, availability, not serving the federation). Measured on guardian-1 (22:20Z): {\"ok\":true,\"federationId\":\"337ae01a…\",\"epoch\":1089,\"measuredEpoch\":\"whole\",\"seated\":[],\"empty\":2,\"ranked\":[],\"ineligible\":[],\"why\":\"0 of 2 gateway seats filled from 0 eligible operators\",\"gateways\":{}}.",
   "audience": "operator/monitoring",
-  "line": 4324,
+  "line": 10545,
   "summary": "This guardian's gateway ranking",
   "query": [],
   "body": null,
@@ -11450,7 +11450,7 @@
   "returns": "200 JSON {ok, node, tip, tipHash, nowMs, chain{hash, height, rivals[{hash, height, status, forkHeight, work: same|more|less}]}, grids[{game, firstWindowMs, firstCloseMs, lastCloseMs, slots, committeeTimeMs, federation, publication{txid, height, confirmations, inMempool}, beacon{height, depth, needed, medianTimeMs}, stage}], pegIns[{federation, node, txid, vout, sats, confirmations, finality, onChain}]}; 503 when the node reads no chain",
   "purpose": "What the network is waiting for, as this node reads its own chain. Every grid published but not yet posted: its publication (found in the node's last 300 blocks), its beacon block (read from its own headers) and how deep it is. Every peg-in that the gateway claims name as confirming, counted against the federation's finality. The health page and the mining dashboard merge this across nodes. The chain part names this node's tip and the other tips it knows within 12 blocks. A rival with the same work is a split that the next block decides; everything else in the answer counts on this node's own branch.",
   "audience": "operator/monitoring",
-  "line": 4324,
+  "line": 10494,
   "summary": "Grids waiting for their beacon, peg-ins confirming",
   "query": [],
   "body": null,
@@ -11484,7 +11484,7 @@
   "returns": "200 JSON {nowMs, tip, expected[{game, gameId, firstWindowMs, firstCloseMs, lastCloseMs, slots, committeeTimeMs, publication{txid, height}, federation}]}",
   "purpose": "The grids this node's publisher put on chain and the seats do not list yet, as the publisher states them (ARENA_EXPECTED_FILE); a market page says when the next round comes from it.",
   "audience": "operator/monitoring",
-  "line": 4324,
+  "line": 10505,
   "summary": "Grids on their way, as published",
   "query": [],
   "body": null,
@@ -11518,7 +11518,7 @@
   "returns": "200 JSON {ok, node, nowMs, setting, on, wallet{canPay, why, confirmedSats, wallet}, feeRate, maxFeeRate, rankCap, days[{slot, covers, period, anchor, order[{rank, key, endpoint, self, dueFrom, backupDueFrom}], apps[{app, name, role, state, postings[{txid, height, emergency, role, poster, posterEndpoint, posterRank, fallback}]}]}], mine{posted, wouldPost}, lastError}; 404 when the node runs no round poster",
   "purpose": "Who posts the rounds (spec 5A.5, kanban #702): for the day covering today and the one covering the next 24 h, the duty order's first three nodes (rank 1 posts the primary grid from 00:00 UTC, rank 2 the backup grid from 02:00), for each app and grid who posted it (the series' creator key, its rank, whether a fallback node did), what this node posted or would post, whether its wallet can pay, and its last error. From the node's last look, so it is cheap.",
   "audience": "operator/monitoring",
-  "line": 5298,
+  "line": 10518,
   "summary": "Who posts the rounds",
   "query": [],
   "body": null,
@@ -11547,7 +11547,7 @@
   "returns": "200 JSON {ok, series, publication, firstCloseMs, slots}; 400 not a series line / not a grid / not a transaction; 403 the creator signature does not stand; 409 an invalid lead; 410 its last round closed; 422 the transaction does not publish the series",
   "purpose": "A publisher announces a grid it put on chain: body JSON {line, tx} - its signed series line and its publication transaction, hex. The node checks the creator's signature over the series id and that the transaction carries the series' publication output, then names the grid at GET /expected and GET /pending until its last round closes. Anyone may post it.",
   "audience": "operator/monitoring",
-  "line": 4324,
+  "line": 10500,
   "summary": "Announce a published grid",
   "query": [],
   "body": null,
@@ -11581,7 +11581,7 @@
   "returns": "200 JSON {ok, node, censusHeight, federations[{federation, status, load, band, reserveSats, exposureCapSats, headroomSats, targetBondSats, guardians, guardiansBelowTarget[{node, bondSats, addSats}], targetPegInSats, gateways, gatewaysBelowTarget[{node, pegInSats, addSats}]}], network{lowestLoad, lowestFederation, band, targetBondSats, installMinimumBondSats}}",
   "purpose": "Capacity pressure (spec §23A.3a). For each federation: how full it is against what its bonds cover; its band (CALM; PRESSURE from 70 %, CRITICAL from 90 %, FULL at 100 %; each left only below 60 / 80 / 100 %); the bond B* each guardian would need for 50 % load, and who is below it with the sats to add; the peg-in P* its gateways should hold. For the network: its band (that of the OPEN federation with the lowest load), B*_net and the installer's minimum bond.",
   "audience": "operator/monitoring",
-  "line": null,
+  "line": 15952,
   "summary": "Capacity pressure: bands, the bonds and peg-ins that relieve it",
   "query": [],
   "body": null,
@@ -11615,7 +11615,7 @@
   "returns": "200 {ok, version, instance, port, publicUrl, roles, settings, command, services:[{id, title, running, pid, detail, inside, probe:{ok, says}}]}; 401/403 when not the owner; 501 for a node not started from the installer's arena.conf",
   "purpose": "The owner page's Services card. It lists every service of the installed node (Bitcoin Core or the chain bridge, Tor, LND, the gateway, the guardian inside the seat, the seat, its tunnel, the liquidity provider), whether it runs, and what it answers (LND synced, the gateway's federations, the public address reaching this node). It is the same view as `arenanode status` on the node's machine.",
   "audience": "operator/monitoring",
-  "line": 4649,
+  "line": 11231,
   "summary": "The node's services and their state",
   "query": [],
   "body": {
@@ -11653,7 +11653,7 @@
   "returns": "200 {ok, address}; 401/403 when not the owner; 501 without a provider service (ARENA_LIQUIDITY_PROVIDER_URL); 502 when the provider service fails",
   "purpose": "A new top-up address for the liquidity provider's LND wallet (the owner page's \"New address\" button). The node asks its provider service on the same machine, which owns the LND and re-signs its claim once coins arrive.",
   "audience": "operator/monitoring",
-  "line": 4644,
+  "line": 11520,
   "summary": "New top-up address for the liquidity wallet",
   "query": [],
   "body": {
@@ -11696,7 +11696,7 @@
   "returns": "200 JavaScript module; 404 when this release carries no React rounds page",
   "purpose": "The rounds page's React bundle (packages/arena-web/dist/rounds.js). /rounds draws its stat and round cards with it; without it, the page uses its own drawing.",
   "audience": "player/page",
-  "line": 4752,
+  "line": 10587,
   "summary": "The rounds page's React bundle",
   "query": [],
   "body": null,
@@ -11725,7 +11725,7 @@
   "returns": "200 JavaScript module; 404 when this release carries no React emergency page",
   "purpose": "The React steps of /Dashboard/emergency (packages/arena-web/dist/emergency.js). The page mounts them with its own /owner/client.js, which still makes the key and the signature; without the bundle, the page uses its own steps.",
   "audience": "operator/monitoring",
-  "line": 4753,
+  "line": 10587,
   "summary": "The \"my node is offline\" page's React bundle",
   "query": [],
   "body": null,
@@ -11754,7 +11754,7 @@
   "returns": "200 JavaScript module; 404 when this release carries no React dashboard",
   "purpose": "The node dashboard's React bundle (packages/arena-web/dist/dashboard.js). /dashboard draws with it when this release has it.",
   "audience": "operator/monitoring",
-  "line": 4757,
+  "line": 10593,
   "summary": "The dashboard's React bundle",
   "query": [],
   "body": null,
@@ -11783,7 +11783,7 @@
   "returns": "200 JavaScript module; 404 when this release carries no React screens",
   "purpose": "The owner page's React screens (packages/arena-web/dist/owner.js). Where a screen exists, the page mounts it in place of its own panel.",
   "audience": "operator/monitoring",
-  "line": 4762,
+  "line": 10598,
   "summary": "The owner page's React screens",
   "query": [],
   "body": null,
@@ -11812,7 +11812,7 @@
   "returns": "200 stylesheet; 404 when this release carries no React screens",
   "purpose": "The stylesheet of the owner page's React screens (packages/arena-web/dist/arena.css).",
   "audience": "operator/monitoring",
-  "line": 4762,
+  "line": 10598,
   "summary": "The owner page's React stylesheet",
   "query": [],
   "body": null,
@@ -11841,7 +11841,7 @@
   "returns": "200 {ok, mode, url, stable, serving, progress, modes} (and the switch started when args.mode names one); 401/403 when not the owner; 501 on a node the installer did not set up",
   "purpose": "Reads or switches how this installed node is reached, from the owner page: quick, workers, direct, tailscale or permanent. A switch runs the installer's own reach and service steps in the background, since they restart the seat.",
   "audience": "operator/monitoring",
-  "line": 5106,
+  "line": 11196,
   "summary": "Read or switch how the node is reached",
   "query": [],
   "body": {
@@ -11879,7 +11879,7 @@
   "returns": "200 {ok, plan} (without post) or {ok, plan, done}; 400 {ok:false, why} (no Bitcoin Core, no LND, LND not answering, a provider already); 401/403 when not the owner; 501 on a node not set up by the installer",
   "purpose": "Makes an installed node a liquidity provider from its owner page (\"Set up\", then \"Become a liquidity provider\"). Without post: the plan (LND tested, the deposit against the node's wallet, a custody node's peg-in kept aside). With post: sets up the provider service on its LND, the agent that sends the deposit, the role and its settings.",
   "audience": "operator/monitoring",
-  "line": 5277,
+  "line": 11445,
   "summary": "Become a liquidity provider (installed node)",
   "query": [],
   "body": {
@@ -11922,7 +11922,7 @@
   "returns": "201 {ok, kept, node, postedAt} when taken, 200 when held already; 400/422/503",
   "purpose": "The owner's emergency leave request (spec §23A.5a, protocol 17) takes an offline node out. A node without a guardian role leaves every seating; a guardian, if in time, becomes DEPARTED and its federation's succession starts. Taken only when fresh (posted at most 6 blocks before the tip), then passed on to every seat.",
   "audience": "operator/monitoring",
-  "line": 7544,
+  "line": 15755,
   "summary": "Owner's emergency leave request",
   "query": [],
   "body": {
@@ -11971,7 +11971,7 @@
   "returns": "200 {node, tip, named?, requests}",
   "purpose": "The leave requests this seat holds and its tip; with key, the census node whose bond advertisement names that emergency key (spec §23A.5a).",
   "audience": "node-to-node",
-  "line": 7552,
+  "line": 15763,
   "summary": "Held emergency leave requests",
   "query": [
    {
@@ -12001,7 +12001,7 @@
   "returns": "200 text/html",
   "purpose": "\"My node is offline\": the owner types the emergency code; the browser makes the key, finds the node and signs the leave request (spec §23A.5a).",
   "audience": "operator/monitoring",
-  "line": 7567,
+  "line": 15778,
   "summary": "My node is offline (page)",
   "query": [],
   "responses": [
@@ -12025,7 +12025,7 @@
   "returns": "200 {ok, ...} when kept; 400 with why",
   "purpose": "A node's signed off-chain address announcement (address-book.js, spec §25): where it is reached now, newer than its advertisement; refused when dated over 10 min ahead.",
   "audience": "node-to-node",
-  "line": 8137,
+  "line": 15719,
   "summary": "Take a node's address announcement",
   "query": [],
   "body": {
@@ -12058,7 +12058,7 @@
   "returns": "200 {announcements}",
   "purpose": "Every address announcement this seat holds: where the nodes it knows are reached now.",
   "audience": "node-to-node",
-  "line": 8142,
+  "line": 15725,
   "summary": "The address announcements this seat holds",
   "query": [],
   "body": null,
@@ -12082,7 +12082,7 @@
   "returns": "200 {ok, plan} (Lightning, gateway, bond against the guardian floor, what the wallet must hold, part by part, its address) or {ok, progress}; 200 {ok} once started; 400 with why (e.g. \"type I UNDERSTAND\", a short wallet); 401/403 when not the owner; 501 on a node the installer did not set up; 500 with why",
   "purpose": "Makes an installed node a custody node from the owner page (kanban #563). The node runs the installer's own custody steps itself (Lightning, the gateway, the guardian, the advertisement update); the owner does not run \"arena-install --add-custody\". Without post: the plan. With progress: the runner's progress. With post and the typed I UNDERSTAND: starts it.",
   "audience": "operator/monitoring",
-  "line": 5340,
+  "line": 11489,
   "summary": "Become custody from the owner page: plan, start, progress",
   "query": [],
   "body": {
@@ -12125,7 +12125,7 @@
   "returns": "200 {ok, plan} (the federation this node guards, its record status and reserve, the guardian's audit by module, holdsNothing, consented); 200 {ok, consented} once kept; 200 {retired: true} when the record is already CLOSED; 400 with why (no guardian, another federation, \"type RETIRE\"); 409 when it still holds something; 401/403 when not the owner",
   "purpose": "Retires a federation that holds nothing (kanban #577): the owner of one of its guardians consents. A seat builds that federation's record as CLOSED, with no successor, only when its own owner consented, so the record stands once a threshold of the guardians' owners consented. Every seat then reads it as CLOSED, and its guardians are free for the next founding. Once the record stands, the node sets its guardian of that federation aside (kept) and starts a guardian in setup.",
   "audience": "operator/monitoring",
-  "line": 5364,
+  "line": 11464,
   "summary": "Retire an empty federation this node guards: plan, consent",
   "query": [],
   "body": {
@@ -12162,7 +12162,7 @@
  },
  {
   "audience": "player/page",
-  "line": 7748,
+  "line": 14349,
   "headers": [],
   "pathParams": [],
   "method": "POST",
@@ -12210,7 +12210,7 @@
  },
  {
   "audience": "player/page",
-  "line": 7748,
+  "line": 14349,
   "headers": [],
   "pathParams": [],
   "method": "GET",
@@ -12252,7 +12252,7 @@
   "returns": "200 JSON {data: [market], next_cursor: 'LTE=', limit, count}",
   "purpose": "Polymarket's GET /markets: every two-outcome market this seat holds (an Up/Down window round is one), in Polymarket's market shape (kanban #736).",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: the markets",
   "query": [
    {
@@ -12283,7 +12283,7 @@
   "returns": "200 JSON the market; 404",
   "purpose": "Polymarket's GET /markets/{condition_id}: condition_id is 0x + the round id.",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: one market",
   "query": [],
   "body": null,
@@ -12312,7 +12312,7 @@
   "returns": "200 JSON [event]",
   "purpose": "Gamma's GET /events: one event per market, its market with clobTokenIds, outcomes and outcomePrices as JSON strings.",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: Gamma events",
   "query": [
    {
@@ -12355,7 +12355,7 @@
   "returns": "200 JSON {market, asset_id, timestamp, hash, bids[], asks[], min_order_size, tick_size, neg_risk, last_trade_price}; 404",
   "purpose": "Polymarket's GET /book: bids and asks of one token from the seat's cleared ledger (the other side's buys as asks at 1 - price), sizes in shares.",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: the order book of a token",
   "query": [
    {
@@ -12386,7 +12386,7 @@
   "returns": "200 JSON {price}",
   "purpose": "Polymarket's GET /price: side=BUY the best ask, side=SELL the best bid.",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: the price of a token",
   "query": [
    {
@@ -12423,7 +12423,7 @@
   "returns": "200 JSON {mid}",
   "purpose": "Polymarket's GET /midpoint; /spread, /last-trade-price, /tick-size, /neg-risk and /fee-rate answer beside it with the same parameter.",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: the midpoint",
   "query": [
    {
@@ -12454,7 +12454,7 @@
   "returns": "200 JSON {history: [{t, p}]}",
   "purpose": "Polymarket's GET /prices-history: the clearing price of every certified batch for a token, within interval or startTs..endTs, one point per fidelity minutes.",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: price history",
   "query": [
    {
@@ -12509,7 +12509,7 @@
   "returns": "200 JSON [trade]",
   "purpose": "The Data API's GET /trades: every fill of a certified batch, newest first; GET /polymarket/data/trades answers the CLOB's page shape.",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: trades",
   "query": [
    {
@@ -12558,7 +12558,7 @@
   "returns": "200 JSON {data: [order], next_cursor, limit, count}",
   "purpose": "Polymarket's GET /data/orders without a key: the open orders of a market (all=1 for every order), by asset or maker (0x + player key).",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: open orders",
   "query": [
    {
@@ -12607,7 +12607,7 @@
   "returns": "200 JSON the order; 404",
   "purpose": "Polymarket's GET /data/order/{id}: id is 0x + the entry id.",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: one order",
   "query": [],
   "body": null,
@@ -12636,7 +12636,7 @@
   "returns": "200 JSON [position]",
   "purpose": "The Data API's GET /positions: the filled shares of a player key's orders, valued at the mid.",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: positions",
   "query": [
    {
@@ -12673,7 +12673,7 @@
   "returns": "501 JSON {success: false, errorMsg}",
   "purpose": "Polymarket's POST /order. A seat holds no player's keys or e-cash, so it answers 501 by name: orders are placed by the Arena CLOB adapter beside the bot (tools/polymarket-adapter.mjs), which serves this path on localhost.",
   "audience": "game/market developer",
-  "line": 8440,
+  "line": 14121,
   "summary": "Polymarket-compatible: an order (answered by the adapter)",
   "query": [],
   "body": {
@@ -12701,7 +12701,7 @@
   "returns": "200 image/x-icon (cache 1 day); 204 when the release carries no icon",
   "purpose": "The icon of the node's own pages (dashboard, owner page, rounds page), so a browser logs no missing favicon.",
   "audience": "operator/monitoring",
-  "line": 5682,
+  "line": 10563,
   "summary": "Page icon",
   "query": [],
   "body": null,
@@ -12729,7 +12729,7 @@
   "returns": "200 JSON {rounds:[{round, game, startMs, endMs, phase, gameSeated, settleSeated, drawn, hostedHere, paid, does}], upcoming, why: null | {kind, says}}",
   "purpose": "The rounds of the last 36 h and the coming ones this node is drawn or seated for, what it does in each (play and check, pay out winners, reserve), and when there is none the first reason that holds in plain words: not in the census, serving off, no round role, no rounds, no game announced, not drawn (with its odds). The owner page's Rounds card.",
   "audience": "operator/monitoring",
-  "line": 5804,
+  "line": 10732,
   "summary": "Rounds this node is drawn for",
   "query": [],
   "body": null,
@@ -12758,7 +12758,7 @@
   "returns": "200 JSON {devs:[{devKey, apps:[{name, title, id, version, split[], versions[{version, id, split}], donations{count, appMsat, byClient[]}}]}]}",
   "purpose": "The game developers' overview: for each developer key installed on this node, the apps it signs with the split in force, every version with its split, and the donations this node's dev clients received for the app. Read by the owner page's Apps card.",
   "audience": "operator/monitoring",
-  "line": 5929,
+  "line": 10908,
   "summary": "Installed developers' apps and splits",
   "query": [],
   "body": null,
@@ -12787,7 +12787,7 @@
   "returns": "200 JSON {ok, slug, total, offset, limit, apps[], origins[], sums, rows[]}; 404 no dev clients or no such client",
   "purpose": "One dev client's donations, newest first, each with its app or item, its protocol and app parts and its value in EUR, USD, CHF and GBP at its own rate; filtered by app and origin, searched in player, round, entry and item; paged. The owner page's donations table.",
   "audience": "operator/monitoring",
-  "line": 5990,
+  "line": 10971,
   "summary": "A dev client's donations, filtered and paged",
   "query": [
    {
@@ -12861,7 +12861,7 @@
   "returns": "200 {ok, ...the adopted version}; 400 bad manifest or split; 403 no developer key for that app here; 404 no such app; 409 that split already, a newer version runs, or no plugins directory; 500",
   "purpose": "Changes an app's donation split by hosting a new version of it: either signed here with the developer key installed on this node (args.recipients, the next version is built and signed), or a version its developer signed elsewhere (args.manifest hex with its donationSet). The new version is checked and activated at once, as an install is.",
   "audience": "operator/monitoring",
-  "line": 6101,
+  "line": 11115,
   "summary": "Change an app's donation split",
   "query": [],
   "body": {
@@ -12929,7 +12929,7 @@
   "returns": "200 {ok, pubkey, removed?, apps[]}; 400 not a key, or no such key",
   "purpose": "Installs a game developer's key on this node (args.key: the text the developer has), or removes one (args.remove: its public key). The key travels in the owner's signed request, so only over https or on the node's own machine; the answer names the public key and the apps hosted here that it signs, never the key.",
   "audience": "operator/monitoring",
-  "line": 6113,
+  "line": 11127,
   "summary": "Install or remove a developer key",
   "query": [],
   "body": {
@@ -12977,7 +12977,7 @@
   "returns": "200 {ok, plan, bond?, done?, agent?}; 400 the plan does not stand (nothing arrived, too little); 501 not installed by the installer; 500",
   "purpose": "The node's first bond from the owner area, for a node whose installer wizard left it for later: without post the plan (the node wallet's address, what to send, what arrived); with post: true the bond is built and broadcast as the wizard would have (arena-installer add-bond.js firstBondOnNode), and the setup card then counts its confirmations. One plan read runs at a time per node.",
   "audience": "operator/monitoring",
-  "line": 6338,
+  "line": 11362,
   "summary": "Post the node's first bond",
   "query": [],
   "body": {
@@ -13035,7 +13035,7 @@
   "returns": "200 {ok, plan, already, bond, restarting}; 400 the move cannot be made; 501 no 24 words in this node's home; 500",
   "purpose": "Moves an installed node to the key its 24 words give: without post the plan (the key now, the key next, the bond to post); with post: true a new bond under the new key is posted from the node's wallet, the old key is kept for its old bond's return (GET /owner/bond lists it, POST /owner/old-bond-withdraw takes it back) and the seat restarts on the new key about 1.5 s after the answer. Never done unasked.",
   "audience": "operator/monitoring",
-  "line": 6357,
+  "line": 11381,
   "summary": "Move the node to the key of its 24 words",
   "query": [],
   "body": {
@@ -13093,7 +13093,7 @@
   "returns": "200 {ok, progress} with args.progress, else {ok, ...started}; 409 set up already, nothing to fix, or already running; 501 not installed by the installer; 500",
   "purpose": "A custody node whose setup left Lightning or the gateway for later sets them up from here: args {progress: true} reads how far the custody runner is (custody-add.json); otherwise the runner's two steps are started in the background (arena-installer add-custody.js startGatewaySetup). The owner page's Federation card polls the progress.",
   "audience": "operator/monitoring",
-  "line": 6477,
+  "line": 11507,
   "summary": "Set up the gateway of a custody node",
   "query": [],
   "body": {
@@ -13151,7 +13151,7 @@
   "returns": "200 {ok, slug, site, name, told}; 400 bad name; 404; 501 this node runs no clients",
   "purpose": "Creates a referral program on this node: a client of kind 'referrer' with a new key, its name signed by that key (referral-name.js) and sent to every seat (POST /referral-name), so the explorer and Health name the program. The owner can have several; each earns the website fees of the entries it refers.",
   "audience": "operator/monitoring",
-  "line": 6502,
+  "line": 11532,
   "summary": "Create a referral program",
   "query": [],
   "body": {
@@ -13204,7 +13204,7 @@
   "returns": "200 {ok, slug, site, name, told}; 400 bad name; 404 no such program; 501 this node runs no clients",
   "purpose": "Says a referral program's name again, signed by its key: a new name for the program (args.name), or the one it has, to seats that missed it. Kept here and handed to every seat (POST /referral-name).",
   "audience": "operator/monitoring",
-  "line": 6502,
+  "line": 11532,
   "summary": "Rename a referral program or resend its name",
   "query": [],
   "body": {
@@ -13262,7 +13262,7 @@
   "returns": "200 {ok, txid, value, fee}; 400 not an address of that network, or the spend failed; 404 no old bond with that txid; 409 key no longer held, or still locked; 503 no chain",
   "purpose": "Takes back a bond left under an old key after the node moved to the key of its 24 words (POST /owner/key-from-words): the bond named by txid and vout, as GET /owner/bond lists the old bonds, is spent at its maturity through its template-2 recovery leaf with the old key this node still holds, to the owner's address, and broadcast.",
   "audience": "operator/monitoring",
-  "line": 6622,
+  "line": 11812,
   "summary": "Withdraw an old bond after a key switch",
   "query": [],
   "body": {
@@ -13325,7 +13325,7 @@
   "returns": "200 JSON {ok, core, bond, pegIn, founding?, tip, node, atMs, release} or {ok:false, why}",
   "purpose": "The setup's progress of a node the installer set up, for the dashboards: Bitcoin Core's background sync, the bond's and the peg-in's confirmations, and while the node waits for a founding how many nodes are ready of how many needed (ready/needed). Public: txids, heights and progress only. Read at most once a minute.",
   "audience": "operator/monitoring",
-  "line": 6652,
+  "line": 11842,
   "summary": "Setup progress of an installed node",
   "query": [],
   "body": null,
@@ -13349,7 +13349,7 @@
   "returns": "200 JSON {found, transaction:{entry, storedAt, locks, book, settlement, steps, client, processed, result}}; 400; 404",
   "purpose": "One transaction of this seat as explorer.bitcoin-arena.io shows it: the entry (round, app, federation, player, stake, fee, donation, price, pick, handout, lock outpoints), when it was stored, the locks as verified here, its place in the certified batch, its settlement, every step this seat timed, the page's own timing (POST /tx-timing), and its result.",
   "audience": "player/page",
-  "line": 7970,
+  "line": 13420,
   "summary": "One transaction's record",
   "query": [
    {
@@ -13390,7 +13390,7 @@
   "returns": "200 JSON {seat, txs:[{id, round, storedMs, app, federation, detail?}]}",
   "purpose": "The newest transactions stored here: the entries stored after `since`, oldest first, at most `limit`, each with its app and federation; with full=1 each carries its whole record as GET /tx answers it. What explorer.bitcoin-arena.io polls.",
   "audience": "player/page",
-  "line": 7977,
+  "line": 13427,
   "summary": "Newest transactions",
   "query": [
    {
@@ -13436,7 +13436,7 @@
   "returns": "201 'timing kept'; 400 not JSON or no signature; 403 not signed by the order's session key; 404 no such transaction",
   "purpose": "The page's own timing of its order, kept beside the seat's steps for GET /tx. Only the page that holds the order's session key can write it.",
   "audience": "player/page",
-  "line": 8009,
+  "line": 13459,
   "summary": "Keep the page's timing of its order",
   "query": [
    {
@@ -13486,7 +13486,7 @@
   "returns": "200 JSON {entry, stake, fee}; 400; 404 no lock of that entry verified here",
   "purpose": "An order's stake lock and fee lock as this seat verified them: the fields the federation holds at the outpoints the entry names. For a seat that holds the order's certified batch but never received its locks (replayOrder).",
   "audience": "node-to-node",
-  "line": 8023,
+  "line": 13510,
   "summary": "An order's locks as verified here",
   "query": [
    {
@@ -13527,7 +13527,7 @@
   "returns": "200 JSON the drawn attestor's signed word on the round; 400; 404 no word of its own",
   "purpose": "A drawn attestor seat's own word on a round's outcome, as it signed it, for the round's other drawn attestors to combine into the attestation.",
   "audience": "node-to-node",
-  "line": 8356,
+  "line": 13899,
   "summary": "A drawn attestor's word on a round",
   "query": [
    {
@@ -13568,7 +13568,7 @@
   "returns": "200 JSON {node, totalMsat, sites:[{site, name, msat, payouts}], programs:[{site, name, atMs}]}",
   "purpose": "What each website (referral program) earned from the settlements this seat indexed: the 'website' payouts per payout key, each with its program's name where its key has said one, largest first, and the total. The explorer's referrer metrics.",
   "audience": "game/market developer",
-  "line": 9285,
+  "line": 15245,
   "summary": "Referral fees per website",
   "query": [],
   "body": null,
@@ -13592,7 +13592,7 @@
   "returns": "200 JSON {ok, kept: 'new' | 'same' | 'older', ...}; 400 not a record; 422 not signed by its site key or dated ahead",
   "purpose": "A referral program's name: kept when its site key signed it (newer names replace older ones), and a new one handed on to every seat once. Posted by the owner doors /owner/referrer/setup and /owner/referrer/name and by seats forwarding it.",
   "audience": "node-to-node",
-  "line": 9298,
+  "line": 15258,
   "summary": "Keep a referral program's name",
   "query": [],
   "body": {
@@ -13630,7 +13630,7 @@
   "returns": "200 octet-stream: the proofs one after another, header x-slash-proofs = count; 400",
   "purpose": "A round's fraud proofs against contradicted audits (§13A.1, protocol 22), as published: each proof with the AUDIT, its signature and the rows it contradicts, concatenated. The arbiter and the explorer read them; GET /slashes lists them under auditSlashes.",
   "audience": "node-to-node",
-  "line": 9547,
+  "line": 15667,
   "summary": "A round's proofs against contradicted audits",
   "query": [
    {
@@ -13668,7 +13668,7 @@
   "returns": "200 octet-stream: the proofs one after another, header x-slash-proofs = count; 400",
   "purpose": "A round's fraud proofs of two results (§5A.3 row 1): one signer's two different signed results about one run, as published: each proof with both signed results, concatenated. The arbiter reads them; GET /slashes lists them under doubleSlashes.",
   "audience": "node-to-node",
-  "line": 9547,
+  "line": 15659,
   "summary": "A round's proofs of two results",
   "query": [
    {
@@ -13706,7 +13706,7 @@
   "returns": "200 octet-stream: the proofs one after another, header x-slash-proofs = count; 400",
   "purpose": "A round's fraud proofs of false tables (§5A.3 table row): a seat's SettlementAck over a table that is false or a transaction that does not rebuild from it, as published: each proof with the ack, the threshold of acks, the table, the Entry Contracts, each stake lock's P and the FINAL records, concatenated. The arbitration service reads these; a seat files one only after checking it holds.",
   "audience": "node-to-node",
-  "line": 9547,
+  "line": 15651,
   "summary": "A round's proofs of false tables",
   "query": [
    {
@@ -13744,7 +13744,7 @@
   "returns": "200 JSON {round, peers:{game:[{node, endpoint}], settlement:[...]}, fromRoster:{game, settlement}}; 400",
   "purpose": "The round's seated signer nodes' addresses as kept at seating, per role: each seated node's key and the endpoint off its census advert then (a table's later round reads its anchor's). What a peer that lost its own roster view for the round asks for; fromRoster says whether this seat's roster answers the committee itself right now.",
   "audience": "node-to-node",
-  "line": 9726,
+  "line": 15893,
   "summary": "The round's seated nodes and their endpoints",
   "query": [
    {
@@ -13780,7 +13780,7 @@
   "returns": "201 JSON {ok, kept:true, event}; 200 {ok, kept:false, why} held already; 400 not JSON; 422 not enough signatures of the set; 503 no arbitration set known",
   "purpose": "An event of the arbitration set (a liquidation or a slash it published): taken when k members signed it and it is newer than the one held, then handed on to every seat this one can name, so the explorer finds it at any seat (GET /liquidations lists them as events).",
   "audience": "node-to-node",
-  "line": 9809,
+  "line": 16053,
   "summary": "Keep an arbitration set event",
   "query": [],
   "body": {
@@ -13828,7 +13828,7 @@
   "returns": "201 'AUDIT kept'; 200 'already held'; 400 not an AUDIT; 403 forwarder not a seat of the round or its signature wrong; 409 does not stand or too late",
   "purpose": "An auditor's audit of a paid round (§13A.1, protocol 22): taken once when it stands - signed by the node it names, its VRF proof good for this round under that key, the node eligible and drawn as an auditor, its results the ones this seat holds - and in time: signed within 5 s of this seat's clock and before the window close, or forwarded by another seat of the round by the close. A new one is handed on to the other seats.",
   "audience": "node-to-node",
-  "line": 9931,
+  "line": 16459,
   "summary": "Keep an auditor's AUDIT",
   "query": [],
   "body": {
@@ -13879,7 +13879,7 @@
   "returns": "200 JSON {round, audits:[...]}; 400",
   "purpose": "The audits this seat holds for a round, a contradicted one with its bytes and signature - the evidence of a fraud proof against it.",
   "audience": "node-to-node",
-  "line": 9952,
+  "line": 16517,
   "summary": "The audits held for a round",
   "query": [
    {
@@ -13915,7 +13915,7 @@
   "returns": "200 JSON {round, entries:[{id, entry, results[]}]}; 400; 404 no such round",
   "purpose": "What an auditor reads of a round it is not seated in: every entry an AUDIT is over, with the entry's bytes and every signed result this seat holds for it. The auditor counts the agreed run itself, against the committee it draws; nothing here is taken on trust.",
   "audience": "node-to-node",
-  "line": 9960,
+  "line": 16526,
   "summary": "A round's entries and results for an auditor",
   "query": [
    {
@@ -13956,7 +13956,7 @@
   "returns": "200 application/json",
   "purpose": "The node's uptime figures (24 h, 7 days, 30 days, all time) from its own record, kept 30 s (kanban #756).",
   "audience": "operator/monitoring",
-  "line": 6640,
+  "line": 11862,
   "summary": "Node uptime",
   "query": [],
   "body": null,
@@ -13980,7 +13980,7 @@
   "returns": "200 JSON {node, facts[], unanswered[]}",
   "purpose": "Each node's last signed record of what it runs on, kept here after it goes offline, and the nodes this seat counts as not answering.",
   "audience": "operator/monitoring",
-  "line": 0,
+  "line": 15938,
   "summary": "What nodes run on, and who does not answer"
  },
  {
@@ -13991,7 +13991,7 @@
   "returns": "200 1,000,000 zero bytes",
   "purpose": "A fixed download a node times to read its bandwidth.",
   "audience": "operator/monitoring",
-  "line": 0,
+  "line": 15941,
   "summary": "Bandwidth probe"
  },
  {
@@ -14002,7 +14002,7 @@
   "returns": "200 JSON {ok, kept}; 400 not JSON; 409 refused",
   "purpose": "Takes a node's signed record and hands on what is new.",
   "audience": "operator/monitoring",
-  "line": 0,
+  "line": 15945,
   "summary": "Take a node's record"
  },
  {
@@ -14013,7 +14013,7 @@
   "returns": "200 JSON { node, start, release?: { tableId, table, txid, feeSats, sent, own: { node, signature }, signatures[] }, fallback?: {...}, carried[], escrow?: { tableId, spends[{ escrow, path, txid, outputs }], proposals[{ escrow, path, outputsId, loadHeight, outputs, txid, sent, own, signatures[] }] } }; 400",
   "purpose": "What this seat built for one started template-3 bond (spec 5A.3B): the payout table and spend of its release and of its fallback, its own signature on the release and the other panel members' signatures it holds over the same bytes, and what it carried as a carrier. Panel members read each other's signatures here. For a table that left money in escrow (RULED 2026-11-03, kanban #1085), `escrow` lists the escrow spends this seat found on the chain and its own proposals for the escrow now, each outputs[] with the height it names and the signatures it holds over the same bytes; panel members read each other's here, and anyone the spends.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16767,
   "summary": "A started bond's release and fallback",
   "query": [
    {
@@ -14048,7 +14048,7 @@
   "returns": "200 JSON { node, starts: [{ start, height, round_id, proof_id, node, bond, release?, fallback?, carried[] }] }",
   "purpose": "Every slash start this seat has read (the newest 64), each with what /slash-release answers for it.",
   "audience": "operator/monitoring",
-  "line": 0,
+  "line": 16772,
   "summary": "Every start this seat has read",
   "query": [],
   "body": null,
@@ -14071,7 +14071,7 @@
   "returns": "200 octet-stream the PayoutTable; 404",
   "purpose": "A slash payout table by its id, payout_table_id = tagged_hash(\"ARENA/v1/SlashPayoutTable\", its bytes) (spec 5A.3B: \"Any seat serves the table by its id\").",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16773,
   "summary": "A slash payout table by its id",
   "query": [],
   "body": null,
@@ -14099,7 +14099,7 @@
   "returns": "200 JSON { node, federation, use, address, script, signature }; 400/404/409",
   "purpose": "This node's peg-in address into a federation for carrying one slash (spec 5A.3B: panel A's members on a release, the census key's holders on a fallback), made once by its own client and signed by its node key over carrier_peg_in(network_id, script). 409 where it holds no client of that federation.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16779,
   "summary": "This node's peg-in as a slash carrier",
   "query": [
    {
@@ -14151,7 +14151,7 @@
   "returns": "200 JSON { tableId, carriers: [{ node, tableId, escrow, federation, script, signature }] }",
   "purpose": "The CarrierPegIn records this seat holds for a slash table's escrow (spec 5A.3B, RULED 2026-11-03, kanban #1085): each a carrier's peg-in into one federation for one escrow outpoint, signed by its node key over tagged_hash(\"ARENA/v1/CarrierEscrowPegIn\", payout_table_id || escrow txid || escrow vout || federation_id || script). An escrow spend pays only scripts named here.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16080,
   "summary": "An escrow's carriers",
   "query": [],
   "body": null,
@@ -14174,7 +14174,7 @@
   "returns": "200 JSON { ok, kept }; 400 not a CarrierPegIn; 409 refused by the carrier rule; 503 this seat has not read that table confirmed",
   "purpose": "Takes a carrier's CarrierPegIn { node, tableId, escrow \"txid:vout\", federation, script, signature } for a slash table's escrow (RULED 2026-11-03, kanban #1085), checked before it is kept: the node key's signature, a table this seat reads confirmed, an escrow outpoint of that table, and a node the carrier rule lets carry it (panel A's members, or the census key's holders less the accused and the round's seats). A new one is handed on to the escrow's signers.",
   "audience": "node-to-node",
-  "line": 0,
+  "line": 16080,
   "summary": "Take a carrier's escrow peg-in",
   "query": [],
   "body": {
@@ -14205,7 +14205,7 @@
   "returns": "200 JSON {node, version, commit, startedAtMs, guardian, healthy}",
   "purpose": "The release this node runs, since when, and whether its guardian answers: what a fellow guardian's seat reads before its updater takes a new release (staged updates).",
   "audience": "node-to-node",
-  "line": 6686,
+  "line": 10394,
   "summary": "The release this node runs",
   "query": [],
   "body": null,
@@ -14229,7 +14229,7 @@
   "returns": "200 JSON {go, why, onTrial, f, waitingBefore, federation, members, answered}",
   "purpose": "Whether this guardian may take a release now: at most f guardians of one federation run a new release without a healthy hour; the updater asks before it fetches.",
   "audience": "operator/monitoring",
-  "line": 6697,
+  "line": 10412,
   "summary": "May this guardian update now",
   "query": [
    {
@@ -14264,7 +14264,7 @@
   "returns": "200 JSON {node, alarms: [{federation, kind, height, session | txid, seenAtMs}]}",
   "purpose": "The marks of theft this seat saw in federations' signed histories (inflation, or a reserve spend with no signed peg-out); a federation with one takes no deposits.",
   "audience": "player/page",
-  "line": 11327,
+  "line": 15996,
   "summary": "Reserve alarms this seat holds",
   "query": [],
   "body": null,
@@ -14288,7 +14288,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "Anchors a guardian's departure notice on chain: plan, fund from the node wallet, or follow an owner-sent txid (kanban #2610).",
   "audience": "operator/monitoring",
-  "line": 9515,
+  "line": 11067,
   "summary": "Departure notice anchor",
   "query": [],
   "body": {
@@ -14317,7 +14317,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "The operator UI's fee signal door (§27A.7.7), scoped bearer token paired through arena-operator: URI.",
   "audience": "operator/monitoring",
-  "line": 9066,
+  "line": 10613,
   "summary": "Operator fee signal",
   "query": [],
   "body": {
@@ -14346,7 +14346,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "The entry this seat took first naming a lock outpoint, with the player's claims it holds (kanban #1692, #1758, #1897).",
   "audience": "node-to-node",
-  "line": 11782,
+  "line": 13475,
   "summary": "Lock namer",
   "query": [
    {
@@ -14377,7 +14377,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "The player's BIP-340 claim on an entry's locks: POST keeps a checked claim, GET answers it (kanban #1897, #1938).",
   "audience": "player/page",
-  "line": 11798,
+  "line": 13493,
   "summary": "Lock claim",
   "query": [
    {
@@ -14412,7 +14412,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "Each batch's session-key signature in transcript order, zeros where the seat took it bare (kanban #1567, feedback #013).",
   "audience": "player/page",
-  "line": 12010,
+  "line": 13711,
   "summary": "Batch signatures",
   "query": [
    {
@@ -14443,7 +14443,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "The presigned refunds (c) of a protocol-27 settlement this seat holds for each send to a qualifier (kanban #1044 B1, ruling #1134).",
   "audience": "player/page",
-  "line": 12885,
+  "line": 14720,
   "summary": "Send refunds",
   "query": [
    {
@@ -14474,7 +14474,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "Each contribution agreement's share for a round at its census height, from this seat's book of counted rounds (§27A.4.2, kanban #1346).",
   "audience": "player/page",
-  "line": 13518,
+  "line": 15391,
   "summary": "Contribution shares",
   "query": [
    {
@@ -14505,7 +14505,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "A contributor's leave or termination by the cold admin key: hex body and signature, kept once per kind; GET answers what is held (§27A.4.2).",
   "audience": "player/page",
-  "line": 13559,
+  "line": 15432,
   "summary": "Contribution end",
   "query": [],
   "body": {
@@ -14534,7 +14534,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "A guardian's own signed view in a halt, taken when the held record binds its signer to that guardian (kanban #1319).",
   "audience": "node-to-node",
-  "line": 14144,
+  "line": 16026,
   "summary": "Guardian halt observations",
   "query": [],
   "body": {
@@ -14563,7 +14563,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "A head-to-head audit: its bytes and the auditor's signature, taken once before the round's short window closed (§13A.1, kanban #1412).",
   "audience": "node-to-node",
-  "line": 14603,
+  "line": 16488,
   "summary": "Head-to-head audit",
   "query": [],
   "body": {
@@ -14592,7 +14592,7 @@
   "returns": "200 JSON; 4xx with a reason",
   "purpose": "The head-to-head audits this seat holds for a round (§13A.1, kanban #1412).",
   "audience": "player/page",
-  "line": 14623,
+  "line": 16508,
   "summary": "Head-to-head audits",
   "query": [
    {
