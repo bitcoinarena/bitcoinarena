@@ -1768,7 +1768,7 @@ export async function lockStake(ask = {}) {
 }
 async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, playerPubkey, LockClient,
   storage, donationMsat = 0n, donationRecipients = null, onStep = () => {}, onSubmitted = () => {}, onSubmitting = () => {}, submitTag = '',
-  relockUntilMs = undefined } = {}) {
+  onRelocking = () => {}, relockUntilMs = undefined } = {}) {
   paysIntoALock(round, invite, LockClient);
   if (!stake || namesNothing(stake.stakePoint)) throw new Error('a lock is to the stake\'s point, and this stake names none');
   if (!claimKey || !claimKey.ok || namesNothing(claimKey.claimPk))
@@ -1884,7 +1884,12 @@ async function lockStakeNow({ round, roundId, invite, seed, stake, claimKey, pla
         acc.catch(() => {});
         break;
       }
-      cur = await submitOn(owner, submitTag ? `${submitTag}.r${tries}` : '');
+      // THE RELOCK MARKED BEFORE IT IS MADE, AS THE FIRST SUBMISSION IS (kanban #3813, #2459): the intent named the refused transaction while
+      // the relock was handed on, so a tab closed before lockSubmit answered left the relock's accepted stake named nowhere and the next PLAY
+      // never asked the operation log; onRelocking puts the refused one aside in the intent and names the relock's tag (a throw: no relock)
+      const relockTag = submitTag ? `${submitTag}.r${tries}` : '';
+      onRelocking(relockTag, cur.submitted);
+      cur = await submitOn(owner, relockTag);
       onSubmitted(cur.submitted);
     }
     const made = { ...cur.lock, client, feeLock: cur.feeLock, feeGate, donations: cur.donations, walletBeforeMsat: before, walletAfterMsat: null,
@@ -2222,13 +2227,22 @@ async function keptLockStake(ask) {
           const outputs = ((sub && sub.outputs) || []).filter((o) => o && (o.role === 'stake' || o.role === 'fee'))
             .map((o) => ({ role: o.role, outIdx: Number(o.out_idx), amountMsat: String(o.amount_msat), expiration: Number(o.computed_expiration) }));
           const more = { txid: String((sub && sub.txid) || ''), operation: String((sub && sub.operation) || ''), outputs, claimPk: ask.claimKey && ask.claimKey.claimPk ? toHex(ask.claimKey.claimPk) : null };
-          storage.setItem(iKey, JSON.stringify({ ...r, room: '-'.repeat(Math.max(0, LOCK_RECORD_ROOM - 200 - JSON.stringify(more).length)), ...more }));
+          storage.setItem(iKey, JSON.stringify({ ...r, room: '-'.repeat(Math.max(0, LOCK_RECORD_ROOM - 200 - JSON.stringify(more).length - JSON.stringify(r.refused || []).length)), ...more }));
         } catch { /* the intent without it */ }
+      }, onRelocking: (relockTag) => {
+        // kanban #3813: a relock (#3665) is handed on from here - the refused transaction goes to `refused` (named in the orphan copy), the
+        // intent is `submitting` again with no txid under the relock's tag, so a tab closed now is found again by keptLockStake (lockSubmittedBy)
+        const r = readJson(storage, iKey);
+        if (!r) throw new Error('the stake lock\'s intent is gone from this browser: no relock is submitted');
+        const refused = [...(r.refused || []), { txid: r.txid, operation: r.operation || '', submitTag: r.submitTag || '' }];
+        storage.setItem(iKey, JSON.stringify({ ...r, room: '-'.repeat(Math.max(0, LOCK_RECORD_ROOM - 250 - JSON.stringify(refused).length)), refused,
+          txid: null, operation: '', outputs: [], submitting: true, submitTag: relockTag }));
       } });
     } catch (e) {
       // nothing submitted: the intent failed, and the next PLAY writes over it; submitted and then refused by this page: it stays, for the collect
       const r = readJson(storage, iKey);
-      if (r && !r.txid) { try { storage.setItem(iKey, JSON.stringify({ ...r, failed: String((e && e.message) || e).slice(0, 200) })); } catch { storage.removeItem(iKey); } }
+      // a relock in flight (kanban #3813: `refused` names the refused one) is not failed: the next PLAY asks the operation log for its tag
+      if (r && !r.txid && !(r.refused && r.refused.length)) { try { storage.setItem(iKey, JSON.stringify({ ...r, failed: String((e && e.message) || e).slice(0, 200) })); } catch { storage.removeItem(iKey); } }
       throw e;
     }
     let kept = true;
