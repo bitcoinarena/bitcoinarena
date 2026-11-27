@@ -50,6 +50,15 @@ export const STEP_MS = 1000;
 export const KEPT_MISSES_MAX = 2;
 /** Everything else the node asks a core (meta, run length, decide, a pose): a moment. */
 export const ASK_MS = 2000;
+/** kanban #3883 (bypass of #3556): A WARM GHOST THAT ANSWERS JUST INSIDE ITS DEADLINE never missed, and held the seat's thread ~650 ms
+ *  per picture without end. Now, misses or not, what each of one core's KEPT asks held the seat's thread beyond KEPT_FREE_MS counts,
+ *  at most KEPT_SLOW_MS of it in any KEPT_WINDOW_MS: an ask's deadline is cut to what is left (plus KEPT_FREE_MS), and asks are
+ *  refused while nothing is left. Measured, an honest truck's ghost: 3880 asks, p99 4 ms, the longest 119 ms (its first open).
+ *  (A cap on the total share was tried and refused an honest catch-up burst - a viewer arriving late - so many short asks are not
+ *  bounded here; each is bounded by KEPT_FREE_MS.) */
+export const KEPT_FREE_MS = 100;
+export const KEPT_SLOW_MS = ASK_MS;
+export const KEPT_WINDOW_MS = 60000;
 /** Loading a core: its thread started and its modules' top level evaluated. */
 export const LOAD_MS = 10000;
 // ITS MEMORY (spec §0A.6): time alone did not bound it - measured, a core that allocated in a loop took the node
@@ -385,6 +394,14 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
   let last = kept;
   const memo = new Map();
   let keptMisses = 0;   // kanban #3556
+  // kanban #3883: [end time, ms held] of each slow KEPT ask in the last KEPT_WINDOW_MS - a fresh kept thread's load and a heap death included
+  const keptHeld = [];
+  const heldNow = (now) => {
+    while (keptHeld.length && keptHeld[0][0] <= now - KEPT_WINDOW_MS) keptHeld.shift();
+    let slow = 0;
+    for (const [, ms] of keptHeld) slow += Math.max(0, ms - KEPT_FREE_MS);
+    return slow;
+  };
   const end = (why) => { ended = why; kept.end(why); };
   const call = (op, input = {}, within = null) => {
     if (ended) throw new Error(ended);
@@ -398,11 +415,29 @@ export function loadCore({ files, entry }, { callMs = CALL_MS, stepMs = STEP_MS,
       // core made every later signed call on this seat throw "it is not run again" while seats that never drew that ghost answered.
       // The next KEPT call gets a fresh kept thread (the open runs went with the old one: the ghosts open them again). Only the
       // plugin trial (`oneThread`), which watches one thread across calls, still ends the core.
-      if (!oneThread && kept.ended()) kept = startThread({ files, entry }, opts);
-      last = kept;
-      try { return revive(kept.call(op, input, within)); }
-      catch (e) { if (!oneThread && /did not stop within \d+ ms/.test(String(e && e.message))) keptMisses++; throw e; }
-      finally { if (oneThread && kept.ended()) ended = kept.ended(); }
+      // kanban #3883: A WARM GHOST THAT ANSWERS JUST INSIDE ITS DEADLINE IS BOUNDED TOO (KEPT_SLOW_MS above). A cut ask that
+      // runs out is not a miss (the core kept its own deadline): the ghost pauses until the window frees it. Pictures nobody signs;
+      // seats need not agree on them.
+      const t0 = oneThread ? 0 : performance.now();
+      let cut = false;
+      if (!oneThread) {
+        const slow = heldNow(t0);
+        if (slow >= KEPT_SLOW_MS)
+          throw new Error(`this core's warm ghost held this seat's thread ${Math.round(slow)} ms past ${KEPT_FREE_MS} ms an ask in the last ${KEPT_WINDOW_MS / 1000} s: it is not asked again here for now`);
+        const left = Math.floor(KEPT_SLOW_MS - slow + KEPT_FREE_MS);
+        const own = Math.min({ callMs, stepMs, askMs }[DEADLINE[op] || 'askMs'], Number.isFinite(within) ? within : Infinity);
+        if (left < own) { within = left; cut = true; }
+      }
+      try {
+        if (!oneThread && kept.ended()) kept = startThread({ files, entry }, opts);
+        last = kept;
+        return revive(kept.call(op, input, within));
+      }
+      catch (e) { if (!oneThread && !cut && /did not stop within \d+ ms/.test(String(e && e.message))) keptMisses++; throw e; }
+      finally {
+        if (oneThread && kept.ended()) ended = kept.ended();
+        if (!oneThread) { const now = performance.now(); if (now - t0 > KEPT_FREE_MS) keptHeld.push([now, now - t0]); }
+      }
     }
     const key = PURE.has(op) ? `${op}\0${plain(input)}` : null;
     if (key !== null && memo.has(key)) return revive(memo.get(key));
