@@ -37,6 +37,8 @@ test('#1489-a44-refute-35-s1-1: a peer\'s VERIFYING foreign receipts are read wi
     const ks = schnorr.utils.randomSecretKey ? schnorr.utils.randomSecretKey() : randomBytes(32);
     const kp = schnorr.getPublicKey(ks);
     const realId = randomBytes(32);
+    // kanban #3862: a foreign receipt is filed only under a committee member's key (a stranger's is refused) - this one is on a committee
+    w.a.round.recordSignerNodes(new Uint8Array(randomBytes(32)), [kp]);
     assert.throws(() => w.a.round.takeReceipt(signed(ks, kp, realId)), /has not got/);
     const has = () => !!w.a.round.db.prepare('SELECT 1 FROM foreign_receipts WHERE checkpoint_id = ?').get(realId);
     assert.ok(has(), 'the divergence signal was not filed');

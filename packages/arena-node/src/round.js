@@ -443,6 +443,11 @@ export class Round {
       // signature is checked under the key the receipt names - the only check
       // available without a round to read a committee from - and it is filed
       // unattributed until the mark itself turns up.
+      // A COMMITTEE MEMBER'S, NOT ANY KEY'S (kanban #3862, #1489 r30-play-2): #2151 gave carryReceipts this rule, the /play door had none -
+      // a stranger signing 4096 receipts with fresh keys flushed every real one out (FOREIGN_RECEIPTS_KEPT). The mark's round is unknown
+      // here, so the signer must be on the assigned committee of SOME round this seat holds; anyone else is refused before the verify.
+      if (!this.db.prepare('SELECT 1 FROM signer_nodes WHERE pubkey = ? LIMIT 1').get(r.nodePubkey))
+        throw new Error(`the receipt from ${toHex(r.nodePubkey)} is signed by no committee member this node knows`);
       if (!verifyNode(signature, receiptId(r), r.nodePubkey))
         throw new Error(`the receipt from ${toHex(r.nodePubkey)} does not verify`);
       this.db.prepare(
