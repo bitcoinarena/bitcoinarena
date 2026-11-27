@@ -293,6 +293,27 @@ export class Roster {
     // AND THE SEED AND THE COMMITTEE THE SAME WAY, per round and per view.
     this.seeds = new Map();
     this.committees = new Map();
+    // kanban #3863: when the censuses of rounds this seat does not hold were last derived (ms), at most FOREIGN_DERIVE_MAX a window
+    this.foreignDerived = [];
+  }
+
+  // A ROUND THIS SEAT DOES NOT HOLD COSTS A BOUNDED NUMBER OF CENSUS DERIVATIONS (kanban #3863, audit #1489 r41-gossip-1, high): a draw of a
+  // contract handed in from outside (committeeFor `posted`: GET /served's rounds in drawnOfServed, a season account's round, a market's
+  // source round, a seating certificate's series round) derives the census its contract names when no census of that key is in memory. One
+  // seat's /served answer of 20,000 invented rounds, each naming one more sat of bond_min (or a fresh series id), missed the cache every time:
+  // 300 rounds were 300 derivations (2.1 s on a 33-block view; a live ~2,080-block view is 0.26-2.7 s each) on the main thread, per pull,
+  // and POST /item-purchase lets any stranger start up to 8 such merges. Now at most FOREIGN_DERIVE_MAX such derivations (store read
+  // included) run per FOREIGN_DERIVE_WINDOW_MS; past it the draw answers pending (asked again later; a /served round not drawn does not
+  // count, as one whose contract is missing). A census already in memory - every round of a key derived once - is not charged.
+  // Local work bound only: what the census of a key is, and who it draws, is unchanged.
+  static FOREIGN_DERIVE_MAX = 8;
+  static FOREIGN_DERIVE_WINDOW_MS = 60_000;
+  #foreignDeriveAllowed() {
+    const now = Date.now();
+    while (this.foreignDerived.length && now - this.foreignDerived[0] >= Roster.FOREIGN_DERIVE_WINDOW_MS) this.foreignDerived.shift();
+    if (this.foreignDerived.length >= Roster.FOREIGN_DERIVE_MAX) return false;
+    this.foreignDerived.push(now);
+    return true;
   }
 
   /** How many derived censuses are kept: a round is asked about while it settles, and then never again. */
@@ -498,7 +519,8 @@ export class Roster {
 
   // `posted`: the contract of a round being posted, not yet stored (RULED 2026-09-25: POST /round asks whether the round's
   // federation is bonded BEFORE round.open, so nothing of a refused round exists). The census derived is the same.
-  censusFor(roundIdBytes, atHeight = null, { asRoundsOwn = true, posted = null } = {}) {
+  // `foreign` (kanban #3863): `posted` is a contract handed in from outside (committeeFor), its derivations bounded per window
+  censusFor(roundIdBytes, atHeight = null, { asRoundsOwn = true, posted = null, foreign = false } = {}) {
     let asStored = posted;
     if (!asStored) {
       asStored = this.#held(roundIdBytes);
@@ -560,6 +582,9 @@ export class Roster {
     const refusedHere = atBlock && REFUSED_AT_BLOCK.get(atBlock);
     const refused = refusedHere && asRoundsOwn && contract.censusRoot instanceof Uint8Array && refusedHere.get(`${kept}:${toHex(contract.censusRoot)}`);
     if (refused) return refused;
+    // kanban #3863: a census of a round not held, not in memory, is derived (or read back) at most FOREIGN_DERIVE_MAX times a window
+    if (foreign && posted && !this.#foreignDeriveAllowed())
+      return { ok: false, pending: true, why: `this node is still reading censuses of rounds it does not hold (at most ${Roster.FOREIGN_DERIVE_MAX} a minute)` };
     // KEPT UNDER THE BLOCK AT THE CENSUS HEIGHT (kanban #786, measured 10-28: the test host seats kept the census of the 10-29 postings
     // derived on the private branch of 10-22; read back after the chain left that branch, it stood for a root the chain no longer gives,
     // and the series stayed held, written and listed): a census kept before another block took that height is not read back
@@ -823,7 +848,7 @@ export class Roster {
     const held = this.#held(roundIdBytes);
     const contract = held || posted;
     const given = held ? null : posted;
-    const census = contract ? this.censusFor(roundIdBytes, null, given ? { posted: given } : {}) : null;
+    const census = contract ? this.censusFor(roundIdBytes, null, given ? { posted: given, foreign: true } : {}) : null;   // kanban #3863
     const seeded = contract ? this.seedFor(roundIdBytes, contract) : null;
     // AND TAKE THE TABLE'S SEATING (pick (c)): the certificate of the table's first round seats every round of it
     const anchor = contract ? tableAnchorOf(contract) : null;
@@ -862,7 +887,7 @@ export class Roster {
   }
 
   #committeeFor(roundIdBytes, role, seated = null, posted = null) {
-    const census = this.censusFor(roundIdBytes, null, posted ? { posted } : {});
+    const census = this.censusFor(roundIdBytes, null, posted ? { posted, foreign: true } : {});   // kanban #3863
     if (!census.ok) return census;
 
     const contract = posted || this.#held(roundIdBytes);
