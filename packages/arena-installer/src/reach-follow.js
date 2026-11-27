@@ -36,11 +36,26 @@ export function switchPlan(was, mode, nowMs = Date.now()) {
  * removeProgram for the tunnel; `startedMs` when this seat started. Answers { did: [...], view } - the view for GET /owner/reach.
  */
 export async function followReach({ home, state = null, publicEndpoint, censusRead = false, ownEndpoints = [], refresh, removeTunnel, nowMs = Date.now(),
-  startedMs = null, retryMs = UPDATE_RETRY_MS }) {
+  startedMs = null, retryMs = UPDATE_RETRY_MS, adoptUrl = null, accept = null }) {
   const st = state || nodeState(home);
   const did = [];
-  const s = st.read();
-  const r = s.reach || {};
+  let s = st.read();
+  let r = s.reach || {};
+  // PUBLIC_URL EDITED BY HAND (kanban #3885): taken as the node's address once asked for (`adoptUrl`, the owner page's button) or once
+  // `accept(url)` passes it (the outside check) - then the update below names it like a switched one
+  const m = addressMismatch({ s, publicEndpoint, censusRead, ownEndpoints, switching: switchRunning(st.home, nowMs) });
+  if (m && m.adoptable && (norm(adoptUrl) === norm(m.conf) || accept)) {
+    const tried = s.addressAdopt && norm(s.addressAdopt.url) === norm(m.conf) && !s.addressAdopt.ok && nowMs - Number(s.addressAdopt.atMs || 0) < retryMs;
+    if (!tried || norm(adoptUrl) === norm(m.conf)) {
+      let g;
+      try { g = accept ? await accept(m.conf) : { ok: true }; } catch (e) { g = { ok: false, why: e.message }; }
+      if (g && g.ok) {
+        st.update((n) => ({ reach: { ...(n.reach || {}), url: m.conf, adopted: { from: m.installer, atMs: nowMs } }, addressAdopt: { url: m.conf, ok: true, atMs: nowMs } }));
+        did.push(`public_url ${m.conf} taken as this node's address (was ${m.installer})`);
+      } else st.save({ addressAdopt: { url: m.conf, ok: false, why: (g && g.why) || 'not taken', ...(g && g.detail ? { detail: g.detail } : {}), atMs: nowMs } });
+      s = st.read(); r = s.reach || {};
+    }
+  }
   const here = !!r.url && !!publicEndpoint && norm(r.url) === norm(publicEndpoint);
   // A SWITCH WHOSE RUNNER ENDED WITH THE SEAT'S RESTART: this seat started after it, on the address it switched to - it got through
   try {
@@ -77,13 +92,46 @@ export async function followReach({ home, state = null, publicEndpoint, censusRe
       }
     }
   }
-  return { did, view: viewOf(st.read(), { censusRead, ownEndpoints, namesNew }) };
+  const after = st.read();
+  return { did, view: viewOf(after, { censusRead, ownEndpoints, namesNew, mismatch: addressMismatch({ s: after, publicEndpoint, censusRead, ownEndpoints, switching: switchRunning(st.home, nowMs) }) }) };
+}
+
+const QUICK_HOST = /(^|\.)trycloudflare\.com$/i;
+/** A switch of the owner page still running (bin/reach-switch.mjs): its address is not the operator's edit. */
+export function switchRunning(home, nowMs = Date.now()) {
+  try { const p = JSON.parse(readFileSync(join(home, 'reach-switch.json'), 'utf8')); return !!p && (p.state === 'running' || p.state === 'login') && nowMs - Number(p.atMs || 0) < 15 * 60000; } catch { return false; }
+}
+
+/**
+ * PUBLIC_URL AGAINST THE ADVERTISEMENT (kanban #3885, node operators 2026-11: public_url changed in arena.conf and the node restarted - the
+ * census, which reads only the on-chain advertisement, kept the old address and nobody said so). `publicEndpoint` the address the seat runs on
+ * (arena.conf public_url), `s` the installer's state (reach.url the address it set up), `ownEndpoints` what the census names for this node.
+ * Answers null when they agree, else { conf, installer, advertised, confDiffers, censusDiffers, adoptable, why }: `adoptable` when public_url
+ * was edited by hand on a bonded node that runs no quick tunnel and no switch - the advertisement update can name it.
+ */
+export function addressMismatch({ s, publicEndpoint, censusRead = false, ownEndpoints = [], switching = false }) {
+  if (!publicEndpoint) return null;
+  const r = (s && s.reach) || {};
+  const conf = String(publicEndpoint).trim().replace(/\/+$/, '');
+  const advertised = censusRead ? [...new Set((ownEndpoints || []).map(String))] : null;
+  const confDiffers = !!r.url && norm(r.url) !== norm(conf);
+  const censusDiffers = !!advertised && advertised.length > 0 && !advertised.some((e) => norm(e) === norm(conf));
+  if (!confDiffers && !censusDiffers) return null;
+  let host = ''; try { host = new URL(conf).hostname; } catch { host = ''; }
+  const quick = r.mode === 'quick' || QUICK_HOST.test(host);
+  const bonded = !!(s && s.bond && s.bond.txid);
+  const adoptable = confDiffers && !quick && !switching && bonded;
+  const why = confDiffers
+    ? `public_url in arena.conf is ${conf}, but this node's advertisement names ${(advertised && advertised.length ? advertised : [r.url]).join(', ')}: changing public_url and restarting changes nothing for the network until an advertisement update names it`
+    : `this node runs on ${conf}, but the census names ${advertised.join(', ')}`;
+  return { conf, installer: r.url || null, advertised, confDiffers, censusDiffers, adoptable, quick, switching: !!switching, bonded, why };
 }
 
 /** What the owner page shows of it: the census's address(es) for this node, the update on its way, the tunnel kept, how long it takes. */
-export function viewOf(s, { censusRead = false, ownEndpoints = [], namesNew = false } = {}) {
+export function viewOf(s, { censusRead = false, ownEndpoints = [], namesNew = false, mismatch = null } = {}) {
   const r = (s && s.reach) || {};
   const u = s && s.endpointUpdate && norm(s.endpointUpdate.endpoint) === norm(r.url) ? s.endpointUpdate : null;
   return { censusRead, advertised: censusRead ? [...new Set(ownEndpoints.map(String))] : null, censusNamesNew: !!namesNew, update: u,
-    previous: r.previous || null, bonded: !!(s && s.bond && s.bond.txid), takesBlocks: CENSUS_TAKES_BLOCKS, takesMinutes: CENSUS_TAKES_BLOCKS * BLOCK_MINUTES };
+    previous: r.previous || null, bonded: !!(s && s.bond && s.bond.txid), takesBlocks: CENSUS_TAKES_BLOCKS, takesMinutes: CENSUS_TAKES_BLOCKS * BLOCK_MINUTES,
+    mismatch, adopt: (s && s.addressAdopt) || null };
 }

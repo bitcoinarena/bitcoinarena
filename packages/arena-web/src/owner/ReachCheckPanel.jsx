@@ -49,7 +49,9 @@ const commonFailure = (rs) => {
  */
 export function diagnose({ reach = null, pageBase = null, probes = [], rounds = null, nowMs = Date.now() } = {}) {
   const lines = [];
-  const current = (reach && reach.ok && (reach.url || reach.serving)) || (/^https?:\/\//.test(pageBase || '') && !/\/\/(127\.0\.0\.1|localhost)[:/]/.test(pageBase) ? pageBase : null);
+  // public_url edited by hand (kanban #3885): the node runs on it, whatever the installer set up
+  const edited = reach && reach.ok && reach.follow && reach.follow.mismatch && reach.follow.mismatch.confDiffers ? reach.follow.mismatch.conf : null;
+  const current = edited || (reach && reach.ok && (reach.url || reach.serving)) || (/^https?:\/\//.test(pageBase || '') && !/\/\/(127\.0\.0\.1|localhost)[:/]/.test(pageBase) ? pageBase : null);
   // 1 THE ADDRESS NOW
   lines.push(current ? { id: 'address', level: 'ok', title: 'Your node\'s address', says: current, fix: null }
     : { id: 'address', level: 'bad', title: 'Your node\'s address', says: 'Your node has no public address.', fix: 'Choose how others reach your node under Services, Address.' });
@@ -68,6 +70,7 @@ export function diagnose({ reach = null, pageBase = null, probes = [], rounds = 
     let fix;
     if (f && f.update && f.update.txid) fix = `The update naming your new address was sent (${String(f.update.txid).slice(0, 12)}…). The network takes it about ${f.takesBlocks || 12} blocks after it is sent (about ${Math.round(((f.takesMinutes || 120) / 60))} hours). Nothing to do but wait.`;
     else if (f && f.update && f.update.why) fix = `The update naming your new address could not be sent: ${f.update.why}. Your node tries again every 10 minutes; most often it needs a few thousand sats in its wallet for the fee.`;
+    else if (f && f.mismatch && f.mismatch.confDiffers) fix = f.mismatch.adoptable ? `public_url in arena.conf was changed to ${f.mismatch.conf}, but changing it and restarting changes nothing for the network. Post the advertisement update under Services, Address.` : `public_url in arena.conf was changed to ${f.mismatch.conf}. ${f.mismatch.quick ? 'A quick tunnel is never put on chain: choose a stable address under Services.' : 'An advertisement update must name it: see Services, Address.'}`;   // kanban #3885
     else fix = 'No update naming your new address has been sent yet. Your node sends one by itself within 10 minutes; if this stays red, restart the node.';
     lines.push({ id: 'census', level: f && f.update && f.update.txid ? 'warn' : 'bad', title: 'Address the network has', says: `The network still sends players to ${old}, not to your current address.`, fix });
   }
