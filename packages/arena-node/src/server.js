@@ -8339,8 +8339,31 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE SERIES THIS NODE DOES NOT HOLD, PULLED FROM THE NODES IT KNOWS (kanban #757, series-pull.js): the poster's push reaches a node
   // only at the address its advert names, and a node no operator of the series runs refused it as unfunded. Every node asks a few
   // others what they hold and takes each paying series whose publication its own chain confirms. ARENA_SERIES_PULL=0 turns it off.
+  // kanban #3832: each root everySeat() names, mapped to the census key whose advert or announced address it is (the newest round's census
+  // and the chain's newest, as everySeat reads them), so one seat at two roots is one peer in the pull; read again each pass
+  let pullSeatKeys = new Map();
+  const seatKeysByRoot = () => {
+    const m = new Map();
+    const add = (entries) => {
+      for (const e of entries || []) {
+        if (!e || !e.pubkey) continue;
+        const k = toHex(e.pubkey);
+        let announced = null; try { announced = addressBook && addressBook.endpointOf ? addressBook.endpointOf(e) : null; } catch { announced = null; }
+        for (const at of [e.advert && e.advert.endpoint, announced]) if (at) m.set(baseOf(at), k);
+      }
+    };
+    let rows = [];
+    try { rows = round.db.prepare('SELECT round_id FROM rounds ORDER BY rowid DESC LIMIT 40').all(); } catch { rows = []; }
+    for (const r of rows) {
+      let c; try { c = roster.censusFor(new Uint8Array(r.round_id)); } catch { c = null; }
+      if (c && c.ok && Array.isArray(c.entries) && c.entries.length) { add(c.entries); break; }
+    }
+    try { add(fedRecords && fedRecords.censusNewest ? fedRecords.censusNewest() : []); } catch { /* none read yet */ }
+    return m;
+  };
   const seriesPull = chainFor && process.env.ARENA_SERIES_PULL !== '0' ? createSeriesPull({
-    peers: () => everySeat(),
+    peers: () => { try { pullSeatKeys = seatKeysByRoot(); } catch { pullSeatKeys = new Map(); } return everySeat(); },
+    seatOf: (u) => pullSeatKeys.get(u) || null,
     // and the ones taken out here on purpose (droppedSeries): not pulled back in
     held: () => [...writers.map((w) => toHex(w.id)), ...droppedSeries],
     take: async (t) => { const p = await publishedHere(t); if (!p.ok) return p; const got = takeGridSeries(t, { published: true }); return got.ok ? got : { ok: false, why: got.why }; },
