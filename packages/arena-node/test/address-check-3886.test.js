@@ -41,8 +41,9 @@ test('seats that hold no announcement of the address yet, or do not answer: unkn
 test('checkSeats: other nodes\' https census endpoints, never this node, each once, at most 3, rotated by the seed', () => {
   const e = (k, endpoint) => ({ pubkey: k.repeat(32), advert: { endpoint } });
   const entries = [e('ab', NEW), e('01', 'https://a.example'), e('02', 'https://a.example/'), e('03', 'http://b.example:8470'), e('04', 'https://c.example'), e('05', 'https://d.example'), e('06', 'https://e.example')];
-  assert.deepEqual(checkSeats({ entries, ownKey: NODE }), ['https://a.example', 'https://c.example', 'https://d.example']);
-  assert.deepEqual(checkSeats({ entries, ownKey: NODE, seed: 1 }), ['https://c.example', 'https://d.example', 'https://e.example']);
+  assert.deepEqual(checkSeats({ entries, ownKey: NODE, most: 3 }), ['https://a.example', 'https://c.example', 'https://d.example']);
+  assert.deepEqual(checkSeats({ entries, ownKey: NODE, most: 3, seed: 1 }), ['https://c.example', 'https://d.example', 'https://e.example']);
+  assert.equal(checkSeats({ entries, ownKey: NODE }).length, 4, 'all four other https seats (at most 5 since #3890)');
 });
 
 test('against the real door: a seat holding the announcement of the new address answers it, the check reads that', async () => {

@@ -14,6 +14,7 @@ import { Button } from '../design/components.jsx';
 
 export const SLOW_MS = 3000;
 export const EVERY_MS = 5 * 60000;
+export const ASK_SEATS = 5;   // kanban #3890: seats in more regions (was 3)
 const norm = (u) => String(u || '').trim().replace(/\/+$/, '').replace(/^ws(s?):/i, 'http$1:').toLowerCase();
 const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 
@@ -44,6 +45,14 @@ export function updateLine(pr) {
   if (pr.step === 'sent') return { id: 'update', level: 'warn', title, says: `Sent (${tx}), waiting for its first confirmation.`, fix: `The census takes the new address in ${about(pr.minutesLeft)}. Nothing to do meanwhile.` };
   if (pr.step === 'confirming') return { id: 'update', level: 'warn', title, says: `${pr.depth} of ${pr.need} confirmations (${tx}).`, fix: `The census takes the new address in ${about(pr.minutesLeft)}. Nothing to do meanwhile.` };
   return { id: 'update', level: 'warn', title, says: `${pr.depth} of ${pr.need} confirmations (${tx}): deep enough.`, fix: `The census takes it at its next step, in ${about(pr.minutesLeft)}.` };
+}
+
+/** Regions that reached the node and regions none of whose checks did: null unless both exist. */
+export function regionsOf(results) {
+  const by = new Map();
+  for (const r of results) { if (!r.region) continue; const e = by.get(r.region) || { ok: 0, no: 0 }; if (r.reached) e.ok++; else e.no++; by.set(r.region, e); }
+  const from = [...by].filter(([, e]) => e.ok).map(([k]) => k), not = [...by].filter(([, e]) => !e.ok && e.no).map(([k]) => k);
+  return from.length && not.length ? { from, not } : null;
 }
 
 /** The most common failure among results (for one sentence of advice). */
@@ -90,7 +99,7 @@ export function diagnose({ reach = null, pageBase = null, probes = [], rounds = 
   const pr = f && f.progress;
   if (pr) lines.push(updateLine(pr));
   // 3 REACHABLE FROM OUTSIDE: each seat's results for the address now (the census one when the seat holds no other)
-  const all = answered.flatMap((p) => (p.body.results || []).map((r) => ({ ...r, seat: p.seat })));
+  const all = answered.flatMap((p) => (p.body.results || []).map((r) => ({ ...r, seat: p.seat, region: typeof p.body.region === 'string' ? p.body.region : null })));
   const forCurrent = current ? all.filter((r) => norm(r.url) === norm(current)) : [];
   const ofCensus = all.filter((r) => (r.from || []).includes('census'));
   const judged = forCurrent.length ? forCurrent : ofCensus;
@@ -99,6 +108,15 @@ export function diagnose({ reach = null, pageBase = null, probes = [], rounds = 
   else if (!judged.length) lines.push({ id: 'reach', level: 'bad', title: 'Reachable from the network', says: 'The network does not know where to find your node.', fix: 'Your node tells the network its address every 10 minutes. Make sure it is running and has a public address.' });
   else if (reached.length && reached.length * 2 >= judged.length) lines.push({ id: 'reach', level: 'ok', title: 'Reachable from the network', says: `${reached.length} of ${judged.length} checks from the network reached your node.`, fix: null });
   else lines.push({ id: 'reach', level: 'bad', title: 'Reachable from the network', says: `${reached.length} of ${judged.length} checks from the network reached your node.`, fix: whyNot(commonFailure(judged)) });
+  // REACHED FROM SOME REGIONS ONLY (kanban #3890, #3723): said plainly, with another route
+  const split = regionsOf(judged);
+  if (split) {
+    const at = lines.findIndex((l) => l.id === 'reach');
+    const ok = lines[at].level === 'ok';
+    lines[at] = { id: 'reach', level: ok ? 'warn' : 'bad', title: 'Reachable from the network', says: `${reached.length} of ${judged.length} checks reached your node: from ${split.from.join(', ')}, not from ${split.not.join(', ')}.`,
+      fix: /\.ts\.net(:\d+)?$/i.test(String(current || '').replace(/\/+$/, '').replace(/^https?:\/\//i, '')) ? `Players and nodes in ${split.not.join(', ')} cannot reach your node. A Tailscale Funnel name is served from one region's ingress and can time out elsewhere. Choose a Cloudflare address or your own domain under Services, Address: they work from everywhere.`
+        : `Players and nodes in ${split.not.join(', ')} cannot reach your node (${whyNot(commonFailure(judged)).replace(/\.$/, '')}). A Cloudflare address or your own domain behind a well-connected host works from everywhere.` };
+  }
   // an old census address that is gone, said on line 2 too
   const deadOld = ofCensus.filter((r) => !forCurrent.includes(r) && !r.reached);
   if (deadOld.length && lines[1].level !== 'ok') lines[1].fix = `${lines[1].fix} The old address does not answer any more: ${whyNot(deadOld[0])}`;
@@ -149,7 +167,7 @@ export class ReachCheckPanel extends React.Component {
     };
     const [reach, probes, rounds] = await Promise.all([
       (async () => api.post('/owner/reach', await api.signed('reach')))().catch(() => null),
-      Promise.all(seats.slice(0, 3).map(ask)),
+      Promise.all(seats.slice(0, ASK_SEATS).map(ask)),
       (async () => api.get('/owner/rounds'))().catch(() => null)]);
     const lines = diagnose({ reach, pageBase, probes, rounds, nowMs: Date.now() });
     this.setState({ busy: false, lines, atMs: Date.now() });
@@ -159,7 +177,7 @@ export class ReachCheckPanel extends React.Component {
     const { busy, lines, atMs } = this.state;
     return (
       <div className="reachcheck">
-        <p className="lead">Is your node reachable from the internet? This asks three nodes of the network to visit your node, the way players and other nodes do.</p>
+        <p className="lead">Is your node reachable from the internet? This asks five nodes of the network, in different places, to visit your node, the way players and other nodes do.</p>
         <Button primary disabled={busy} onClick={this.run}>{busy ? 'Checking… (up to 20 s)' : lines ? 'Check again' : 'Check my node'}</Button>
         {lines ? <ul className="rc-lines">{lines.map((l) => (
           <li key={l.id} className={`rc rc-${l.level}`} data-check={l.id}>
