@@ -9,6 +9,8 @@
 // 2.0 (kanban #1489 port of #1723): the same bounds as server.js LISTING_ANSWER_MAX_BYTES (4 MB) and PACKAGE_ANSWER_MAX_BYTES (16 MB)
 // kanban #3107, #3108: a peer's redirect is no answer
 import { noRedirect } from './fetch-routes.js';
+import { decodeManifest } from '../../arena-protocol/src/manifest.js';   // kanban #3874
+import { fromHex, toHex } from '../../arena-protocol/src/hash.js';   // kanban #3874
 export const PEER_LISTING_BYTES = 4 * 1048576, PEER_LISTING_GAMES = 64, PEER_PACKAGE_BYTES = 16 * 1048576;
 // kanban #2018, #2052 (refute of #1540/#1723, the duty poster's other census reads): a seat's GET /rounds?next=1&ahead=50h - one open
 // round of each series and the few closing within 2 min, measured 600-900 KB on live seats - and the rows of it walked; a seat's GET
@@ -70,7 +72,33 @@ export const binaryUpTo = async (r, maxBytes) => {
 };
 
 /** a seat's games, at most PEER_LISTING_GAMES of them: the rest of a longer list is not read (kanban #1540) */
-export const listedGames = (got) => (got && Array.isArray(got.games) ? got.games.slice(0, PEER_LISTING_GAMES) : []);
+// A FAIR SHARE PER GAME, NOT THE FIRST 64 ROWS (kanban #3874, #1489 r40-hosting-3): a seat lists every version it hosts in the order it took
+// them, and automatic updates take every next version a hosted game's developer signs. So one developer signing 64 tiny versions of his
+// game (free, one key) filled the first 64 rows of every hosting seat's listing, and every version taken after them - an honest game's
+// update, the next Next Block or RPS version - was never read by another seat (autoUpdateSweep, readNetworkApps, the duty poster's
+// catalog). A longer listing is now cut by lineage (the manifest's gameName + developer key, the pair an update must keep): the rows are
+// dealt one per lineage in turn until PEER_LISTING_GAMES are chosen, and handed on in the listing's own order. A listing of at most
+// PEER_LISTING_GAMES rows is read exactly as before; at most PEER_LISTING_SCAN rows of a longer one are looked at (the bytes are bounded
+// by PEER_LISTING_BYTES already); a row whose manifest does not decode shares one lineage with all such rows. Read side only: nothing a
+// seat serves, signs or agrees on changes.
+export const PEER_LISTING_SCAN = 4096;
+const lineageOf = (g) => {
+  try { const m = decodeManifest(fromHex(String(g?.manifest || ''))); return `${m.gameName}\u0000${toHex(m.gameDevPubkey)}`; } catch { return '\u0000'; }
+};
+export const listedGames = (got) => {
+  if (!got || !Array.isArray(got.games)) return [];
+  const rows = got.games;
+  if (rows.length <= PEER_LISTING_GAMES) return rows.slice();
+  const byLineage = new Map();
+  rows.slice(0, PEER_LISTING_SCAN).forEach((g, i) => { const k = lineageOf(g); if (!byLineage.has(k)) byLineage.set(k, []); byLineage.get(k).push(i); });
+  const lanes = [...byLineage.values()], chosen = [];
+  for (let turn = 0; chosen.length < PEER_LISTING_GAMES; turn++) {
+    let any = false;
+    for (const lane of lanes) { if (turn < lane.length && chosen.length < PEER_LISTING_GAMES) { chosen.push(lane[turn]); any = true; } }
+    if (!any) break;
+  }
+  return chosen.sort((a, b) => a - b).map((i) => rows[i]);
+};
 
 // EVERY ANSWER A SEAT READS FROM ANOTHER SEAT HAS A LIMIT, AS EVERY REQUEST BODY DOES (kanban #2637, a bypass of #1469): #1469 capped what a
 // seat reads from a request (body-read.js, 413); the same bytes came back in as a peer's ANSWER read with a bare r.json() - pullProposals'
