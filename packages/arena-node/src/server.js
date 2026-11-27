@@ -1590,6 +1590,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // checked when the game was taken (registrationFromPackage keeps only the checked window), so the sort above sees no forged
   // version; at most MAX_PACKAGE_ANCESTORS of them, with the one below as the cut marker (a checked one when the chain is longer
   // here, else the marker the game was taken with). `extra` are newer manifests appended (hostSplit, an update's old version).
+  // kanban #3830: GET /plugin's built package per hosted game object (weak: a dropped version frees its bytes)
+  const pluginPackageCache = new WeakMap();
   const chainHex = (g, extra = []) => {
     const hex = [...chainOf(g), ...extra].map((m) => toHex(encodeManifest(m)));
     // the marker only on a full window: on a shorter one a peer would decode it as a checked version
@@ -10713,10 +10715,24 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (req.method === 'GET' && url.pathname === '/plugin') {
         const g = hosted.get(String(url.searchParams.get('game') || '').toLowerCase());
         if (!g) return text(res, 404, 'this seat hosts no such game');
-        let pkg; try { pkg = packageOf(g); if (pkg) pkg = { ...pkg, ancestors: chainHex(g) }; } catch (e) { return text(res, 500, `that game's files could not be read: ${e.message}`); }
-        if (!pkg) return text(res, 409, 'this seat cannot package that game: its cores are not files it can hand out (a replayed game\'s engine)');
-        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=60', ...CORS });
-        return res.end(JSON.stringify(pkg));
+        // ONE BUILD PER VERSION, ONE BUFFER FOR EVERY ASK (kanban #3830, audit r40 hosting-2): every ask ran packageOf (every core and
+        // client read, base64'd and stringified on the seat's thread) and res.end()ed its own string, so a stranger opening sockets that
+        // never read kept N copies of a package of up to 16 MB in the seat (40 asks of 6 MB: +958 MB RSS). The package is now built
+        // once per hosted game object and the chain it is handed on with, and the same Buffer is written to every socket (no copy).
+        // The bytes served are the ones packageOf builds, unchanged; a new version or a longer chain builds anew.
+        let anc, entry;
+        try {
+          anc = chainHex(g); const ancKey = anc.join(',');
+          entry = pluginPackageCache.get(g);
+          if (!entry || entry.ancKey !== ancKey) {
+            let pkg = packageOf(g); if (pkg) pkg = { ...pkg, ancestors: anc };
+            entry = { ancKey, buf: pkg ? Buffer.from(JSON.stringify(pkg)) : null };
+            pluginPackageCache.set(g, entry);
+          }
+        } catch (e) { return text(res, 500, `that game's files could not be read: ${e.message}`); }
+        if (!entry.buf) return text(res, 409, 'this seat cannot package that game: its cores are not files it can hand out (a replayed game\'s engine)');
+        res.writeHead(200, { 'content-type': 'application/json', 'content-length': entry.buf.length, 'cache-control': 'public, max-age=60', ...CORS });
+        return res.end(entry.buf);
       }
       // THE GAMES AND MARKETS THIS SEAT FOUND ON THE NETWORK: public, as /games is; ?fresh=1 reads them again now
       if (req.method === 'GET' && url.pathname === '/network-games') {
