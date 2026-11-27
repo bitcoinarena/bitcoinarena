@@ -56,7 +56,9 @@ export async function verifyPeerReserveRow({ row, port, reserveKey, federationId
   const stored = String(st.stored.contractId);
   const senderOnContract = keyedId !== null && String(keyedId) === stored;
   if (!senderOnContract && String(zeroId) !== stored) return { ok: false, why: `the output at ${txHex.slice(0, 16)}…:${idx} is not ${amountMsat} msat to the reserve key` };
+  // A PEER'S ROUND ID IS ITS WORD, NOT THIS SEAT'S (kanban #3844, audit #1489 r30-settle-1): the federation check binds key and amount, not the
+  // round, so the row is kept with `peer: true` - reserveRowsOfNetwork never takes a peer's zero round id as this network's own payout change.
   return { ok: true, row: { outpoint, entryId: fromHex(row.entryId), roundId: fromHex(row.roundId), federationId, recipientPk: reserveKey,
-    amountMsat, contractId: stored, senderOnContract, image: senderOnContract ? row.image : null,
+    amountMsat, contractId: stored, senderOnContract, image: senderOnContract ? row.image : null, peer: true,
     ...(typeof row.item === 'string' && row.item.length <= 120 ? { item: row.item } : {}) } };
 }
