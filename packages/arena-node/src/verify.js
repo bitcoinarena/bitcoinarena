@@ -2596,7 +2596,7 @@ export class Verifier {
         bondTxid: advert ? advert.bondTxid : new Uint8Array(32), bondVout: advert ? advert.bondVout : 0,
       };
       const check = slashHoldsOnAudit({ proof, audit: held.bytes, signature: held.signature, rows, entry, advert, eligible, total, vrf, verify,
-        windowCloseMs: closeMs, canonicalTranscriptHash: canonical.hash, objectedRunId, replayDiffers });
+        windowCloseMs: closeMs, canonicalTranscriptHash: canonical.hash, objectedRunId, replayDiffers, protocolVersion: contract.protocolVersion });
       if (!check.slashed) { report.refused.push(`${who.slice(0, 16)}: ${check.why}`); continue; }
       const record = joinAuditSlashEvidence(encodeAuditSlashProof(proof), held.bytes, held.signature, rows);
       const { id, bytes: complete } = this.round.fraudProof(roundIdBytes, entryIdBytes, record);

@@ -49,7 +49,7 @@ import { tableFalse, claimsProvedQualifier } from './settlement-rebuild.js';
 import { namedClaims } from './arena-lock.js';
 import { splitNamedClaimEvidence } from './named-claim-proof.js';
 import { decodeFinalSig, splitSignedFinalSig, finalSigned } from './final-sig.js';
-import { decodeAudit, auditId, auditStands, auditResultsHash } from './auditor.js';
+import { decodeAudit, auditId, auditStands, auditResultsHash, AUDIT_TICK_VERSION } from './auditor.js';
 import { decodeSignedLockSet, lockSetId, lockSetSignatureId, lockSetViewId } from './lock-set.js';
 
 const hex = (b) => toHex(b);
@@ -488,7 +488,11 @@ export function slashHoldsOnRerun({
  * and beside it, as a player-result proof carries the signed result, the evidence: the AUDIT's bytes, its signature and the rows
  * (entry id, run id) its results_hash is over - so a stranger sees that the AUDIT vouched for exactly that run of that entry:
  *
- *   AUDIT (188) | signature (64) | n (u16) | n x (entry_id 32, run_id 32)
+ *   AUDIT_SLASH_PROOF (263) | audit_len (u16 BE) | AUDIT (audit_len: 188, or 220 with its tick hash) | signature (64) | n (u16) | n x (entry_id 32, run_id 32)
+ *
+ * RULED 2026-11-28 (kanban #3911, closes #3905): the AUDIT's length before it, with no new type byte and the 263-byte body unchanged (so the proof id
+ * does not move). An old record (no length) has the AUDIT's type byte at offset 263, never 0x00, and its AUDIT is 188 bytes; a new one has 0x00 there
+ * (the high byte of 188 or 220). Writers always write the length form; readers take both.
  *
  * The objection that held (the transcript, its receipts, the replay) travels as it does for the player-result kind: the seat's
  * GET /objection-bundle for (round, entry), REPLAYED by whoever judges the proof. Its own type byte, under the same slash-proof tag:
@@ -497,6 +501,17 @@ export function slashHoldsOnRerun({
 export const AUDIT_SLASH_PROOF_BYTES = 263;
 /** An AUDIT's own bytes: type, version, three 32-byte fields, its time (u64) and its 81-byte VRF proof. */
 export const AUDIT_BYTES = 188;
+/** And with its tick hash (from protocol 28, AUDIT_TICK_VERSION: auditor.js): 32 bytes more (kanban #3911). */
+export const AUDIT_TICK_BYTES = 220;
+/** Where the AUDIT starts in the record at `at` and how long it is: the length form (0x00 at offset 263) or the old one (kanban #3911). */
+function auditPlaceOf(bytes, at) {
+  const p = at + AUDIT_SLASH_PROOF_BYTES;
+  if (bytes.length < p + 2) throw new Error('not a published slash proof against an AUDIT');
+  if (bytes[p] !== 0x00) return { start: p, len: AUDIT_BYTES };
+  const len = (bytes[p] << 8) | bytes[p + 1];
+  if (len !== AUDIT_BYTES && len !== AUDIT_TICK_BYTES) throw new Error(`an AUDIT is ${AUDIT_BYTES} or ${AUDIT_TICK_BYTES} bytes, the record says ${len}`);
+  return { start: p + 2, len };
+}
 
 export function encodeAuditSlashProof(p) {
   const w = new Writer();
@@ -530,20 +545,22 @@ export function decodeAuditSlashProof(bytes) {
 
 /** The published size of the proof starting at `at`: its body, the AUDIT, the signature and its rows. */
 export function auditSlashEvidenceBytesOf(bytes, at = 0) {
-  const head = at + AUDIT_SLASH_PROOF_BYTES + AUDIT_BYTES + 64;
-  if (!(bytes instanceof Uint8Array) || bytes.length < head + 2 || bytes[at] !== TYPE_AUDIT_SLASH_PROOF)
-    throw new Error('not a published slash proof against an AUDIT');
+  if (!(bytes instanceof Uint8Array) || bytes[at] !== TYPE_AUDIT_SLASH_PROOF) throw new Error('not a published slash proof against an AUDIT');
+  const place = auditPlaceOf(bytes, at);
+  const head = place.start + place.len + 64;
+  if (bytes.length < head + 2) throw new Error('not a published slash proof against an AUDIT');
   return head + 2 + ((bytes[head] << 8) | bytes[head + 1]) * 64 - at;
 }
 
 /** A PROOF AGAINST AN AUDIT, AS IT IS PUBLISHED: the body, the AUDIT and its signature, its rows. */
 export function joinAuditSlashEvidence(proofBytes, auditBytes, signature, rows) {
   if (proofBytes.length !== AUDIT_SLASH_PROOF_BYTES) throw new Error(`a slash proof against an AUDIT is ${AUDIT_SLASH_PROOF_BYTES} bytes, got ${proofBytes.length}`);
-  if (auditBytes.length !== AUDIT_BYTES) throw new Error(`an AUDIT is ${AUDIT_BYTES} bytes, got ${auditBytes.length}`);
+  if (!(auditBytes instanceof Uint8Array) || (auditBytes.length !== AUDIT_BYTES && auditBytes.length !== AUDIT_TICK_BYTES))
+    throw new Error(`an AUDIT is ${AUDIT_BYTES} or ${AUDIT_TICK_BYTES} bytes, got ${auditBytes && auditBytes.length}`);
   if (!(signature instanceof Uint8Array) || signature.length !== 64) throw new Error('an AUDIT\'s signature is 64 bytes');
   if (!Array.isArray(rows) || rows.length > 0xffff) throw new Error('the rows an AUDIT is over are a list');
   const w = new Writer();
-  w.bytes(proofBytes, AUDIT_SLASH_PROOF_BYTES); w.bytes(auditBytes, AUDIT_BYTES); w.bytes(signature, 64); w.u16(rows.length);
+  w.bytes(proofBytes, AUDIT_SLASH_PROOF_BYTES); w.u16(auditBytes.length); w.bytes(auditBytes, auditBytes.length); w.bytes(signature, 64); w.u16(rows.length);
   for (const x of rows) { w.bytes32(x.entryId); w.bytes32(x.runId); }
   return w.finish();
 }
@@ -552,8 +569,9 @@ export function splitAuditSlashEvidence(bytes) {
   let n = -1; try { n = auditSlashEvidenceBytesOf(bytes); } catch { n = -1; }
   if (n < 0 || bytes.length !== n) throw new Error('that is not a published slash proof against an AUDIT');
   const proofBytes = bytes.subarray(0, AUDIT_SLASH_PROOF_BYTES);
-  let at = AUDIT_SLASH_PROOF_BYTES;
-  const audit = bytes.subarray(at, at + AUDIT_BYTES); at += AUDIT_BYTES;
+  const place = auditPlaceOf(bytes, 0);
+  let at = place.start;
+  const audit = bytes.subarray(at, at + place.len); at += place.len;
   const signature = bytes.subarray(at, at + 64); at += 64 + 2;
   const rows = [];
   for (; at < bytes.length; at += 64) rows.push({ entryId: bytes.slice(at, at + 32), runId: bytes.slice(at + 32, at + 64) });
@@ -590,10 +608,15 @@ export function cutAuditSlashEvidence(body) {
  */
 export function slashHoldsOnAudit({
   proof, audit, signature, rows, entry, advert, eligible, total, vrf, verify, windowCloseMs,
-  canonicalTranscriptHash, objectedRunId, replayDiffers,
+  canonicalTranscriptHash, objectedRunId, replayDiffers, protocolVersion = null,
 }) {
   const no = (why) => ({ slashed: false, why });
   if (!proof) return no('no proof');
+  // THE LENGTH FITS THE ROUND (RULED 2026-11-28, kanban #3911): from protocol 28 only a 220-byte AUDIT (its tick hash) stands, below 28 only 188
+  if (protocolVersion !== null && protocolVersion !== undefined && audit instanceof Uint8Array) {
+    const want = Number(protocolVersion) >= AUDIT_TICK_VERSION ? AUDIT_TICK_BYTES : AUDIT_BYTES;
+    if (audit.length !== want) return no(`a round of protocol ${Number(protocolVersion)} takes a ${want}-byte AUDIT, this one is ${audit.length}`);
+  }
   if (typeof verify !== 'function' || !vrf || typeof vrf.verify !== 'function') return no('checking an AUDIT needs a verifier and a VRF, and none was injected');
   if (!(eligible instanceof Map) || typeof total !== 'bigint') return no('no eligible set to say who could audit this round');
   let a;
