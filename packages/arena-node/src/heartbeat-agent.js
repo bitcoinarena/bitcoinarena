@@ -19,6 +19,7 @@ import { decodeRoundContract } from '../../arena-protocol/src/contracts.js';
 import { signHeartbeat, verifyHeartbeat, decodeHeartbeat, signHeard, heardId, encodeHeartbeatCertificate, decodeHeartbeatCertificate, hasHeartbeats, heartbeatCloseMs,
   HEARTBEAT_BYTES, HEARTBEAT_SLOTS_PER_ROUND, HEARTBEAT_THRESHOLD } from '../../arena-protocol/src/heartbeat.js';
 import { endpointsOf } from './roster.js';
+import { roundsAfter } from './rounds-paged.js';
 
 /** A HEARTBEAT is signed and handed out in the last minute before its slot closes. */
 export const BEAT_LEAD_MS = 60000n;
@@ -45,7 +46,7 @@ export function heartbeatAgent({ round, roster, sign, verify, fetcher = fetch, n
   let lastRow = 0;
   const index = () => {
     const now = BigInt(nowMs());
-    for (const r of db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(lastRow)) {
+    for (const r of roundsAfter(db, 'rowid, round_id, contract', lastRow)   /* kanban #3904: a page at a time */) {
       lastRow = r.rowid;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       if (!hasHeartbeats(c)) continue;
