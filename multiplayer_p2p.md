@@ -9358,7 +9358,7 @@ more than 10 minutes ahead is refused.
   the round's committee. The frontend's payout key is in the bundle (it is
   the frontend's own). Alternative routes (`testnet.alt`) end: a node is
   reached at the endpoint its advertisement or address announcement (§25.3)
-  names, and at its hosting name (§25B.2).
+  names - the same address its rounds are hosted at (§25B.2).
 - **Address announcements are read by the page** (they were node-side only):
   a newer signed announcement replaces the advertised endpoint until the
   advertisement is updated.
@@ -9503,7 +9503,7 @@ each game settled and paid out, one new node installed and drawn.
 - **Operated by:** the round's drawn committee - 7 nodes, of which 5 sign
   every result (§5A.7).
 - **Hosted by:** the one node of that committee that serves the game client
-  to this player, at its hosting name.
+  to this player, at its own public address.
 
 The notice, shown by the frontend on its own page for at least 2 seconds
 before it navigates (and skippable after that), and again as a line on the
@@ -9512,7 +9512,7 @@ result page:
 ```text
 This round is operated by nodes 3f2a91bc, 91bc07d2, a07e5512, c4d1e9a0,
 5e88b3f1, 0b9f6c44, d612aa08 (5 of 7 sign every result)
-and hosted by node 91bc07d2 at node91bc07d2e41c5a.nodes.bitcoinarena.io.
+and hosted by node 91bc07d2 at quiet-river-4821.trycloudflare.com.
 ```
 
 - Node ids are the first 8 hex characters of the node key the page verified
@@ -9526,68 +9526,48 @@ and hosted by node 91bc07d2 at node91bc07d2e41c5a.nodes.bitcoinarena.io.
   the operators are or are not. Who runs a node is what the node declares
   (`operator_id`, §31), shown on a tap as it is in the lobby today.
 
-## 25B.2 The hosting name
+## 25B.2 The hoster's address
 
-- **Form:** `node` + the first 16 hex characters of the node key + `.` + the
-  frontend's hosting zone, e.g. `node91bc07d2e41c5a.nodes.bitcoinarena.io`.
-  The label is computed by the page from the verified key; nobody chooses it.
-- **The hosting zone is its own zone** (`nodes.bitcoinarena.io`), apart from
-  the site's: its own DNS zone and API credentials, and entered in the
-  Public Suffix List, so that every node's name is its own site to a browser
-  (no node page can set a cookie for the frontend or for another node) and
-  its own registered domain to a certificate authority (no shared limit).
-  The frontend uses no cookies in any case.
-- **A round is always played at the hosting name** (owner 2026-11-28:
-  "zwingend ist immer unsere Domain"): every node is reached by players at
-  `node<id>.nodes.bitcoinarena.io`, with or without a port, and at no other
-  name. The address bar shows it for the whole round, and it looks the same
-  for every node. There is no redirect to another name.
-- **TLS for the name ends at the node.** The node holds the key and obtains
-  the certificate itself (ACME DNS-01; the zone's name service sets the
-  challenge record on the node's signed request, so no port 80 and no
-  inbound reach is needed for it). The zone's owner serves DNS answers and
-  nothing else: no proxy, no relay, no CDN, no redirect.
-- **Three ways a node becomes reachable at its name,** in the order the
-  installer prefers them:
-  1. **Own address.** The node listens on a port of its own public address.
-     Where a router is in front, the installer opens the port itself (UPnP,
-     NAT-PMP, PCP) and uses IPv6 where the line has it; the name service
-     keeps the A/AAAA record on the current address (the node reports a
-     change itself, effective within a minute). The port need not be 443:
-     `https://node<id>.nodes.bitcoinarena.io:8443/` is the same to a browser.
-  2. **A raw TCP tunnel.** A tunnel that passes the connection through
-     untouched (a TCP tunnel service, or the operator's own small server
-     forwarding a port) carries TLS it cannot read. The name is a CNAME to
-     the tunnel's host, with the tunnel's port; the certificate and the key
-     stay on the node.
-  3. **The operator's own domain at a tunnel provider.** An operator who
-     already runs a tunnel on a domain of their own adds the hosting name to
-     it as a further hostname; the name service sets the records the
-     provider asks for. TLS then ends at that provider under the operator's
-     account - a third party in the path, as it already is for that node's
-     seat, and bounded like the hoster (§25B.4, §25B.7).
-- **What cannot host:** a tunnel that ends TLS under its own name and takes
-  no other (a quick tunnel, a Funnel, a worker address) can never answer for
-  the hosting name, whatever DNS says. A node reachable only that way stays
-  a node for everything else it does today, but it has no hosting standing
-  and is not drawn (§25B.6) until one of the three ways works. The installer
-  moves such a node to way 1 or 2 where it can and says so plainly where it
-  cannot (§25B.9).
-- **The record is written on the node's own signed request,** automatically:
-  `PUT /name` at the zone's name service with `(label, way, target, port,
-  time)` signed by the node key whose prefix is the label; the service
-  checks the signature, that the key is bonded in the census, and nothing
-  else. No approval, no review. A record of a key that left the census for
-  30 days is removed.
-- **The name is an alias, not an authority.** What identifies the hoster is
-  its key (`GET /identity`, a nonce signed by the node key), checked by the
-  frontend at the hosting name before every navigation - never the name
-  itself. Should the hosting zone ever be gone, a frontend navigates to the
-  endpoint of the node's advertisement instead and the network keeps
-  playing (§25A.1); while the zone stands, the hosting name is the only
-  address a round is played at.
+- **A round is played at the hoster's own public address** (owner
+  2026-11-28: "wir supporten erstmal nur redirect auf den tunnel direkt"):
+  the address the node itself published - the endpoint of its bonded
+  advertisement, or its newer signed address announcement (§25.3). That is
+  the node's own line, its own domain, or the public name of the tunnel it
+  runs (a quick tunnel, a Funnel, a tunnel on its own domain, a worker
+  address). The frontend navigates there by a real navigation; the address
+  bar shows the node's address, never the frontend's, for the whole round.
+- **A round moves from one node's public address to the next node's** when a
+  hoster fails (§25B.5): tunnel to tunnel, line to line. No address of the
+  frontend or of the developers is ever between the player and a node - no
+  proxy, no relay, no shared host, no redirect service, no DNS of theirs.
+- **Every way a node is reached today hosts.** Nothing new is asked of an
+  operator's network: the address that serves the node's seat serves its
+  rounds. TLS is whatever that address already has (the node's own
+  certificate, or the tunnel's under the tunnel's name).
+- **One node, one origin.** A hoster's address is an origin of its own: a
+  host name (with its port) that answers for this node only. A node that is
+  reached as a path under a host shared with other nodes cannot host - the
+  browser would give all of them one origin - and has to get an address of
+  its own (§25A.5).
+- **The key identifies the hoster, never the address.** Before every
+  navigation the frontend asks the address for `GET /identity` (a nonce
+  signed by the node key) and checks the key against the verified draw. An
+  address that changed (a quick tunnel after a restart) is taken from the
+  node's signed address announcement; the node sends one at every change and
+  the other seats carry it (§25.3). An address the key does not answer at is
+  a failed hoster.
+- **A tunnel's operator is a third party in the path** (it ends TLS and could
+  alter a page), as it already is for that node's seat. It is bounded as the
+  hoster is (§25B.4, §25B.7): no seed, one entry's play.
 - **What decides whether a node is drawn is the hosting test** (§25B.6), run
-  at the hosting name through the path a player takes.
+  at this address through the path a player takes. A tunnel too slow or too
+  unstable for the test fails it like a slow line does.
+- **Later, not in 2.0: uniform hosting names.** A name of the project's
+  domain per node (`node<id>.nodes…`) needs TLS for that name to end at the
+  node, which a tunnel under its own name cannot give (measured 2026-11-28
+  on a node behind two routers: no port could be opened). It stays a possible
+  later step for nodes with an address of their own; nothing in this section
+  depends on it.
 
 ## 25B.3 What a node serves
 
@@ -9609,13 +9589,13 @@ and hosted by node 91bc07d2 at node91bc07d2e41c5a.nodes.bitcoinarena.io.
 - Every committee node holds the client of every round it sits on from the
   moment it is drawn. Rank 1 hosts; **ranks 2 and 3 are the named backup
   hosters** and the remaining four follow in rank order. All seven serve the
-  same bytes at their own names.
+  same bytes at their own addresses.
 
 ## 25B.4 Money never leaves the frontend
 
 - **The seed, the wallet databases, the identity key and every signing of an
   entry, lock, order, withdrawal or payment stay on the frontend's origin.**
-  A hosting name is a different origin: the browser gives it none of the
+  A hoster's address is a different origin: the browser gives it none of the
   frontend's storage. The game is never framed by the frontend and never
   runs in its origin (the same-origin blob frame and the `window.parent`
   bridge end; §24's "the wallet seed never enters the game" becomes a fact of
@@ -9623,7 +9603,7 @@ and hosted by node 91bc07d2 at node91bc07d2e41c5a.nodes.bitcoinarena.io.
 - **Entry happens before the navigation.** The player enters and stakes in
   the lobby; the frontend builds and signs the entry and its locks as today.
 - **The handoff.** The frontend navigates to
-  `https://<hosting name>/play/<round_id>#<handoff>`. The handoff is in the
+  `https://<hoster's address>/play/<round_id>#<handoff>`. The handoff is in the
   fragment (never sent to a server) and holds: round id, entry id, game id,
   the client hash expected, the entry's **session key** (the key that signs
   this entry's play frames, §11, and nothing else), the committee's verified
@@ -9697,10 +9677,10 @@ and hosted by node 91bc07d2 at node91bc07d2e41c5a.nodes.bitcoinarena.io.
   d + 1 when at least **5 of its 9** probers attest a pass for day d. A new
   node is tested on its first day in the census and is drawable the day
   after.
-- **The test, as each prober runs it** against the node's hosting name and
+- **The test, as each prober runs it** against the node's public address and
   its advertised endpoint:
-  1. the hosting name (with its port) reaches the node, TLS is valid for the
-     hosting name, and `/identity` there proves the node key;
+  1. the address reaches the node over TLS that a browser accepts, it answers
+     for this node only, and `/identity` there proves the node key;
   2. time to first byte of `/hosting/ready` at most **1 s**;
   3. **bandwidth:** 16 MiB of bytes the prober names by seed (so no cache can
      answer) from `GET /hosting/probe?seed=&n=` at **20 Mbit/s or more**
@@ -9741,10 +9721,10 @@ accountable instead.
 
 ## 25B.8 What changes for an operator, a game developer, a frontend
 
-- **Operator:** nothing to set up by hand (§25B.9): the installer finds the
-  best of the three ways (§25B.2) and sets it up. A node reachable only
-  through a tunnel that takes no other name, or through a host it shares
-  with others, has to get one of the three ways or it is not drawn.
+- **Operator:** nothing new to set up: the node hosts at the address it is
+  already reached at (§25B.9). Only a node reached as a path under a shared
+  host has to get an address of its own, and a node whose line or tunnel is
+  too slow for the test is not drawn.
 - **Game developer:** the client is one pinned HTML file plus
   content-addressed assets, runs top-level on a node's origin, talks to the
   seats directly and to the frontend only for money, and must run from a
@@ -9752,37 +9732,28 @@ accountable instead.
   into what the session key can do (in the client) and what needs the
   frontend (the confirmation page).
 - **Frontend:** lobby, notice, handoff, confirmation page, return, results.
-  It may run a hosting zone; it serves no round.
+  It serves no round.
 
 ## 25B.9 It has to be simple to use
 
-**For an operator - the installer finds the way and proposes it.**
+**For an operator - nothing to do.**
 
-- **It looks at what works, in order, and proposes the best:** at the end of
-  an install or an update the installer tries, by itself: a public address
-  and an open port; opening the port on the router (UPnP, NAT-PMP, PCP);
-  IPv6; then whether the operator already has a domain at a tunnel provider
-  (way 3); then a raw TCP tunnel (way 2). Each try is a real connection from
-  outside (three census nodes fetch the node's `/identity` at the hosting
-  name), so "works" means a player would get through.
-- **One proposal, one button.** The installer shows the best way that worked
-  in one sentence - "Your node can host at
-  node91bc07d2e41c5a.nodes.bitcoinarena.io through your own line (port 8443
-  opened on your router). Use this?" - with the other ways that worked
-  behind "other options". Accepting it registers the name, obtains the
-  certificate and runs the hosting test. The operator types no name, no DNS
-  record, no certificate and no port.
-- **Where nothing works it says the one thing to do,** in plain words and in
-  the order of least effort: "Your router does not allow automatic port
-  opening. Open port 8443 to this computer (show me how), or set up a TCP
-  tunnel (do it for me)." It also says what is at stake: "Without hosting
-  your node is not drawn and earns no fees."
-- **The node keeps it working on its own:** it renews the certificate,
-  reports a changed address, re-opens the router port after a restart, and
-  falls to the next working way by itself if the first stops working -
-  telling the owner page what it did.
+- The node hosts at the address it already has. The installer sets up no
+  name, no DNS record, no certificate and no port for hosting; at the end of
+  an install or an update it runs the hosting test against the node through
+  its public address (three census nodes fetch it from outside) and shows
+  the result.
+- The node keeps it working on its own: when its address changes it signs
+  and sends the new one at once, so a restarted quick tunnel is back in the
+  rank within a minute.
+- Where the test fails, the installer and the owner page say the one reason
+  and the one thing to do, in plain words - "your tunnel reached 9 Mbit/s,
+  20 are needed", "your tunnel address changed 14 times today; a permanent
+  tunnel fixes this" (with the button that sets one up), "this node shares
+  its address with other nodes; give it its own" - and what is at stake:
+  "Without hosting your node is not drawn and earns no fees."
 - The owner page has one line with one of three states: **"Hosting: ready"**
-  (name, way, last test: speed and time), **"Hosting: test tomorrow"** (new
+  (address, last test: speed and time), **"Hosting: test tomorrow"** (new
   node), or **"Hosting: not ready - <the one reason> - <the one thing to
   do>"** (e.g. "your line reached 9 Mbit/s, 20 are needed").
 - "Test now" on the owner page runs the same test from three census nodes
@@ -9804,12 +9775,10 @@ accountable instead.
 ## 25B.10 Order of work and acceptance
 
 1. Node: `/play`, `/asset`, `/hosting/ready`, `/hosting/probe`, signed
-   serving headers, ACME DNS-01 for the hosting name, router port opening,
-   package v2 with assets, the name registration at start and on every
-   address change.
-2. Zone: `nodes.bitcoinarena.io` as its own zone, the name service (A/AAAA,
-   CNAME, the provider's records of way 3, DNS-01), CAA, the Public Suffix
-   List entry.
+   serving headers, package v2 with assets, a signed address announcement at
+   start and at every address change.
+2. Addresses: every node at an origin of its own; the page reads address
+   announcements (§25A.3).
 3. Client: handoff, hoster rank, probes and failover, notice, return, the
    confirmation page; the same-origin frame removed.
 4. Games: each game's client as a hosted client (Rock Paper Scissors, Up or
@@ -9822,17 +9791,17 @@ accountable instead.
    test.
 
 **Accepted when,** on testnet4: a round of each game is entered on the site,
-played at a node's hosting name and returned; the address bar shows the
-node's name for the whole run; with rank 1 switched off before the
+played at a node's own public address and returned; the address bar shows
+that node's address for the whole run; with rank 1 switched off before the
 navigation the player is sent to rank 2 within 3 s; with rank 1 switched off
 mid-round the run completes and settles; a node below the bandwidth floor is
 not drawn the next day; a node serving a changed client is slashed on the
 proof; the seed is unreadable from the game's page (checked in a real
-browser); a node behind a home router (port opened by the installer), one
-on a raw TCP tunnel and one on its operator's own tunnel domain each host a
-round at their hosting name; no round is ever played at another name; and a
-new operator gets from the installer's start to "Hosting: ready" by
-accepting one proposal.
+browser); a node on a quick tunnel, one on a Funnel and one on its own line
+each host a round; with a hoster switched off the player goes from that
+node's address straight to the next node's, never through an address of the
+frontend; and a new operator reaches "Hosting: ready" without any step for
+hosting.
 
 ---
 
