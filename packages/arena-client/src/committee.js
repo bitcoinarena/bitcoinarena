@@ -61,9 +61,15 @@ export const SEATING_KEEP_MS = 60000;
 const SEATINGS = new Map();
 export const forgetSeatings = () => SEATINGS.clear();
 /** The kept answer of (seat, table, role) when it may stand for this round: the same draw, under SEATING_KEEP_MS, and not a read of every seat - else null. */
+// A READ OF EVERY SEAT AT MOST ONCE PER SEATING_FRESH_MS (kanban #3912, measured 2026-11-28 through the tn4 tunnel: one page asked every seat GET /seating of
+// the same round and anchor once a second - a seat differed, so each committee read re-read every seat fresh, past the kept answers): an answer a fresh
+// read (`every`) took stands for the next fresh reads of that (seat, table, role) and draw for SEATING_FRESH_MS; a kept answer of a plain read never does.
+export const SEATING_FRESH_MS = 15000;
 export function keptSeating(keyOf, drawnKey, { every = false, now = Date.now() } = {}) {
   const kept = SEATINGS.get(keyOf);
-  return !every && kept && now - kept.at < SEATING_KEEP_MS && kept.drawn === drawnKey ? kept.said : null;
+  if (!kept || kept.drawn !== drawnKey) return null;
+  if (every) return kept.fresh && now - kept.at < SEATING_FRESH_MS ? kept.said : null;
+  return now - kept.at < SEATING_KEEP_MS ? kept.said : null;
 }
 /**
  * DOES SEATING `a` REPLACE SEATING `b` (kanban #2564; the seats' rule, seating-agent.js `replaces`, #1681 / #1741): `a` leaves out at least one member of `b`, and
@@ -80,9 +86,9 @@ export function seatingReplaces(a, b, drawn) {
 }
 
 /** Keep a seat's answer: a certificate (ok) or "no seating certificate" (404); a failed read is not kept. */
-export function keepSeatingAnswer(keyOf, drawnKey, said, { now = Date.now() } = {}) {
+export function keepSeatingAnswer(keyOf, drawnKey, said, { now = Date.now(), fresh = false } = {}) {
   if (!said || !(said.ok || said.status === 404)) return;
-  SEATINGS.delete(keyOf); SEATINGS.set(keyOf, { said, at: now, drawn: drawnKey });
+  SEATINGS.delete(keyOf); SEATINGS.set(keyOf, { said, at: now, drawn: drawnKey, fresh: !!fresh });
   if (SEATINGS.size > 2048) SEATINGS.delete(SEATINGS.keys().next().value);
 }
 /** Resolves once every promise settled, or `graceMs` after more than half did - whichever is first (kanban #625: no wait for the slowest seat). */
@@ -402,7 +408,7 @@ export async function clientCommittee(roundIdHex, contract, nodes, { curve, fetc
       try {
         const r = await fetcher(`${baseOf(u)}/seating?round=${seatHex}&role=${role}${anchor ? `&at=${toHex(roundId)}` : ''}`, { signal: AbortSignal.timeout(SEATING_ASK_MS) });
         said[i] = { status: r.status, ok: r.ok, body: await textUpTo(r, SEATING_ANSWER_MAX) };   // kanban #2740: bounded
-        keepSeatingAnswer(keyOf, drawnKey, said[i]);
+        keepSeatingAnswer(keyOf, drawnKey, said[i], { fresh: every || fresh });
       } catch { said[i] = null; }
     });
     if (every) await Promise.all(asked); else await majorityThenGrace(asked, COMPARE_GRACE_MS);

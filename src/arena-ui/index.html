@@ -7535,10 +7535,11 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // signer node, every 2 s, and a slow look overlapped the next). A round whose answer is not provisional is asked again
     // after 30 s; its last answer counts meanwhile. The state lives on the function (st: busy, seen = note key -> { at, said }).
     async function lookThePending() {
-      const st = lookThePending.st || (lookThePending.st = { busy: false, seen: new Map(), settledMs: 30000, unansweredMs: 10000, askMs: 8000, graceMs: 200 });
+      const st = lookThePending.st || (lookThePending.st = { busy: false, seen: new Map(), settledMs: 30000, unansweredMs: 10000, askMs: 8000, graceMs: 200, staleMaxMs: 600000, stopAfterMs: 6 * 3600000, maxMisses: 24, look: 0, byEntry: new Map() });
       if (st.busy) return;
       if (window.ARENA_OPR_IN_PLAY && window.ARENA_OPR_IN_PLAY()) return;   // #3335: after the run
       st.busy = true;
+      st.look = (st.look || 0) + 1;
       try {
       let notes = [];
       try { const v = vault(); for (let i = 0; i < v.length; i++) { const k = v.key(i); if (k && k.startsWith('arena.pending.')) notes.push(k); } } catch { notes = []; }
@@ -7641,12 +7642,33 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           // they never took) after 10 s - before, it was asked every 2 s for as long as its note was kept
           // (unanswered: 10 s, then twice as long each time nobody answers again, at most 5 min - measured on live UI 160: one such note,
           // its 14 signer nodes every 10 s, 238 GET /standing in 3 min)
-          const waitMs = !last ? 0 : last.said.some((x) => x && x.provisional) ? 0 : last.said.some((x) => x) ? st.settledMs
+          // A STUCK NOTE BACKS OFF AND STOPS (kanban #3912, measured 2026-11-28 12:13Z through the tn4 tunnel: one Windows Chrome held 12 notes of
+          // entry 04ff1e6f - a market order with no fill, every seat answering the same "refund" - and asked all 14 seats for each note every 30 s,
+          // 12 GET /standing per seat in 29 s, for hours, ~95 % of the tunnel with its other polls): notes of one entry share one ask per look
+          // (st.byEntry); an answer the seats repeat unchanged is asked half as often each time (30 s, 60 s, ... at most st.staleMaxMs, 10 min) and a
+          // provisional one too once its window has closed; st.stopAfterMs (6 h) past the window's close, or after st.maxMisses unanswered asks,
+          // the note is not asked again in this tab - its last answer still counts and the collect loop goes on as before.
+          const sigOf = (xs) => xs.map((x) => (x ? [x.kind, x.state, x.pendingMsat, x.provisional, x.outcome].join('|') : '-')).join(',');
+          const closeOf = (xs) => xs.reduce((m, x) => (x && /^\d+$/.test(String(x.windowCloseMs || '')) ? Math.max(m, Number(x.windowCloseMs)) : m), 0);
+          const nowMs = Date.now();
+          const lastClose = last ? closeOf(last.said) : 0;
+          const stopped = !!last && ((lastClose && nowMs > lastClose + st.stopAfterMs) || (!last.said.some((x) => x) && (last.misses || 0) >= st.maxMisses));
+          const backoff = (base) => Math.min(st.staleMaxMs, base * 2 ** Math.min(16, (last && last.same) || 0));
+          const waitMs = !last ? 0 : stopped ? Infinity
+            : last.said.some((x) => x && x.provisional) ? (lastClose && nowMs > lastClose ? backoff(st.settledMs) : 0)
+            : last.said.some((x) => x) ? backoff(st.settledMs)
             : Math.min(300000, st.unansweredMs * 2 ** Math.max(0, (last.misses || 1) - 1));
-          const said = last && Date.now() - last.at < waitMs
+          const eKey = String(n.entryIdHex) + '|' + (n.nodes || []).join(',');
+          const shared = st.byEntry.get(eKey);
+          const said = last && nowMs - last.at < waitMs
             ? last.said
+            : shared && shared.look === st.look ? shared.said
             : await ask(n.nodes, n.entryIdHex);
-          if (said !== (last && last.said)) st.seen.set(k, { at: Date.now(), said, misses: said.some((x) => x) ? 0 : ((last && last.misses) || 0) + 1 });
+          if (said !== (last && last.said)) {
+            st.seen.set(k, { at: Date.now(), said, misses: said.some((x) => x) ? 0 : ((last && last.misses) || 0) + 1,
+              same: last && said.some((x) => x) && sigOf(said) === sigOf(last.said) ? ((last.same || 0) + 1) : 0 });
+            if (!shared || shared.said !== said) { st.byEntry.set(eKey, { look: st.look, said }); if (st.byEntry.size > 500) st.byEntry.delete(st.byEntry.keys().next().value); }
+          }
           // WINNINGS MORE THAN HALF THE ANSWERING SEATS SAY (WINDOW-LIVE-1155, 2026-10-02: "If the payment becomes
           // invalid, the pending line disappears"): every seat that answers votes - one with no figure, or with a refund (a
           // VOID run's stake coming back, not winnings), votes for none. Measured before: four seats VOID, three still
