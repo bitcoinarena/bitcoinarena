@@ -20,6 +20,9 @@ import { dissentsOn, dissentsFirstOn, dissentsFailOn, postsLateOn, LATE_POSTING_
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle, replayKeyOf, liveRunKeyOf } from './objection-check.js';
+// the held objection's bundle, read for the run it names when a contradicted AUDIT is filed (kanban #3911: used and never imported - the ReferenceError was caught,
+// the objected run read as none, and every AUDIT_CONTRADICTED was refused "no objection held against the run this AUDIT vouched for")
+import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
 import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
