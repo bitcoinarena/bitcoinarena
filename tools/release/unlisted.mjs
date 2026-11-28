@@ -5,8 +5,8 @@
 // on public GitHub"): each asset of <dir> split into pieces under Cloudflare Pages' 25 MiB file limit, written beside SHA256SUMS and its
 // signature into <page>/release/u/<folder>/v<version>/ - a path no page links; the signed latest.json names it (latest.mjs's 5th argument).
 // A node joins the pieces and checks the whole asset's SHA-256 (auto-update.js).
-//     node tools/release/unlisted.mjs <version> <dir: assets + SHA256SUMS + SHA256SUMS.sig> <page dir> <folder> <out download.json>
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, copyFileSync, openSync, readSync, closeSync } from 'node:fs';
+//     node tools/release/unlisted.mjs <version> <dir: assets + SHA256SUMS + SHA256SUMS.sig + SHA256SUMS.sigs [+ KEYSET-*.json]> <page dir> <folder> <out download.json>
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, copyFileSync, openSync, readSync, closeSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 const PIECE = 24 * 1024 * 1024;
 const [version, dir, page, folder, outFile] = process.argv.slice(2);
@@ -31,5 +31,10 @@ for (const name of sums) {
   closeSync(fd);
 }
 for (const f of ['SHA256SUMS', 'SHA256SUMS.sig']) copyFileSync(join(dir, f), join(to, f));
-writeFileSync(outFile, JSON.stringify({ base: `https://testnet.bitcoinarena.io/${rel}/`, sums: 'SHA256SUMS', sig: 'SHA256SUMS.sig', parts }, null, 2) + '\n');
+// 2-of-3 (kanban #3920): every key's signature, and the key-set changes (rotation) a node must apply before it checks them
+if (!existsSync(join(dir, 'SHA256SUMS.sigs'))) { console.error('no SHA256SUMS.sigs: run tools/release/combine-sigs.mjs first (2 of 3 keys)'); process.exit(2); }
+copyFileSync(join(dir, 'SHA256SUMS.sigs'), join(to, 'SHA256SUMS.sigs'));
+const keysets = readdirSync(dir).filter((f) => /^KEYSET-\d+\.json$/.test(f)).sort((a, b) => Number(a.slice(7, -5)) - Number(b.slice(7, -5)));
+for (const f of keysets) copyFileSync(join(dir, f), join(to, f));
+writeFileSync(outFile, JSON.stringify({ base: `https://testnet.bitcoinarena.io/${rel}/`, sums: 'SHA256SUMS', sig: 'SHA256SUMS.sig', sigs: 'SHA256SUMS.sigs', ...(keysets.length ? { keysets } : {}), parts }, null, 2) + '\n');
 console.log(`${rel}: ${Object.keys(parts).length} assets in ${Object.values(parts).reduce((a, p) => a + p.length, 0)} pieces`);
