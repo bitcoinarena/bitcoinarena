@@ -174,6 +174,34 @@ test('a running guardian whose federation config names peers is started again on
   assert.equal(g.adopted, true); assert.equal(then.calls.started.length, 0);
 });
 
+// kanban #3916 (2026-11-28, the owner's MacBook node on 2026.1.9.30): the fedimintd a 2026.1.9.28 node had started was adopted by every later
+// release - the old binary from a removed release folder, announcing an old quick tunnel name. The binary and the endpoint are in the fingerprint.
+test('a kept guardian started from another release\'s fedimintd, or for another endpoint, is started again once with this release\'s; then adopted', async () => {
+  const { dir, cookie, bin, call } = setup();
+  const store = join(dir, 'r.db');
+  const old = join(dir, 'old'); mkdirSync(old);
+  writeFileSync(join(old, 'fedimintd'), '#!/bin/sh\nexec sleep 60\n'); chmodSync(join(old, 'fedimintd'), 0o755);
+  const run = (pids, fedimintd, endpoint, log = () => {}) => startGuardian({ nodePort: 6561, host: '127.0.0.1', storePath: store, bitcoindUrl: 'http://127.0.0.1:48332',
+    cookiePath: cookie, call, env: { PATH: '/usr/bin:/bin', ARENA_FEDIMINTD: fedimintd, ARENA_GUARDIAN_ENDPOINT_6561: endpoint }, tailscale: TS, log, keep: false, pids });
+  // the old release started it (pidfile keep path: as after a reboot); the node of the new release starts while it runs
+  const p1 = fakePids(6224); const lines = [];
+  const g1 = await startGuardian({ nodePort: 6561, host: '127.0.0.1', storePath: store, bitcoindUrl: 'http://127.0.0.1:48332', cookiePath: cookie, call,
+    env: { PATH: '/usr/bin:/bin', ARENA_FEDIMINTD: join(old, 'fedimintd'), ARENA_GUARDIAN_ENDPOINT_6561: 'wss://road-monster.trycloudflare.com/guardian' },
+    tailscale: TS, log: () => {}, keep: true, pids: fakePids() });
+  assert.equal(g1.running, true);
+  const g2 = await run(p1, join(bin, 'fedimintd'), 'wss://road-monster.trycloudflare.com/guardian', (l) => lines.push(l));
+  assert.deepEqual([g2.adopted, p1.calls.stopped, p1.calls.started.length], [false, 1, 1], 'another release\'s fedimintd: stopped and started again');
+  assert.equal(p1.calls.started[0].bin, join(bin, 'fedimintd'), 'with this release\'s binary');
+  assert.ok(lines.some((l) => /another release's fedimintd/.test(l)));
+  const p2 = fakePids(4242);
+  const g3 = await run(p2, join(bin, 'fedimintd'), 'wss://road-monster.trycloudflare.com/guardian');
+  assert.deepEqual([g3.adopted, p2.calls.stopped, p2.calls.started.length], [true, 0, 0], 'the same binary and endpoint: adopted');
+  const p3 = fakePids(4242);
+  const g4 = await run(p3, join(bin, 'fedimintd'), 'wss://interesting-assumed.trycloudflare.com/guardian');
+  assert.deepEqual([g4.adopted, p3.calls.stopped, p3.calls.started.length], [false, 1, 1], 'another endpoint: started again');
+  assert.equal(p3.calls.started[0].env.FM_API_URL, 'wss://interesting-assumed.trycloudflare.com/guardian');
+});
+
 // THE DASHBOARD'S PORT, FREE (kanban #326: another program held a T2 guardian's dashboard port and fedimintd exited at start)
 test('the dashboard port: the slot\'s when free, the next free one when taken', async () => {
   const { freeLocalPort } = await import('../src/guardian.js');
