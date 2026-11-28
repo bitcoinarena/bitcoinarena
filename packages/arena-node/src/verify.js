@@ -20,6 +20,9 @@ import { dissentsOn, dissentsFirstOn, dissentsFailOn, postsLateOn, LATE_POSTING_
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { ReplayPool } from './pool.js';
 import { checkObjectionBundle, replayKeyOf, liveRunKeyOf } from './objection-check.js';
+// the held objection's bundle, read for the run it names when a contradicted AUDIT is filed (kanban #3911: used and never imported - the ReferenceError was caught,
+// the objected run read as none, and every AUDIT_CONTRADICTED was refused "no objection held against the run this AUDIT vouched for")
+import { decodeObjectionBundle } from '../../arena-protocol/src/objection.js';
 import { sha256 } from '../../arena-protocol/src/hash.js';
 import { stateOf } from './settlement-state.js';
 import { verifyKept } from './verify-kept.js';
@@ -2423,7 +2426,7 @@ export class Verifier {
       }
     }
 
-    await this.gatherReruns(roundIdBytes, entryIdBytes);
+    await this.gatherReruns(roundIdBytes, entryIdBytes, contradictedRunId);
 
     const count = rerunIsAgreed({
       roundId: roundIdBytes, playerPubkey: found.entry.playerPubkey, contradictedRunId,
@@ -2433,8 +2436,12 @@ export class Verifier {
     return { ...count, ...report };
   }
 
-  /** THE OTHER SIGNER NODES' RE-RUNS OF ONE ENTRY, each checked here, never taken on arrival. */
-  async gatherReruns(roundIdBytes, entryIdBytes) {
+  /**
+   * THE OTHER SIGNER NODES' RE-RUNS OF ONE ENTRY, each checked here, never taken on arrival. `contradictedRunId`: only re-runs of that run are kept (kanban #3362);
+   * null keeps any. A PARAMETER (kanban #3911): #3362 passed it on from here without declaring it, so every pass that read a peer's re-run threw "contradictedRunId is
+   * not defined" - measured on the 2.0 devnet, seats 2-7 held an in-time objection SUSPENDED and none of them ever finished a re-run pass: "1 of 5" for good, no slash
+   */
+  async gatherReruns(roundIdBytes, entryIdBytes, contradictedRunId = null) {
     const found = this.round.entriesOf(roundIdBytes).find((e) => hex(e.entryId) === hex(entryIdBytes));
     if (!found) return;
     const signerNodes = this.round.signerNodes(roundIdBytes);
