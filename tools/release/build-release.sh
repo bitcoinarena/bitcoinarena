@@ -122,35 +122,38 @@ fi
 # an Arena lock, and a seat opens none in a federation whose guardians do not run it (named-claim-gate.js); 1.9's fedimintd (5fa01c5d) did not. And
 # arena-stake-lock is the 2.0 tool (packages/arena-node/tools/stake-lock, --features arena-lock): 1.9's lacked session-audit, session-export,
 # session-proof-verify, theft-verify and arena-claim-read, which 2.0's reserve audit, port and theft proofs call.
-# Built 2026-11-28: FORK_HASH=d7d91d1e0b99439891180ee8879bdb3f332a1a73 STAKE_LOCK_FEATURES=arena-lock tools/release/custody-build.sh on the MacBook (zig 0.16.0).
-CUSTODY_TAG=custody-d7d91d1e
+# AND THE LIQUIDATION PATCH (kanban #3910): d7d91d1e lacked packages/arena-node/tools/fedimint-spent-nonces.patch, so no guardian could publish a spent set
+# (blwp_spent_nonces) and no arbiter validate a claim (`module mintv2 validate`, check-pending). Now the fork 6aae042d92a (branch blwp/arena-lock-3910) =
+# d7d91d1e0b9 + that patch; tools/release/custody-check.sh holds every release to it.
+# Built 2026-11-28: FORK_HASH=6aae042d92aae94c32f9154dc0dc1329b0360227 STAKE_LOCK_FEATURES=arena-lock tools/release/custody-build.sh on the MacBook (zig 0.16.0).
+CUSTODY_TAG=custody-6aae042d
 # the pinned binaries, "<bin>:<os>-<arch>" -> SHA-256 (out/SHA256SUMS.custody of tools/release/custody-build.sh)
 declare -A CUSTODY_SHA=(
-  [gatewayd:darwin-arm64]=23f9533e74580cc0ae91cd650f33d98e74bbba0be2b25f97fc22b892f82a7e68
-  [gatewayd:darwin-x64]=9fe85100d50dbb4c807133844ccc43f6eeedc5876356d6277410bf4b0b2cc386
-  [gatewayd:linux-arm64]=c8fe283fa4333cdb9c3045d6fb1cbc8701b4746d03cc8525001148bcfcf4ce02
-  [gatewayd:linux-x64]=19f85e13fcd25c75c55d877f9ccd3947c4fd1156ccee9160385e9eb9f8d0351a
-  [gatewayd:windows-x64]=294089ebee39766a263619f984f821f065b10cfe92dfb96d94819b8eeb4aa1be
-  [fedimintd:darwin-arm64]=c0119992df0f0811e14ae74dc9561c01dceac9b98f9ec68e150580ae3783e974
-  [fedimintd:darwin-x64]=d21cf5824a259297f2a750e6dbc762b08a3bccedbda2806437c714851726056d
-  [fedimintd:linux-arm64]=81748b3cc23cbe0c1712f0b6a843d35cd227829672e62b920a396163e65d7b2c
-  [fedimintd:linux-x64]=2cc86fb8cb8288bc6e55a3efdb3164bd6f5b37691943484cd29f35263168ec55
-  [fedimintd:windows-x64]=9f2880bf6215e9eaad707c4bbeab1eab357f31142e29171e0de3ed8c1e33576e
-  [fedimint-cli:darwin-arm64]=60454c36c4eabbf68ce0b3ac82dd397f52dc5fa1e95b88bc8da389ce946ce18b
-  [fedimint-cli:darwin-x64]=9978db3c6d567b8e0be6e273213ad6bdf844fc8d70a16021dd698b68149fa566
-  [fedimint-cli:linux-arm64]=862d9654fa5a7dff4df2cd12d2acab04ca4a051fa9e631f43e17e2e1ab3c4ce8
-  [fedimint-cli:linux-x64]=7e7be92c18cbf10ff2d1370ce4032fb99c1ccdd38256ca87b070fbac5a68c7f8
-  [fedimint-cli:windows-x64]=d67478c598b3ed7546f1267d06d06ce5bed2593fe15b70d309a9e796cbbb3ee4
-  [fedimint-dbtool:darwin-arm64]=5888d1d7e43a7a52b13c85b3b86a169a1cc53a5e2c62e04d7cbb9cf71e32ff31
-  [fedimint-dbtool:darwin-x64]=6df0d852884848ff35f84411fbcd0dbb601fa3602465facb4896a7fee535d259
-  [fedimint-dbtool:linux-arm64]=01a8c925d14bfbb1bd2314fdfe3ad3bb8a0ac566cf260e068cbfc72617a41b2d
-  [fedimint-dbtool:linux-x64]=73e03872d148af79a092cec986f81dad2ed0bbb55c7db9a4b5d2880693e46756
-  [fedimint-dbtool:windows-x64]=409439a37421d892a37ca5bfe87eacffe891bbedce51106fc797a8ef6b661af7
-  [arena-stake-lock:darwin-arm64]=59fb6bfe9f1ce2da12358abf3b85f6e90fbb98ccffe6712b7b5a55f8e597ed5b
-  [arena-stake-lock:darwin-x64]=a9d6fce80797b903741af6224f97ee30c8391af1548af72102188b3b55eb1c2a
-  [arena-stake-lock:linux-arm64]=42d75a6c0c9035a2a124b31187f6de02b85108e00ce9d29a8fa324212545de94
-  [arena-stake-lock:linux-x64]=227b6b967b9484aa34822b1ec8cd260b2d752562d8350b9bcc1ebfdb36354a70
-  [arena-stake-lock:windows-x64]=aa22b70c58c3b7118ef526169f881c6bf444541b7309a0a14d8eec07b97feaae
+  [gatewayd:darwin-arm64]=b99642100d379388b13fffd83064b3c2404904bb0a49c4e81ca013760dd22a27
+  [gatewayd:darwin-x64]=9eb3b0366d95e2fbf6b21d9b94f890d7ff402b7c8dfae15d9a0127fcddff1dc7
+  [gatewayd:linux-arm64]=c7681c8591299e8fa7d81306a0e3204b0fec9e05cd4e56526196272c4ffe93d2
+  [gatewayd:linux-x64]=ddc21123be782c246087da6220bb17500597f55d50e35d78163d3a8c79bd565a
+  [gatewayd:windows-x64]=0c43b1c6fc9a35ca43dcfb98ec7e384d2fcc378829c4bcd478d41e23816b91f3
+  [fedimintd:darwin-arm64]=f3bbb4b2a54820ce417d41628d8a079a882efad75f29aaac161ee5bffd7f9351
+  [fedimintd:darwin-x64]=801133ee945a02f80284b6bef72cb47367c2c1d7faeaf0d07fe3ab5a62721088
+  [fedimintd:linux-arm64]=2cc66d2bcd4db398b557a63e1c851cde66ae2c008eb7c3c20ad160b2e60b5028
+  [fedimintd:linux-x64]=da7dd580baa1f8531e88b8644eb1a97b49237290afdcbae761fefd7121144d69
+  [fedimintd:windows-x64]=8ba79d6f90c53053813e36ff6736120fa07c1cbc4142ea3bd53cd8d6a9a77d8f
+  [fedimint-cli:darwin-arm64]=aa8a229957d74e7adc486cbb334e993b17e1ea2c954730c36e4e90b43d635e37
+  [fedimint-cli:darwin-x64]=1410c62abf5d0a0a52f20469b38bfd19144d7e7b6a26a473669c0cd869c16fe8
+  [fedimint-cli:linux-arm64]=27feb1caf3a53cc0d0eb0d35baf41d68b7757933805a114c3d39445016b44db2
+  [fedimint-cli:linux-x64]=820e0d83dd666ad630d42625b92a4da1d733364b2dc6026e1031ffb7b5373b80
+  [fedimint-cli:windows-x64]=d9e6646b16f0a267f214cdffdd08a3bdfa094be381e9ad75a98be21e2c4bfaad
+  [fedimint-dbtool:darwin-arm64]=447b9ef5feebaa6bad2358063036399f6ef75283d84efad681ac3746ba5e5af1
+  [fedimint-dbtool:darwin-x64]=e969fa8a50fdf7559bec319f9e5ffcd04db7e04242c9b3d4e57be2b3d8f8b4d4
+  [fedimint-dbtool:linux-arm64]=98309e638aea32ec0a29e05f842eee15ea7fcff0688a788bea6b66788aef7990
+  [fedimint-dbtool:linux-x64]=8d35442c6bfe1825105ee9a601785fba9dcd604de9ea8dfd1b2ec4018927b643
+  [fedimint-dbtool:windows-x64]=cf55948edda6817acc7f997acf3e68f0e090afcb6ff176b8aa6319d49a83b1f9
+  [arena-stake-lock:darwin-arm64]=2bd47cf34ad8a15b73ea34d08060d86e260b47bded4a033c1d81cdfc004fd584
+  [arena-stake-lock:darwin-x64]=45e60d105aec69b6aa6817273683035c9472f6edd6e5512d061bebec48482dc1
+  [arena-stake-lock:linux-arm64]=a2ee72594ffb5a620163a734aa97b80838ef1dd6512b5ab2d0d4528b6081cf87
+  [arena-stake-lock:linux-x64]=0fc6db1034f7523bb21d3bfa524f3ecc3e56beebc5641c7c12d1ff4746303076
+  [arena-stake-lock:windows-x64]=6458d6362d7c932aaf8801cf0777481139038f9286e499f978130b2d9c52dfef
 )
 EXE=""; if [ "$OS" = windows ]; then EXE=.exe; fi   # (an assignment from a failing $(...) ends a set -e script: CI run 39128370301)
 # fedimint-dbtool (kanban #718): taken once pinned here (custody-build.sh builds it); a release without it starts a restored RAM guardian unchecked
@@ -167,6 +170,10 @@ for BIN in gatewayd fedimintd fedimint-cli fedimint-dbtool arena-stake-lock; do
   mkdir -p "$STAGE/runtime/custody"
   install -m 0755 "$CACHE/$F" "$STAGE/runtime/custody/$BIN$EXE"
 done
+# and the custody carries the liquidation patch (kanban #3910: custody-d7d91d1e did not - no spent set, no claim validated): a release without it stops here
+if [ -f "$STAGE/runtime/custody/fedimintd$EXE" ]; then
+  bash "$ROOT/tools/release/custody-check.sh" "$STAGE/runtime/custody/fedimintd$EXE" "$STAGE/runtime/custody/fedimint-cli$EXE" || exit 1
+fi
 
 if [ "$OS" = windows ]; then rm "$STAGE/packages/arena-installer/node_modules"; cp -R "$STAGE/packages/arena-node/node_modules" "$STAGE/packages/arena-installer/node_modules"; fi
 # (and the apps' arena-sdk, a link the .zip would lose too: a copy of the folder - kanban #569)

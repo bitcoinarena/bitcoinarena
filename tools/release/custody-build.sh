@@ -16,10 +16,11 @@ export AWS_LC_SYS_PREBUILT_NASM=1 CARGO_NET_RETRY=10 CARGO_PROFILE_RELEASE_DEBUG
 export CFLAGS_x86_64_pc_windows_gnu="-Wno-unused-command-line-argument" CXXFLAGS_x86_64_pc_windows_gnu="-Wno-unused-command-line-argument"
 export LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib
 export BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_gnu="-I$B/zig-aarch64-macos-0.16.0/lib/include -I$B/zig-aarch64-macos-0.16.0/lib/libc/include/any-windows-any"
-# FORK_HASH (kanban #1044 B1): the fork commit the binaries are built from ($F must be checked out at it). THE 2.0 LINE'S (kanban #3897): d7d91d1e0b9,
-# blwp/arena-lock-1044's head (5fa01c5d7e6 + the Arena lock 1ca203a9f96 + its fallback claim), with arena-stake-lock --features arena-lock - the custody
-# build-release.sh pins (custody-d7d91d1e); 1.9's was 5fa01c5d7e6 without the feature
-export FEDIMINT_BUILD_FORCE_GIT_HASH=${FORK_HASH:-d7d91d1e0b99439891180ee8879bdb3f332a1a73} CARGO_TARGET_DIR=$B/target-custody
+# FORK_HASH (kanban #1044 B1): the fork commit the binaries are built from ($F must be checked out at it). THE 2.0 LINE'S (kanban #3910): 6aae042d92a,
+# branch blwp/arena-lock-3910 = d7d91d1e0b9 (kanban #3897: 5fa01c5d7e6 + the Arena lock 1ca203a9f96 + its fallback claim) + packages/arena-node/tools/
+# fedimint-spent-nonces.patch (the guardian's blwp_spent_nonces, `module mintv2 validate`, pending-outputs, check-pending - liquidation, §23A.5; d7d91d1e
+# lacked it), with arena-stake-lock --features arena-lock - the custody build-release.sh pins (custody-6aae042d); 1.9's was 5fa01c5d7e6 without the feature
+export FEDIMINT_BUILD_FORCE_GIT_HASH=${FORK_HASH:-6aae042d92aae94c32f9154dc0dc1329b0360227} CARGO_TARGET_DIR=$B/target-custody
 STAKE_LOCK_FEATURES=${STAKE_LOCK_FEATURES-arena-lock}
 say() { echo "$(date -u +%T) $*"; }
 rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin >/dev/null 2>&1 || { say "rustup targets failed"; exit 1; }
