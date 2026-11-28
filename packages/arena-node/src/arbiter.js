@@ -191,7 +191,7 @@ export async function judgeAuditProof({ evidence, bundle, entry, contract, commi
   try { closeMs = windowsOf(contract).closeMs; } catch (e) { return no(`the round names no window: ${e.message}`); }
   const held = slashHoldsOnAudit({ proof, audit: got.audit, signature: got.signature, rows: got.rows, entry, eligible, total, vrf,
     verify: (sig, msg, key) => { try { return schnorr.verify(sig, msg, key); } catch { return false; } },
-    windowCloseMs: closeMs, canonicalTranscriptHash: canonical, objectedRunId: objected, replayDiffers: true,
+    windowCloseMs: closeMs, canonicalTranscriptHash: canonical, objectedRunId: objected, replayDiffers: true, protocolVersion: contract.protocolVersion,   // kanban #3911: the AUDIT's length fits the round
     advert: advert ? { ...advert, bondTxid: bondOutpoint.txid, bondVout: bondOutpoint.vout } : null });
   if (!held.slashed) return no(held.why);
   return { slashed: true, offence: held.offence, bond: held.bond, proof, playerPubkey: proof.playerPubkey,
