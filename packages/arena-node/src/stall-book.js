@@ -22,6 +22,7 @@ import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { PROVISIONALLY_FINAL } from '../../arena-protocol/src/objection.js';
 import { resultFinality } from './finality.js';
 import { STALL_STAGE, STALL_WINDOW_MS, STALL_SETTLEMENT_WAIT_MS, signStallNote, verifyStallNote, stallsOut, settlementNotesCount, stallNoteCounts, stallCloseMs, stallWindow, stalledFrom, stallH3Of, STALL_SEASON_BLOCKS, checkStallProof } from '../../arena-protocol/src/stall.js';
+import { roundsAfter } from './rounds-paged.js';
 
 /** Notes are kept this long past their round's close: a census reads 72 h, and a posting is made a day ahead. */
 const STALL_KEEP_MS = 7n * 86400000n;
@@ -203,7 +204,7 @@ export function stallBook({ round, presence, verify, sign, log = () => {}, seatR
   const byRoot = new Map();
   let scannedTo = 0;
   function roundsNamingRoot(rootHex) {
-    for (const r of db.prepare('SELECT rowid AS n, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(scannedTo)) {
+    for (const r of roundsAfter(db, 'rowid AS n, round_id, contract', scannedTo)   /* kanban #3904: a page at a time */) {
       scannedTo = Number(r.n);
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       if (!(c.censusRoot instanceof Uint8Array)) continue;

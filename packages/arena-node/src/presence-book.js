@@ -34,6 +34,7 @@ import { parseTransaction, commitmentsOf } from '../../arena-protocol/src/tx.js'
 import { seriesPublicationPayload } from '../../arena-protocol/src/series.js';
 import { publicationPayload } from '../../arena-protocol/src/publication.js';
 import { positionIn, branchIn } from '../../arena-protocol/src/partial-view.js';
+import { roundsAfter } from './rounds-paged.js';
 
 // ONLY THE DUTY POSTINGS' ROUNDS PROVE (kanban #727, duty.js): a block's duty-marked transactions, read once per block object (the
 // blocks are shared objects, main.js blockCache) - their txids, markers and OP_RETURN payloads - and every block's txids for a merkle branch
@@ -184,7 +185,7 @@ export function presenceBook({ round, roster, verify, log = () => {}, closeOfRou
   const seriesRounds = new Map(); let seriesRow = 0;
   const roundOfSeries = (sidHex) => {
     if (!seriesRounds.has(sidHex)) {
-      for (const r of db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(seriesRow)) {
+      for (const r of roundsAfter(db, 'rowid, round_id, contract', seriesRow)   /* kanban #3904: a page at a time */) {
         seriesRow = r.rowid;
         try { const c = decodeRoundContract(new Uint8Array(r.contract)); if (c.seriesId instanceof Uint8Array && !seriesRounds.has(toHex(c.seriesId))) seriesRounds.set(toHex(c.seriesId), new Uint8Array(r.round_id)); } catch { /* not a round */ }
       }

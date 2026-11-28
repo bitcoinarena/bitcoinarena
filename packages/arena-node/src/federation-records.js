@@ -38,6 +38,7 @@ import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { buildFederationRecord, encodeFederationRecord, federationRecordId, joinSignedRecord, verifyFederationRecord, verifyFederationRecords,
   FEDERATION_STATUS, GONE, decodeFederationRecord, splitSignedRecord, guardianKeySet, highestVerified, recordStatusName, thresholdOf, loadReserveOf, statusFor, paysDrainShares, playerReserveOf, GATEWAY_FEE_MAX_REFERENCE, RESTRICTION_RANK, selfConsistentRestrictive } from '../../arena-protocol/src/federation-record.js';
 import { recordBand, bandOfRecord } from '../../arena-protocol/src/capacity.js';
+import { roundsAfter } from './rounds-paged.js';
 
 /**
  * The census nodes guarding `federationId`, as the record lists them. `keys` (optional, kanban #2603): the federation config's guardian
@@ -440,7 +441,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       highRow = top && top.m !== null ? Number(top.m) : 0; lowRow = highRow + 1;
       return;
     }
-    for (const r of round.db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(highRow)) { highRow = r.rowid; keepRow(r); }
+    for (const r of roundsAfter(round.db, 'rowid, round_id, contract', highRow)   /* kanban #3904: a page at a time */) { highRow = r.rowid; keepRow(r); }
   };
   /** The next CHUNK rows below the lowest read so far, newest first. */
   const older = () => {
