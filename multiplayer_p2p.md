@@ -3938,7 +3938,7 @@ there (§23.1 step 5): a tick-0 entry that locks at start + 44 s does not
 play 49 s behind the round. A stake seen in time counts its held marks only
 inside the lag bound; ticks it cannot catch up are lost to it (§15). Free
 rounds follow the same clock rule without the stake part. Gated by the
-round's protocol version (the next one on each line); rounds of earlier
+round's protocol version (the next one); rounds of earlier
 versions keep the stake-seen origin (#2826, #3568).
 
 **Continuing is the default.** While a player's run of round `i` is on the
@@ -5861,46 +5861,6 @@ draws on the same `W` as the seats. An entry void at the door (§15) is left out
 
 ---
 
-# 13D. Copied run
-
-> **In a shared world, an entry whose run copies an earlier joiner's
-> inputs forfeits the entry** *(RULED, spec 2026-11-24, kanban #3615 and
-> #3663, from feedback #445 / #3612)*.
-
-- **Why.** Under a shared-world config (§12) the same inputs relative to
-  the join tick are the same run and the same score, so a copy takes a
-  place it did not play for. Under per-player worlds the same inputs play
-  a different world; the rule does not apply there.
-- **The measure: input changes, not ticks (#3663).** Each entry's stream is
-  reduced to its change list: `(t - join_tick, word)` for every tick whose
-  word differs from the word at the tick before; the first tick compares
-  with "no input", and a release (back to the empty word) is a change like
-  any other. A held key is one change when pressed and one when released;
-  idle stretches add nothing. Two players holding throttle together from
-  their join are one change each and never match.
-- **The match.** The later joiner forfeits when its change list and an
-  earlier joiner's share a common prefix of at least **32 changes** - the
-  same relative tick and the same word for each, from the first change of
-  both. That covers an exact copy, a copy that stops early, one that plays
-  on after the original ends, and copy-then-deviate. Equal `join_tick`:
-  neither forfeits (neither could have read the other). The earlier entry
-  is never touched.
-- **The close.** Before signing, a seat compares each entry with every
-  earlier-joined entry of the round over the canonical transcripts it
-  holds; a match signs `FORFEIT`, score 0, and logs `[close] <entry>
-  FORFEIT: copied run of <earlier entry> (§13D)`. A re-run signs the same,
-  and an objection against that entry is refused at the door, as in §13B.
-  The stake follows the §13B FORFEIT path (the loser pool with a qualifier,
-  else the remainder split; never back to the copier).
-- **Bound and gated.** The rule is bound into the Entry Contract like
-  `equivocation_rule_hash` and applies only to rounds whose contract names
-  the next protocol version (on each line) with a shared-world config; earlier
-  rounds close as before. Transcripts stay readable while the round runs
-  (reload and peer catch-up need them): the rule makes a copy worthless
-  instead of hiding the original.
-
----
-
 # 13C. Canonical transcript and the no-quorum rule
 
 **Canonical transcript.** For each player, the canonical transcript is the
@@ -6037,6 +5997,46 @@ holds at the window's end.
 
 ---
 
+# 13D. Copied run
+
+> **In a shared world, an entry whose run copies an earlier joiner's
+> inputs forfeits the entry** *(RULED, spec 2026-11-24, kanban #3615 and
+> #3663, from feedback #445 / #3612)*.
+
+- **Why.** Under a shared-world config (§12) the same inputs relative to
+  the join tick are the same run and the same score, so a copy takes a
+  place it did not play for. Under per-player worlds the same inputs play
+  a different world; the rule does not apply there.
+- **The measure: input changes, not ticks (#3663).** Each entry's stream is
+  reduced to its change list: `(t - join_tick, word)` for every tick whose
+  word differs from the word at the tick before; the first tick compares
+  with "no input", and a release (back to the empty word) is a change like
+  any other. A held key is one change when pressed and one when released;
+  idle stretches add nothing. Two players holding throttle together from
+  their join are one change each and never match.
+- **The match.** The later joiner forfeits when its change list and an
+  earlier joiner's share a common prefix of at least **32 changes** - the
+  same relative tick and the same word for each, from the first change of
+  both. That covers an exact copy, a copy that stops early, one that plays
+  on after the original ends, and copy-then-deviate. Equal `join_tick`:
+  neither forfeits (neither could have read the other). The earlier entry
+  is never touched.
+- **The close.** Before signing, a seat compares each entry with every
+  earlier-joined entry of the round over the canonical transcripts it
+  holds; a match signs `FORFEIT`, score 0, and logs `[close] <entry>
+  FORFEIT: copied run of <earlier entry> (§13D)`. A re-run signs the same,
+  and an objection against that entry is refused at the door, as in §13B.
+  The stake follows the §13B FORFEIT path (the loser pool with a qualifier,
+  else the remainder split; never back to the copier).
+- **Bound and gated.** The rule is bound into the Entry Contract like
+  `equivocation_rule_hash` and applies only to rounds whose contract names
+  the next protocol version or later with a shared-world config; earlier
+  rounds close as before. Transcripts stay readable while the round runs
+  (reload and peer catch-up need them): the rule makes a copy worthless
+  instead of hiding the original.
+
+---
+
 # 14. Finality
 
 > Once a player's result is `FINAL`, later infrastructure failure does not
@@ -6063,8 +6063,9 @@ PROVISIONAL -> VOID / ENTRY_VOID          (refund; reachable only from PROVISION
 **A seat may leave an old game version unloaded (RULED, spec 2026-11-25,
 kanban #3706, audit #3679).** A local hosting choice, not a protocol rule:
 no signed byte changes. A seat may skip loading a game version at start
-when all four hold: (1) no series or template it serves names it, and no
-round of it is open, posted or scheduled; (2) every round of it is past
+when all four hold: (1) it is not the current version of any series or template
+the seat serves, and no round of it is open, posted or scheduled (no entry
+window, no future series round naming it); (2) every round of it is past
 `final_after` (§13A) with no objection, re-run or §13C dispute pending at
 this seat; (3) every round of it is settled with the settlement at least 6
 blocks deep, or is void with nothing left to sign; (4) 24 h have passed
@@ -6444,8 +6445,8 @@ room and keeps C = 0.7, so a stored run never moves.
 
 **The bed follows the entry's truck (RULED, spec 2026-11-25, kanban #3707,
 from #3695).** The bed capacity of an entry is the capacity of the truck its
-unlocks select: 511180 room units with the larger truck (2 x 3.9 m), 393216
-for every other entry (2 x 3.0 m). The load bound is 0 .. that capacity at
+unlocks select: 0 .. 511180 with the larger truck (unlock 10dec674...),
+0 .. 393216 for every other entry. The load bound is 0 .. that capacity at
 the batch door, in the objection check and at the arbiter (one function),
 the same number is C's denominator and caps the FEWEST/CHEAPEST tables. Only
 unlocks the entry carries and owns count. The capacities come from a truck
