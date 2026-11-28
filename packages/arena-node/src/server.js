@@ -279,7 +279,7 @@ export function offerReceiptTo(peer, receiptBytes, { timeoutMs = 3000 } = {}) {
 export const MAX_FRAME_BYTES = Math.max(
   MAX_SIGNED_INPUT_BATCH_BYTES, SIGNED_CHECKPOINT_BYTES, SIGNED_RECEIPT_BYTES);
 import { CLOSED, relayRowCost } from './store.js';
-import { Round, noteNextblockGames, lockClaimHolds, refusedLockOwnId, LOCKLESS_CAP, LOCKLESS_HOLD_MS, TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
+import { Round, noteNextblockGames, lockClaimHolds, refusedLockOwnId, LOCKLESS_CAP, ENTRY_PROOF, LOCKLESS_HOLD_MS, TRANSCRIPT_BATCH_MAX_BYTES } from './round.js';
 // kanban #2707: the largest signed batch frame the store could ever take - its type byte, the batch, its signature
 const SIGNED_BATCH_FRAME_MAX_BYTES = 1 + TRANSCRIPT_BATCH_MAX_BYTES + 64;
 import { Verifier, peerEntryVoid } from './verify.js';
@@ -291,6 +291,7 @@ import { setDialLocalOk } from './dial-guard.js';
 import { thresholdOf as thresholdOfFederation, recordStatusName } from '../../arena-protocol/src/federation-record.js';
 import { Roster, endpointsOf, NO_CHAIN_VIEW_WHY, findSeriesPublication as findSeriesPublicationIndexed } from './roster.js';
 import { createSeriesPull, PULL_EVERY_MS } from './series-pull.js';
+import { requiresEntryProof, entryProofHolds, entryProofFromHeader, ENTRY_PROOF_HEADER } from '../../arena-protocol/src/entry-proof.js';
 import { createEntryRelay, RELAY_HEADER, lookAtMembers, seatView, LOCKS_MAX_BYTES } from './entry-relay.js';
 import { peerBody, peerJsonUpTo } from './peer-body.js';
 import { bytesUpTo } from './peer-read.js';
@@ -3720,9 +3721,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (!round.entry(eid)) {
       const r = await fetch(`${base}/entry?id=${entryHex}`, { signal: AbortSignal.timeout(10000) });
       if (!r.ok) { await dropSeatBody(r); return { ok: false, why: `${base} holds no entry ${entryHex.slice(0, 16)}` }; }
+      const proof = entryProofFromHeader(r.headers.get(ENTRY_PROOF_HEADER));   // kanban #3824
       const bytes = await seatBody(r, SEAT_RECORD_BYTES);   // kanban #1900
       { const no = notAnOrder(bytes); if (no) return { ok: false, why: no }; }
-      round.importEntry(bytes, entryHex);
+      try { round.importEntry(bytes, entryHex, { proof }); } catch (e) { return { ok: false, why: e.message }; }
     }
     { const no = notAnOrder(round.entry(eid)); if (no) return { ok: false, why: no }; }
     // AND ITS HANDOUT (measured 2026-10-24 16:51Z on fed2-3 after the entry and locks were replayed: "a loser's P could not be opened: this node
@@ -7231,7 +7233,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     if (toHex(h.playerPubkey) !== toHex(contract.playerPubkey)) return 'not the handout\'s player';
     return null;
   };
-  const holdLockless = (contract) => {
+  const holdLockless = (contract, proof = null) => {
     { const why = locklessHandoutWhy(contract); if (why) return why; }
     const nowMs = round.now(), eidHex = toHex(idOfEntry(contract)), key = `${toHex(contract.roundId)}|${eidHex}`;
     if (pendingLive(pendingLockless.get(key), nowMs)) return null;
@@ -7240,7 +7242,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const point = `${toHex(contract.roundId)}|${toHex(contract.stakePoint)}`;
     let n = 0; for (const p of pendingLockless.values()) if (p.point === point && pendingLive(p, nowMs)) n++;
     if (n >= PENDING_PER_POINT) return PENDING_POINT_FULL;
-    pendingLockless.set(key, { contract, point, untilMs: nowMs + LOCKLESS_HOLD_MS });
+    pendingLockless.set(key, { contract, proof, point, untilMs: nowMs + LOCKLESS_HOLD_MS });   // and its entry proof (kanban #3824)
     return null;
   };
   // the entry held aside under this id (a 32-byte id), entered once the federation holds its stake lock; true when it is now stored here
@@ -7248,10 +7250,10 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const hex = toHex(new Uint8Array(eid));
     const found = [...pendingLockless.entries()].find(([k, p]) => k.endsWith(`|${hex}`) && pendingLive(p));
     if (!found) return false;
-    const [key, { contract }] = found;
+    const [key, { contract, proof }] = found;
     if (!(await stakeLockHeldAtEntry(contract))) return false;
     if (round.entry(eid)) return true;   // a parallel hand-over entered it meanwhile
-    try { round.enter(contract, { stakeLockHeld: true }); } catch { return false; }
+    try { round.enter(contract, { stakeLockHeld: true, proof }); } catch { return false; }
     pendingLockless.delete(key);
     const c = relayedRound(contract.roundId) || pickRelayRound(contract);   // now it goes on to the other seats, as every entry taken here does (kanban #1068, #1216, #2546)
     if (c) entryRelay.entryTaken(contract.roundId, hex, c.entryCloseMs);
@@ -7535,6 +7537,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   const entryRelay = createEntryRelay({
     peersOf: (rid) => verifier.peersOf(rid),
     entryOf: (hex) => { const e = round.entry(fromHex(hex)); return e ? new Uint8Array(e) : null; },
+    entryProofOf: (hex) => { const p = round.entryProof(fromHex(hex)); return p ? toHex(p) : null; },   // kanban #3824: handed on unchanged
     handoutOf: (hex) => { const e = round.entry(fromHex(hex)); const ref = e ? decodeEntryContract(e).vssSharesRef : null;
       if (!ref || ref.every((b) => b === 0)) return null; const h = round.handout(ref); return h ? h.bytes : null; },
     locksOf: (hex) => { const fieldsOf = (row) => (row ? (typeof row.fields === 'string' ? JSON.parse(row.fields) : row.fields) : null), eid = fromHex(hex);
@@ -7555,10 +7558,11 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     // order pins the same seat first.
     const k = from.length ? (takeTurn = (takeTurn + 1) % 1048576) % from.length : 0, order = [...from.slice(k), ...from.slice(0, k)];
     for (const base of order) {
-      let entry;
+      let entry, proof = null;
       try {
         const r = await peerGet(`${base}/entry?id=${entryHex}`);
         if (!r.ok) { try { await r.body?.cancel(); } catch { /* gone */ } continue; }
+        proof = entryProofFromHeader(r.headers.get(ENTRY_PROOF_HEADER));   // kanban #3824: checked by round.enter for a new-version round
         entry = decodeEntryContract(await peerBody(r, BODY_MOST));
       } catch { continue; }
       if (toHex(idOfEntry(entry)) !== entryHex || toHex(entry.roundId) !== toHex(rid)) continue;   // the bytes hash to the id, of this round
@@ -7585,7 +7589,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           if (!took.ok) { why = `${base}'s handout: ${took.why}`; continue; }
         } catch (e) { why = `${base}'s handout: ${e.message}`; continue; }
       }
-      try { round.enter(entry, { accepted: true }); } catch (e) { return { ok: false, why: e.message }; }
+      try { round.enter(entry, { accepted: true, proof }); } catch (e) { if (e.code === ENTRY_PROOF) { why = `${base}: ${e.message}`; continue; } return { ok: false, why: e.message }; }
       console.log(`[entry] ${entryHex.slice(0, 16)} taken from ${base} past the door: ${held ? `${from.length} seats hold it` : `${signers.size} seats signed results naming it`} (§17)`);
       return { ok: true };
     }
@@ -13147,6 +13151,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const steps = stepLog('entry', '-', { keep: txRecord.keep }).on(res);
         const contract = decodeEntryContract(await read(req));
         steps.named('round ' + toHex(contract.roundId).slice(0, 8)).at('body');
+        // THE ENTRY PROOF FIRST (kanban #3824, RULED 2026-11-28): a round of ENTRY_PROOF_VERSION or later takes an entry only with the session key's
+        // signature over its id (header x-arena-entry-proof), refused 400 before any other check - never taken, never relayed, never holding a session key.
+        // A round of an earlier version is taken as before (the header, if any, is kept but asked of nobody).
+        const entryProof = entryProofFromHeader(req.headers[ENTRY_PROOF_HEADER]);
+        { const pr = round.get(contract.roundId);
+          if (pr && requiresEntryProof(decodeRoundContract(new Uint8Array(pr.contract)))
+            && !entryProofHolds({ entryId: idOfEntry(contract), sessionPubkey: contract.sessionPubkey, proof: entryProof, verify: (sig, msg, pk) => ed25519.verify(sig, msg, pk) }))
+            return text(res, 400, `entry refused: that round takes an entry only with its entry proof - the session key's signature over the entry id (ARENA/v1/EntryProof, header ${ENTRY_PROOF_HEADER})${entryProof ? ': this one does not verify' : ': none came with it'} (kanban #3824)`); }
         // AN ENTRY INTO A ROUND OF A GAME THIS NODE DOES NOT HOST: that round was never stored, and the node
         // says which game, from what it refused at /round or in a series of that game
         { const game = refusedGameOf.get(toHex(contract.roundId));
@@ -13241,19 +13253,19 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         }
         steps.at('checked');
         let joined;
-        try { joined = round.enter(contract); }
+        try { joined = round.enter(contract, { proof: entryProof }); }
         catch (e) {
           // PAST THE LOCKLESS CAP, HELD ASIDE UNTIL ITS STAKE LOCK IS HANDED (kanban #2174, a44 refute of #1745): answered with its id as a taken
           // entry is, entered at POST /lock or /fee-lock once the federation holds its lock (enterPendingLockless)
           if (e.code !== LOCKLESS_CAP) throw e;
-          const holdWhy = holdLockless(contract);
+          const holdWhy = holdLockless(contract, entryProof);
           // A FULL STAKE POINT STILL SEATS THE ENTRY WHOSE STAKE LOCK THE FEDERATION ALREADY HOLDS (kanban #2438, #2490, a44 refute 75 s2 of #2174):
           // an entry carries no signature of its player, so copies naming the handout player's own key could still take the point's
           // PENDING_PER_POINT slots first. The page and the bot lock before they post the entry (kanban #1596): when the slots are full the
           // federation is asked once for this entry, and the one it holds the lock of is entered past the cap here, as POST /lock would enter it
           // AND A FULL HELD-ASIDE MAP DOES TOO (kanban #2834, wf1489 r24 entry-1: strangers' free lockless entries filled the seat-wide map to
           // PENDING_MAX and every honest locked entry was refused, its lock 404): any refusal to hold aside asks the federation once for this entry
-          if (holdWhy !== null && await stakeLockHeldAtEntry(contract)) joined = round.enter(contract, { stakeLockHeld: true });
+          if (holdWhy !== null && await stakeLockHeldAtEntry(contract)) joined = round.enter(contract, { stakeLockHeld: true, proof: entryProof });
           else {
             if (holdWhy !== null) throw e;
             steps.named(toHex(idOfEntry(contract))).at('held aside for its lock');
@@ -13623,7 +13635,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const eid = Buffer.from(url.searchParams.get('id') || '', 'hex');
         const entry = round.entry(eid);
         if (!entry) return text(res, 404, 'no such entry');
-        res.writeHead(200, { 'content-type': 'application/octet-stream', ...CORS });
+        const ep = round.entryProof(eid);   // kanban #3824: its entry proof travels with it
+        res.writeHead(200, { 'content-type': 'application/octet-stream', ...(ep ? { [ENTRY_PROOF_HEADER]: toHex(ep) } : {}), ...CORS });
         return res.end(Buffer.from(entry));
       }
 

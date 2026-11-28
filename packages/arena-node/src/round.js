@@ -38,6 +38,7 @@ import {
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { requiresEntryProof, entryProofHolds } from '../../arena-protocol/src/entry-proof.js';
 import { namesNoDraw, mediansPrices, FRONTEND_FEE_VERSION, ITEMS_VERSION, objectionWindowFits, STAKE_NOT_SEEN } from '../../arena-protocol/src/constants.js';
 import { NETWORK_ID_REGTEST } from '../../arena-protocol/src/genesis-ids.js';
 import { entryFeeBpsForRound, entryPaysReserves, roundSplit, RESERVES_NODE_FEE_BPS, entryGiftsInFee, giftsEntryExpected, giftsFeeBps, ROUND_SPLIT_BPS } from '../../arena-protocol/src/reserves.js';
@@ -79,6 +80,7 @@ export const LOCKLESS_HOLD_MS = 60000;
 // THE CAP'S REFUSAL, BY ITS CODE (kanban #2174, a44 refute of #1745): POST /entry reads it and holds the entry aside, unstored; when its lock is
 // handed and the federation holds it, the entry is entered past the cap (enter's `stakeLockHeld`)
 export const LOCKLESS_CAP = 'LOCKLESS_CAP';
+export const ENTRY_PROOF = 'ENTRY_PROOF';   // kanban #3824: an entry of a new-version round without its valid entry proof (POST /entry answers 400)
 
 /**
  * A STORED ROUND THIS NETWORK CANNOT PARSE IS ABSENT (RULED 2026-09-22 22:59, §23.6): "a record
@@ -720,9 +722,12 @@ export class Round {
    * it. What only a door decides goes - the round being open, entry close, a table this seat thinks is full - and everything about the entry itself stays:
    * the stake, the fee, the handout, the commitment, every item's owner signature.
    */
-  enter(contract, { accepted = false, stakeLockHeld = false } = {}) {
+  enter(contract, { accepted = false, stakeLockHeld = false, proof = null } = {}) {
     const round = this.get(contract.roundId);
     if (!round) throw new Error('no such round');
+    // THE ENTRY PROOF (kanban #3824, RULED 2026-11-28): a round of ENTRY_PROOF_VERSION or later takes an entry only with its session key's signature
+    // over its id - before any other check, on every path (the door, the relay, an entry taken past the door); kept beside the entry
+    const proven = this.#entryProven(contract, round, proof);
     if (round.state !== OPEN && !accepted) throw new Error('the round is closed');
 
     // AND NOT BEFORE THE COMMITTEE EXISTS. `entry_open_time == committee_time`
@@ -1013,7 +1018,29 @@ export class Round {
     const put = this.db.prepare('INSERT OR IGNORE INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)')
       .run(id, contract.roundId, encodeEntryContract(contract), joined);
     if (put.changes) this.#noteLockNames(id, contract, joined);
+    if (proven) this.#keepEntryProof(id, proven);
     return id;
+  }
+
+  // kanban #3824: the proof this round needs, or null for a round of an earlier version (taken as before). Throws with code ENTRY_PROOF when it is missing or wrong.
+  #entryProven(contract, roundRow, proof) {
+    const asks = decodeRoundContract(new Uint8Array(roundRow.contract));
+    if (!requiresEntryProof(asks)) return null;
+    const id = entryId(contract);
+    const pf = proof || this.entryProof(id);
+    if (!entryProofHolds({ entryId: id, sessionPubkey: contract.sessionPubkey, proof: pf, verify: (sig, msg, pk) => ed25519.verify(sig, msg, pk) }))
+      throw Object.assign(new Error(`that round (protocol ${asks.protocolVersion}) takes an entry only with its entry proof: the session key's signature over the entry id (ARENA/v1/EntryProof, kanban #3824)${pf ? ' - this one does not verify' : ' - none came with it'}`), { code: ENTRY_PROOF });
+    return pf;
+  }
+
+  #keepEntryProof(id, proof) {
+    this.db.prepare('INSERT OR IGNORE INTO entry_proofs (entry_id, proof) VALUES (?, ?)').run(Buffer.from(id), Buffer.from(proof));
+  }
+
+  /** The entry proof kept with an entry (kanban #3824), 64 bytes, or null. */
+  entryProof(entryIdBytes) {
+    const row = this.db.prepare('SELECT proof FROM entry_proofs WHERE entry_id = ?').get(Buffer.from(entryIdBytes));
+    return row ? new Uint8Array(row.proof) : null;
   }
 
   /**
@@ -1022,15 +1049,18 @@ export class Round {
    * bytes hash to the id the batch names (the id is the hash of the contract) and it is of a round this seat holds, open or closed:
    * the seats that certified the batch checked it at its door. Answers the id, or throws why not.
    */
-  importEntry(bytes, idHex) {
+  importEntry(bytes, idHex, { proof = null } = {}) {
     const contract = decodeEntryContract(new Uint8Array(bytes));
     const id = entryId(contract);
     if (Buffer.from(id).toString('hex') !== String(idHex).toLowerCase()) throw new Error('those bytes are another entry than the one named');
-    if (!this.get(contract.roundId)) throw new Error('no such round');
+    const roundRow = this.get(contract.roundId);
+    if (!roundRow) throw new Error('no such round');
+    const proven = this.#entryProven(contract, roundRow, proof);   // kanban #3824: a peer's copy of an entry of a new-version round carries its proof too
     const joined = this.now();
     const put = this.db.prepare('INSERT OR IGNORE INTO entries (entry_id, round_id, contract, joined_ms) VALUES (?, ?, ?, ?)')
       .run(id, contract.roundId, encodeEntryContract(contract), joined);
     if (put.changes) this.#noteLockNames(id, contract, joined);
+    if (proven) this.#keepEntryProof(id, proven);
     return id;
   }
 

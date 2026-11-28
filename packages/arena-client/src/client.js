@@ -44,6 +44,7 @@ import {
 import { batchId, batchTicks, signBatch, encodeInputBatch, joinSignedBatch, splitSignedBatch, SIGNED_BATCH_SIGNATURE_BYTES } from '../../arena-protocol/src/batch.js';
 import { centsToTapeUnits } from '../../arena-protocol/src/price-sample.js';
 import { fromHex, toHex, sha256 } from '../../arena-protocol/src/hash.js';
+import { entryProofDigest, ENTRY_PROOF_HEADER } from '../../arena-protocol/src/entry-proof.js';
 import {
   decodeCheckpointReceipt, receiptId, splitSignedReceipt, SIGNED_RECEIPT_BYTES,
 } from '../../arena-protocol/src/receipt.js';
@@ -265,9 +266,9 @@ export const FEED_WINDOW = 32;
 // A SEAT STILL TAKING THE HANDOUT IS ASKED AGAIN (kanban #828, 2026-11-02 04:05:41Z, both players of round a5fc9c2f): postHandout goes on once enough seats
 // took it, the entry goes to one seat, and that seat's handout can still be on its way; its 400 ended the join with the stake already locked. 8 s; any other refusal stands.
 // Answers { status, bytes }; each ask is bounded by ENTRY_ANSWER_MS (kanban #3596), and a seat silent past it throws.
-export async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500, answerMs = ENTRY_ANSWER_MS } = {}) {
+export async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500, answerMs = ENTRY_ANSWER_MS, headers = null } = {}) {
   for (let n = 0; ; n++) {
-    const r = await entryAnswered(fetcher, url, body, answerMs);
+    const r = await entryAnswered(fetcher, url, body, answerMs, headers);
     if (r.status === 201) return r;
     const said = entryWords(r.bytes);
     // AND A SEAT WHOSE SEATING CERTIFICATE IS STILL ON ITS WAY (the owner's report 2026-11-10 08:54Z, round 0ff01991: the six seats had signed the seating,
@@ -334,12 +335,17 @@ const LOCK_ACCEPT_HEAD_MS = 3000;   // the lock client's acceptance first; the s
 // peer, so the stake lock was handed to no seat and the session never opened. A seat silent past the bound did not take the entry; the
 // feed's 'no such entry' path offers it again. The market's submitPick bounds the same door (ENTRY_WAIT_MS).
 export const ENTRY_ANSWER_MS = 15000;
-async function entryAnswered(fetcher, url, body, ms = ENTRY_ANSWER_MS) {
+/** kanban #3824: the header carrying an entry's proof, made by `sign` (the session key's async signer); null when there is no signer or it fails. */
+export async function entryProofHeadersFor(entryIdBytes, sign) {
+  if (typeof sign !== 'function') return null;
+  try { const sig = await sign(entryProofDigest(entryIdBytes)); return sig && sig.length === 64 ? { [ENTRY_PROOF_HEADER]: toHex(sig) } : null; } catch { return null; }
+}
+async function entryAnswered(fetcher, url, body, ms = ENTRY_ANSWER_MS, headers = null) {
   let timer;
   const late = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`no answer to the entry within ${ms} ms`)), ms); });
   try {
     return await Promise.race([(async () => {
-      const r = await fetcher(url, { method: 'POST', body, signal: AbortSignal.timeout(ms) });
+      const r = await fetcher(url, { method: 'POST', body, ...(headers ? { headers } : {}), signal: AbortSignal.timeout(ms) });
       const bytes = typeof r.arrayBuffer === 'function' ? new Uint8Array(await r.arrayBuffer()) : new TextEncoder().encode(String(await r.text()));
       return { status: r.status, bytes };
     })(), late]);
@@ -743,7 +749,10 @@ export class Client {
     // and this entry is not sent - the seats that took the first refuse the lock under any other
     if (this.stakeLock && typeof this.stakeLock.onNamed === 'function') this.stakeLock.onNamed(mine);
     let r;
-    try { r = await postEntry(`${this.base}/entry`, encodeEntryContract(entry)); } catch (e) {
+    // THE ENTRY PROOF (kanban #3824): the session key - the one this client signs the marks with - signs the entry id; sent for every round
+    // (a seat of an older round ignores the header, a round of ENTRY_PROOF_VERSION or later takes no entry without it)
+    this.entryProofHeaders = await entryProofHeadersFor(mine, this.sign);
+    try { r = await postEntry(`${this.base}/entry`, encodeEntryContract(entry), { headers: this.entryProofHeaders }); } catch (e) {
       // a seat's own refusal stands; silence is asked about (kanban #3673)
       if (/^the node refused the entry/.test(String(e && e.message))) throw e;
       const seats = [this.base, ...(Array.isArray(this.peers) ? this.peers : [])];
@@ -903,7 +912,7 @@ export class Client {
   /** Signer nodes this client's entry on one other committee node. */
   async joinOn(base) {
     try {
-      const p = await entryAnswered((...a) => fetch(...a), `${base}/entry`, encodeEntryContract(this.joinedEntry));   // bounded (kanban #3596)
+      const p = await entryAnswered((...a) => fetch(...a), `${base}/entry`, encodeEntryContract(this.joinedEntry), ENTRY_ANSWER_MS, this.entryProofHeaders || null);   // bounded (kanban #3596); with its proof (#3824)
       // and the player's claim on its locks (kanban #1897, #1938)
       if (p.status === 201 && this.stakeLock && typeof this.stakeLock.claimFor === 'function')
         (this.lockClaimed = this.lockClaimed || []).push(postLockClaim({ node: base, entryId: entryId(this.joinedEntry), claimFor: this.stakeLock.claimFor }));

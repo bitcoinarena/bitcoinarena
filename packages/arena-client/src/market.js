@@ -138,7 +138,8 @@ export function pickSheet({ market, contract = null, stakeMsat = contract ? cont
 // called with { entryId, entries } as soon as the seats answered the entry, while the locks are handed after it
 // `onSubmitted({ entryId, node })` (kanban #601): once, as soon as the first seat took the entry - the order is the player's from then on
 // `handedOut` (postHandout's `posted`): a seat's entry is posted once that seat answered its handout - one slow seat is not waited on by the others
-export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null, handedOut = null }) {
+// `proof` (kanban #3824): the entry proof as hex - the session key's signature over entryProofDigest(entry id) - sent beside the entry to every seat
+export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null, handedOut = null, proof = null }) {
   const eid = entryId(entry);
   const bytes = encodeEntryContract(entry);
   // EVERY SEAT AT ONCE; what each answered kept as it comes (`entriesNow`), all of them in `entriesAll`
@@ -148,7 +149,7 @@ export async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onE
     let x;
     try {
       if (handedOut && handedOut.get(node)) await handedOut.get(node);
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(ENTRY_WAIT_MS) });
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes, ...(proof ? { headers: { 'x-arena-entry-proof': String(proof) } } : {}), signal: AbortSignal.timeout(ENTRY_WAIT_MS) });
       x = { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
       // the player's claim on the entry's locks, beside it (kanban #1897, #1938): no copy of the entry can take them
       if (r.status === 201 && stakeLock && typeof stakeLock.claimFor === 'function') postLockClaim({ node, entryId: eid, claimFor: stakeLock.claimFor, fetcher });   // never throws; not waited on
