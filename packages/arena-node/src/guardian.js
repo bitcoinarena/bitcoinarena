@@ -340,22 +340,27 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
   // has since finished its DKG runs the federation on these ports, and a second fedimintd would not start - and started kept when the
   // node asks (`keep`: it waits in setup). Closing the node leaves it running; `halt` stops it (a fresh setup, the owner page's stop).
   if (storePath !== ':memory:') {
+    // AND THE BINARY AND THE ENDPOINT IN THE FINGERPRINT (kanban #3916, measured 2026-11-28 on the owner's MacBook node, 2026.1.9.30): the
+    // fedimintd a 2026.1.9.28 node started after a reboot was adopted by the 2026.1.9.29 and 2026.1.9.30 nodes - it ran the 1.9.28 binary
+    // from a release folder the update had already removed, and announced the quick tunnel name of 11-19 (FM_API_URL) while the node's
+    // endpoint was another one. A guardian started from another release's fedimintd, or for another endpoint, is started again once.
+    const pidSha = keptSha ? createHash('sha256').update(`${keptSha}\n${bin}\n${endpoint}`).digest('hex') : keptSha;
     const kept = (adopted, pid, sha) => { const follow = ramFollow(() => pids.pid(dataDir));
       return { running: true, kept: true, adopted, pid, endpoint, network, chain, dataDir, apiPort: ports.api, p2pPort: ports.p2p, slot,
         cookieSha: sha, ram: !!follow, stop: async () => { if (follow) follow.stop(); }, halt: async () => { if (follow) follow.stop(); await pids.stop(dataDir); await ramClean(); }, alive: () => pids.active(dataDir) }; };
     if (await pids.active(dataDir)) {
       const had = keptFingerprint(dataDir);
       // a guardian adopted only while it reads bitcoind with the cookie bitcoind has now (one started before the fingerprint was kept: as before)
-      if (!had || !keptSha || had === keptSha) {
+      if (!had || !pidSha || had === pidSha) {
         log(`[guardian] fedimintd ${pids.pid(dataDir)} already runs on ${dataDir}: adopted, not restarted; endpoint ${endpoint}, api 127.0.0.1:${ports.api}`);
         return kept(true, pids.pid(dataDir), cookieSha);
       }
-      log(`[guardian] fedimintd ${pids.pid(dataDir)} on ${dataDir} runs with an old bitcoind cookie or old peer addresses: started again`);
+      log(`[guardian] fedimintd ${pids.pid(dataDir)} on ${dataDir} runs with an old bitcoind cookie or old peer addresses, or from another release's fedimintd or for another endpoint: started again with ${bin}`);
       await pids.stop(dataDir);
       if (!keep) {
         if (!(await ramReady())) return not('its RAM database was not restored, or its recovery refused it (the line before says why)');
         const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
-        keepFingerprint(dataDir, keptSha);
+        keepFingerprint(dataDir, pidSha);
         log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
         return kept(false, pid, cookieSha);
       }
@@ -363,7 +368,7 @@ export async function startGuardian({ nodePort, host, storePath, bitcoindUrl, co
     if (keep) {
       if (!(await ramReady())) return not('its RAM database was not restored, or its recovery refused it (the line before says why)');
       const pid = await pids.start(dataDir, bin, { ...env, ...fmEnv }, join(dataDir, 'fedimintd.log'));
-      keepFingerprint(dataDir, keptSha);
+      keepFingerprint(dataDir, pidSha);
       log(`[guardian] fedimintd ${pid} on chain ${chain} (Fedimint label ${network}), endpoint ${endpoint}, api 127.0.0.1:${ports.api}; kept: it outlives this node`);
       return kept(false, pid, cookieSha);
     }
