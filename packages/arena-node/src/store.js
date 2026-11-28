@@ -1664,6 +1664,9 @@ export function openStore(path = ':memory:') {
   // belongs to; a row from before names none, and belongs to the handout whose id it is kept under
   if (!db.prepare('PRAGMA table_info(refused_locks)').all().some((c) => c.name === 'of_handout'))
     db.exec('ALTER TABLE refused_locks ADD COLUMN of_handout BLOB');
+  // A DONATION SEND'S LUD-21 VERIFY URL (kanban #3828): the proof the address issued the plan's invoice, handed with the plan; '' on every older row
+  for (const t of ['winnings_sends', 'donation_sends'])
+    if (!db.prepare(`PRAGMA table_info(${t})`).all().some((c) => c.name === 'verify')) db.exec(`ALTER TABLE ${t} ADD COLUMN verify TEXT NOT NULL DEFAULT ''`);
   if (!db.prepare('PRAGMA table_info(pool_nonces)').all().some((c) => c.name === 'attempt'))
     db.exec('ALTER TABLE pool_nonces ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0');
   // AN OBJECTION NAMES ITS BLOCK (§13A, RULED 2026-09-24): the window places it by that block, not by when it came.

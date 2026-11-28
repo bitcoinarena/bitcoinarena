@@ -25,7 +25,7 @@
 // recipient, and once it answers, the held contract is spent (the re-send's refund) into the send to its invoice.
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { lightningAddressEndpoint, payRequestStands, callbackFor, invoiceAnswersPayRequest } from '../../arena-protocol/src/lnurl-pay.js';
-import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration } from '../../arena-protocol/src/winnings-send.js';
+import { sendableInvoiceMsat, lowestLiveGateway, sendPlanStands, proposedExpiration, provesDonationInvoice, verifyUrlRefusal, donationProofStands } from '../../arena-protocol/src/winnings-send.js';
 import { signShare340, aggregate340, nonceGenerate340 } from '../../arena-protocol/src/frost-bip340.js';
 import { toHex, fromHex, sha256 } from '../../arena-protocol/src/hash.js';
 import { textUpTo, binaryUpTo } from './peer-read.js';
@@ -91,7 +91,7 @@ const commitmentKey = (c) => `${toHex(c.hiding)}:${toHex(c.binding)}`;
 const listKey = (commitments) => commitments.map((c) => `${c.id}:${toHex(c.hiding)}:${toHex(c.binding)}`).join('|');
 const plain = (row) => ({ entry: toHex(row.entryId), attempt: row.attempt || 0, address: row.address, invoice: row.invoice,
   paymentHash: row.paymentHash, invoiceMsat: String(row.invoiceMsat), payoutMsat: String(row.payoutMsat), owedMsat: String(row.owedMsat),
-  gatewayUrl: row.gatewayUrl, gatewayPk: row.gatewayPk, expiration: String(row.expiration) });
+  gatewayUrl: row.gatewayUrl, gatewayPk: row.gatewayPk, expiration: String(row.expiration), ...(row.verify ? { verify: String(row.verify) } : {}) });   // kanban #3828: only when there is one, so older plans keep their ids
 
 export class WinningsSend {
   /**
@@ -102,7 +102,9 @@ export class WinningsSend {
    * @param peersFor   (roundIdBytes) => [base URL] - the round's other settlement signer nodes
    */
   constructor({ round, port, curve, random, peersFor, fetcher, lnurlFetch = null, network = 'regtest', scopeParam = '', dkg = null,
-    peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS, lnurlMs = LNURL_ASK_MS, localHosts = [] }) {
+    peerAskMs = PEER_ASK_MS, peerGraceMs = PEER_GRACE_MS, lnurlMs = LNURL_ASK_MS, localHosts = [], versionOf = null }) {
+    // `versionOf(roundId)`: the round's protocol version, when the caller knows it better than this seat's round row (kanban #3828's gate)
+    this.versionOf = versionOf;
     // `scopeParam`: A LATE SETTLEMENT'S SENDS (slice C3b-2a) - `&late=<entry>` on every signing and paid call to a peer,
     // so the peer answers from that late settlement's rows; empty for the round's own sends.
     // `dkg`: the public shares that name a seat whose share does not stand (kanban #1074); the bounds: how long a seat, and an LNURL endpoint, is waited for
@@ -150,7 +152,7 @@ export class WinningsSend {
     let said;
     try { said = await askWithin(async (signal) => readJsonBounded(await this.lnurlFetch(ep.url, { signal })), this.lnurlMs); } catch (e) { return refuse(`${ep.url} did not answer: ${fetchErrorText(e)}`); }
     const pr = payRequestStands(said, amountMsat);
-    return pr.ok ? { ok: true, ...pr, local: local ? hostOf(ep.url) : null } : refuse(pr.why);
+    return pr.ok ? { ok: true, ...pr, local: local ? hostOf(ep.url) : null, endpoint: ep.url } : refuse(pr.why);
   }
 
   /** An LNURL the operator itself runs inside its network (kanban #2236): the test donation set's two recipients off mainnet, or a host the operator listed. */
@@ -174,8 +176,37 @@ export class WinningsSend {
     return reach === 'internal' ? `${hostOf(url) || 'that URL'} is not a public HTTPS host, and a seat asks no host inside its own network for an address` : null;
   }
 
-  /** The invoice for exactly `amountMsat`, checked by amount and LUD-06 description hash. */
-  async invoiceFor(address, amountMsat) {
+  /** Does this round send a donation share only on a proven invoice (kanban #3828)? By the round's own version. */
+  provesDonations(roundIdBytes) {
+    try {
+      if (typeof this.versionOf === 'function') return provesDonationInvoice({ protocolVersion: this.versionOf(roundIdBytes) });
+      const row = this.round.get(roundIdBytes);
+      return !!row && provesDonationInvoice(decodeRoundContract(new Uint8Array(row.contract)));
+    } catch { return false; }
+  }
+
+  /**
+   * THE ADDRESS'S OWN PROOF OF AN INVOICE (kanban #3828, LUD-21): `verify` https on `endpoint`'s host, fetched by this seat itself (no redirect),
+   * answering status OK and the same `pr`, of the plan's payment hash. { ok } or a refusal; never a guess.
+   */
+  async proofHolds({ endpoint, verify, invoice, paymentHash }) {
+    const bad = verifyUrlRefusal(verify, hostOf(endpoint));
+    if (bad) return refuse(bad);
+    if (!this.lnurlLocal(String(verify)) && !this.localHosts.includes(hostOf(verify))) { const why = await this.publicRefusal(String(verify)); if (why) return refuse(`the address's verify URL: ${why}`); }
+    let answer;
+    try {
+      answer = await askWithin(async (signal) => {
+        const r = await this.lnurlFetch(String(verify), { signal, redirect: 'error' });
+        if (r && r.status >= 300 && r.status < 400) throw new Error(`it answered a redirect (${r.status}), and a proof is read on the address's own host only`);
+        return readJsonBounded(r);
+      }, this.lnurlMs);
+    } catch (e) { return refuse(`the address's verify URL did not answer: ${fetchErrorText(e)}`); }
+    const s = donationProofStands({ answer, invoice, paymentHash });
+    return s.ok ? { ok: true } : refuse(s.why);
+  }
+
+  /** The invoice for exactly `amountMsat`, checked by amount and LUD-06 description hash. `proof`: and proven by the address's LUD-21 verify (kanban #3828). */
+  async invoiceFor(address, amountMsat, { proof = false } = {}) {
     const pr = await this.payRequest(address, amountMsat);
     if (!pr.ok) return pr;
     // ITS CALLBACK TOO (kanban #2236): an operator's own local recipient may call back on its own host; any other callback is https on a public host
@@ -190,7 +221,11 @@ export class WinningsSend {
     if (!inv.ok) return refuse(inv.why);
     let payee;
     try { payee = payeeOf(said.pr); } catch (e) { return refuse(`the address's own invoice names no payee: ${e.message}`); }
-    return { ok: true, invoice: said.pr, paymentHash: toHex(inv.paymentHash), metadata: pr.metadata, payee };
+    if (proof) {
+      const held = await this.proofHolds({ endpoint: pr.endpoint, verify: said.verify, invoice: said.pr, paymentHash: toHex(inv.paymentHash) });
+      if (!held.ok) return refuse(`no LUD-21 proof for the address's invoice: ${held.why}`);
+    }
+    return { ok: true, invoice: said.pr, paymentHash: toHex(inv.paymentHash), metadata: pr.metadata, payee, endpoint: pr.endpoint, ...(proof ? { verify: String(said.verify) } : {}) };
   }
 
   /**
@@ -208,10 +243,11 @@ export class WinningsSend {
     const gw = lowestLiveGateway(g.gateways);
     if (!gw) return refuse('the round\'s federation has no live gateway to send the winnings through');
     const rows = [];
+    const proves = this.provesDonations(roundIdBytes);   // kanban #3828: a donation share only on a proven invoice, else HELD
     for (const { entryId, payout, address, donation } of wanting) {
       const invoiceMsat = sendableInvoiceMsat(payout.msat, gw.sendFeeDefault);
       if (invoiceMsat <= 0n) return refuse(`a payout of ${payout.msat} msat does not cover the gateway's own fee`);
-      const inv = donation && hold.has(address) ? refuse('a seat could not reach it') : await this.invoiceFor(address, invoiceMsat);
+      const inv = donation && hold.has(address) ? refuse('a seat could not reach it') : await this.invoiceFor(address, invoiceMsat, { proof: !!donation && proves });
       // A DONATION RECIPIENT THAT DOES NOT ANSWER IS HELD, not refused: the walk-away's settlement goes ahead.
       if (!inv.ok && donation) {
         rows.push({ entryId, roundId: roundIdBytes, attempt: 0, address, invoice: '', paymentHash: '', invoiceMsat: 0n, payoutMsat: payout.msat,
@@ -221,7 +257,7 @@ export class WinningsSend {
       if (!inv.ok) return refuse(`the ${donation ? 'donation recipient' : 'winner'}'s invoice does not stand, so no payout is built on it: ${inv.why}`);
       rows.push({ entryId, roundId: roundIdBytes, attempt: 0, address, invoice: inv.invoice, paymentHash: inv.paymentHash, invoiceMsat,
         payoutMsat: payout.msat, owedMsat: payout.owedMsat, gatewayUrl: gw.url, gatewayPk: gw.modulePublicKey,
-        expiration: proposedExpiration(g.height, gw), donation: !!donation });
+        expiration: proposedExpiration(g.height, gw), donation: !!donation, ...(inv.verify ? { verify: inv.verify } : {}) });
     }
     for (const r of rows) this.round.putSendPlan({ ...r, why: r.heldWhy ? `held: the recipient did not answer (${String(r.heldWhy).slice(0, 400)})` : 'proposed by this signer node' });
     // EVERY HELD SHARE'S REASON, SAID WHOLE (kanban #1044: the row's why is overwritten by HELD, and the sweep's line is cut at 200)
@@ -278,9 +314,16 @@ export class WinningsSend {
       const stands = sendPlanStands({ plan: p, payoutMsat: w.payout.msat, gateways: g.gateways, height: g.height, metadata: pr.metadata, network: this.network,
         payee: pr.payee, payeeOf });
       if (!stands.ok) return refuse(`the send plan does not stand here: ${stands.why}`);
+      // AND THE ADDRESS'S OWN PROOF OF THE PLAN'S INVOICE (kanban #3828, from DONATION_PROOF_VERSION): fetched here, before this seat keeps or signs it - a
+      // plan that fails it is never kept, so it replaces nothing; named as a recipient this seat cannot use, so the proposer plans the share HELD
+      const proven = w.donation && this.provesDonations(roundIdBytes);
+      if (proven) {
+        const held = await this.proofHolds({ endpoint: pr.endpoint, verify: p.verify, invoice: p.invoice, paymentHash: p.paymentHash });
+        if (!held.ok) return refuse(`the donation recipient does not answer here: ${w.address} (no LUD-21 proof that it issued the plan's invoice: ${held.why})`);
+      }
       rows.push({ entryId: w.entryId, roundId: roundIdBytes, attempt: Number(p.attempt || 0), address: w.address, invoice: p.invoice,
         paymentHash: p.paymentHash, invoiceMsat: stands.invoiceMsat, payoutMsat: w.payout.msat, owedMsat: w.payout.owedMsat,
-        gatewayUrl: p.gatewayUrl, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!w.donation });
+        gatewayUrl: p.gatewayUrl, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!w.donation, ...(proven ? { verify: String(p.verify) } : {}) });
     }
     // THE KEPT PLAN GIVES WAY ONLY ONCE EVERY ROW OF THE NEW ONE STOOD HERE - never dropped for a plan that is then refused
     // (and while it was checked - the LNURL asks wait - the settlement may have been signed: replaceable is asked again)
@@ -513,7 +556,7 @@ export class WinningsSend {
     const out = largestPayoutMsat(fees, prev.payoutMsat - lnv2FeeMsat(fees, prev.payoutMsat));
     const invoiceMsat = sendableInvoiceMsat(out, gw.sendFeeDefault);
     if (invoiceMsat <= 0n) return refuse('the refunded winning does not cover the next gateway\'s fee');
-    const inv = await this.invoiceFor(prev.address, invoiceMsat);
+    const inv = await this.invoiceFor(prev.address, invoiceMsat, { proof: !!prev.donation && this.provesDonations(roundIdBytes) });   // kanban #3828
     if (!inv.ok) {
       // SAID WHOLE, ONCE PER CHANGE (kanban #1044): the proposer's sweep asks every pass
       const k = `${toHex(roundIdBytes)}:${entryHex}`;
@@ -522,7 +565,7 @@ export class WinningsSend {
     }
     const row = { entryId: prev.entryId, roundId: roundIdBytes, attempt: prev.attempt + 1, address: prev.address, invoice: inv.invoice,
       paymentHash: inv.paymentHash, invoiceMsat, payoutMsat: out, owedMsat: prev.owedMsat, gatewayUrl: gw.url, gatewayPk: gw.modulePublicKey,
-      expiration: proposedExpiration(g.height, gw), donation: !!prev.donation };
+      expiration: proposedExpiration(g.height, gw), donation: !!prev.donation, ...(inv.verify ? { verify: inv.verify } : {}) };
     this.round.putSendPlan({ ...row, why: prev.invoice ? `re-send proposed: attempt ${prev.attempt} expired unpaid through ${prev.gatewayUrl}`
       : 'a held donation share re-sent: the recipient answers' });
     // THE ROW THIS SEAT KEEPS IS THE ONE OFFERED (kanban #1241): another seat's attempt kept here first stands (or a lower one replaced it), and
@@ -582,9 +625,16 @@ export class WinningsSend {
     const stands = sendPlanStands({ plan: p, payoutMsat: out, gateways: this.resendGateways(roundIdBytes, String(p.entry), g.gateways, prev.attempt),
       height: g.height, metadata: pr.metadata, network: this.network, payee: pr.payee, payeeOf });
     if (!stands.ok) return refuse(`the re-send does not stand here: ${stands.why}`);
+    // kanban #3828: a donation re-send of a new-version round only on an invoice the address proves it issued, checked here
+    const proven = !!prev.donation && this.provesDonations(roundIdBytes);
+    if (proven) {
+      const held = await this.proofHolds({ endpoint: pr.endpoint, verify: p.verify, invoice: p.invoice, paymentHash: p.paymentHash });
+      if (!held.ok) return refuse(`no LUD-21 proof that the donation address issued the re-send's invoice: ${held.why}`);
+    }
+    const verify = proven ? String(p.verify) : '';
     this.round.putSendPlan({ entryId: prev.entryId, roundId: roundIdBytes, attempt: prev.attempt + 1, address: prev.address, invoice: p.invoice,
       paymentHash: p.paymentHash, invoiceMsat: stands.invoiceMsat, payoutMsat: out, owedMsat: prev.owedMsat, gatewayUrl: p.gatewayUrl,
-      gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation, why: `re-send checked here: attempt ${prev.attempt} expired (signed by seat ${String(from).slice(0, 16)})` });
+      gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation, verify, why: `re-send checked here: attempt ${prev.attempt} expired (signed by seat ${String(from).slice(0, 16)})` });
     // THE ROW THAT STANDS IS THE ANSWER: another seat's attempt N+1 kept a moment before is not this one, and this one is not taken
     let kept = this.rowOf(roundIdBytes, String(p.entry), prev.attempt + 1);
     // A LOWER RE-SEND REPLACES A KEPT ONE NOTHING WAS SIGNED ON YET (kanban #1241): the peers meet on the lowest hash any seat offered
@@ -595,7 +645,7 @@ export class WinningsSend {
       this.pairs.delete(`resend:${toHex(roundIdBytes)}:${String(p.entry)}:${prev.attempt + 1}`);
       this.noncePool.drop(`resend:${toHex(roundIdBytes)}:${String(p.entry)}:${prev.attempt + 1}`);
       this.round.replaceSendPlan({ roundId: roundIdBytes, entryId: prev.entryId, attempt: prev.attempt + 1, invoice: p.invoice, paymentHash: p.paymentHash,
-        invoiceMsat: stands.invoiceMsat, payoutMsat: out, gatewayUrl: p.gatewayUrl, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation,
+        invoiceMsat: stands.invoiceMsat, payoutMsat: out, gatewayUrl: p.gatewayUrl, gatewayPk: p.gatewayPk, expiration: BigInt(p.expiration), donation: !!prev.donation, verify,
         why: `re-send checked here: a lower attempt ${prev.attempt + 1} than the one kept (signed by seat ${String(from).slice(0, 16)})` });
       kept = this.rowOf(roundIdBytes, String(p.entry), prev.attempt + 1);
     }
