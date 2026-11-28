@@ -67,6 +67,8 @@ export const WITHHELD_SIG_MS = Number(process.env.ARENA_WITHHELD_SIG_MS || 30000
 /** The most rounds of a table one replacement is checked for entries (kanban #2083): a table of 15 s rounds plays 5,760 a day. */
 const TABLE_ENTRY_SCAN = 20000;
 /** How long after its start a table's first round without a certificate is still read, and joined late (kanban #803): its table plays all day. */
+/** Rounds read per statement by the seating agent's index (kanban #3904): never the whole table at once. */
+export const INDEX_PAGE = 1024;
 export const TABLE_LATE_MS = BigInt(process.env.ARENA_TABLE_LATE_MS || 24 * 3600000);
 /** A table's check-in (kanban #1020): the first round of the table in each of these periods of UTC time exchanges PRESENTs. */
 export const TABLE_CHECK_IN_MS = 900000n;
@@ -451,8 +453,14 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
   const heldChecked = new Set(); // anchor hex: a held round 0 already looked at for its certificates
   const tables = new Map();      // anchor hex -> { rid, start, askedMs }: the table's latest round held (kanban #1020)
   let lastRow = 0;
+  // PAGE BY PAGE (kanban #3904, a copy of Beelink seat 2's store on the MacBook): the first tick read every row of the rounds table in one
+  // .all() - 869,467 contracts, 858 MB of BLOBs, each its own malloc'd buffer, all alive together - so glibc's heap reached ~1.3 GB in the
+  // first minutes of every start and kept it for good (a seat at ~2.4 GB resident within 20 min), larger with every round stored.
+  // INDEX_PAGE rows a statement now; the rows and their order are the same.
   const index = () => {
-    for (const r of db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(lastRow)) {
+    for (let rows; !rows || rows.length === INDEX_PAGE;) {
+    rows = db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid LIMIT ?').all(lastRow, INDEX_PAGE);
+    for (const r of rows) {
       lastRow = r.rowid;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       if (typeof c.startTimeMs !== 'bigint') continue;
@@ -494,6 +502,7 @@ export function seatingAgent({ round, roster, sign, verify, fetcher = fetch, now
       }
       starts.set(toHex(new Uint8Array(r.round_id)), { rid: new Uint8Array(r.round_id), start: c.startTimeMs, close: seatingCloseMs(c, windowOf(c)), contract: c,
         tableFirst: !!(anchor && anchor.first), askedMs: -Infinity });
+    }
     }
   };
 
