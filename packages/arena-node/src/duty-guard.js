@@ -65,9 +65,14 @@ export const DUTY_DRAW_GRACE_MS = 45 * 60000;
 export const DUTY_DRAW_ALLOW_MS = 4 * HOUR;
 
 /** Each game's round shape for a day: its period and how long after a round's start its entries close. */
+// RPS EVERY 60 s, NOT EVERY 8 s (kanban #3915, owner 2026-11-28 "fewer rounds"): each table of a posted day was 10,800 rounds (8 s), written ~3 h
+// ahead (~1,350 open per table at every seat) and each seated, drawn and closed by every seat - while 7 rounds in 24 h had an entry. A day is now
+// 1,440 rounds per table. The entry window (80 s after a round's start) stays longer than the period, so a table always has an open round. This is
+// the duty poster's own choice of the grid it posts (the period is named in each series template and its id): no game config, nothing governed.
+export const RPS_DAY_PERIOD_MS = 60000;
 export function dayShape(game, periodMs) {
   if (game === 'nextblock') return { periodMs: 90000, entryAfterStartMs: 45000 };
-  if (game === 'rps') return { periodMs: 8000, entryAfterStartMs: 80000 };
+  if (game === 'rps') return { periodMs: RPS_DAY_PERIOD_MS, entryAfterStartMs: 80000 };
   if (game === 'updown') { const p = Number(periodMs); if (!(p > 0)) throw new Error('an Up/Down day needs its manifest\'s round period'); return { periodMs: p, entryAfterStartMs: 0 }; }
   throw new Error(`no day shape for ${game}`);
 }

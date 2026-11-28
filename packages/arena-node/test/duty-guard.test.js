@@ -216,7 +216,7 @@ test('an emergency grid: committee 2 h past the median, first start 140 min afte
   // the next day, asked in the afternoon before: the whole of it, nothing lost
   const next = { startMs: day.endMs, endMs: day.endMs + 24 * H };
   const q = emergencyPlan({ nowMs: Date.parse('2026-10-26T15:00:00Z'), mtpMs: Date.parse('2026-10-26T14:00:00Z'), day: next, shape: dayShape('rps') });
-  assert.deepEqual([q.firstStartMs, q.slots, q.lostMs, q.firstCloseMs - q.firstStartMs], [next.startMs, 10800, 0, 80000]);
+  assert.deepEqual([q.firstStartMs, q.slots, q.lostMs, q.firstCloseMs - q.firstStartMs], [next.startMs, 1440, 0, 80000]);   // kanban #3915: 60 s, was 10,800 slots of 8 s
   assert.equal(emergencyPlan({ nowMs: day.endMs - 60000, mtpMs: day.endMs, day, shape: dayShape('nextblock') }).ok, false);
 });
 
