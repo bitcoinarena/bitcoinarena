@@ -132,7 +132,8 @@ test('a seat that missed a batch certificate reads the other seats\' batches bef
       assert.equal(got.ok, false);
       assert.doesNotMatch(String(got.why), /no order filled/, 'a seat that heard no other seat said no order filled');
       assert.match(String(got.why), /^not yet: reading the other seats' batches - 1 of the 5 seats' certified batches heard here/); }
-    // AND A PEER THAT NEVER ANSWERS is waited for no longer than the read's timeout
+    // AND A PEER THAT NEVER ANSWERS is waited for no longer than the read's timeout (read once the failed round's wait passed, kanban #3914)
+    skipTo(testNow() + 31000);
     { const ob = lagging[0].orderBook, was = ob.fetcher, t = ob.syncTimeoutMs;
       ob.syncTimeoutMs = 300;
       ob.fetcher = async (u, opt) => (/\/book-certificates/.test(u) ? new Promise(() => {}) : was(u, opt));
@@ -159,6 +160,8 @@ test('a seat that missed a batch certificate reads the other seats\' batches bef
     // 6. WITH ITS PEERS HEARD: batch A taken through certify, the same book as the five, and one settlement built by all seven. The
     // lagging seat holds batch B and not A: its cursor is never its highest batch held - it was taken from no seat's list yet, so
     // every seat is asked for the whole list and A comes with it
+    // (the lagging seat's two failed reads above wait 60 s before it reads again, kanban #3914)
+    skipTo(testNow() + 61000);
     asks.length = 0;
     const unspyLag = spy(lagging[0].orderBook);
     const plans = await Promise.all(w.nodes.map((d) => d.settlements.message(w.rid)));
