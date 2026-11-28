@@ -9274,6 +9274,462 @@ more than 10 minutes ahead is refused.
 
 ---
 
+# 25A. The live site: nothing static, nothing on one machine *(SPEC 2026-11-28, owner's requirement for 2.0; not built)*
+
+> **Everything a player needs to find a game, enter a round and be paid works
+> without the developers and without any one machine.** The site is one
+> frontend among any number; it holds no list a node does not serve, and a
+> round exists because nodes posted it. This section removes what was still
+> static or single-machine on 2026-11-28 (audit of that day): the compiled
+> known-good table, the game client files on the site, the bootstrap file
+> `daily.json`, the three hardcoded duty apps and their shapes, the operator
+> runners and keepers, the one host in front of every seat, and the site's own
+> services.
+
+## 25A.1 The rule, stated once
+
+1. **No compiled list decides what is shown or playable.** Games, rounds,
+   nodes, gateways, federations and season tables are read live from the
+   nodes and checked against the chain census and the signatures they carry.
+   A page build contains code, the network's genesis (network id, bond marker,
+   a checkpoint header) and the frontend's own payout key - nothing else about
+   the network's state.
+2. **No act of the developers is needed for a round to exist.** Rounds are
+   posted by the nodes on duty (§5A.5) for every listed game; no runner,
+   keeper, cron job or funded-rounds file on a developer machine takes part.
+3. **Every outside service is a list, never one address.** Chain access,
+   relays, release channel and bootstrap hints each name several independent
+   sources and fall through on failure; a node operator's own Bitcoin node is
+   always a valid chain source.
+4. **The frontend is replaceable.** The site is a static bundle with no
+   server side. Every node serves the same bundle (§25A.7), so a player whose
+   usual site is gone opens any node's copy and plays.
+5. **The developer disappearance test (§32) is the acceptance test:** with
+   every developer machine and every developer domain switched off, a player
+   holding a node's address can list games, enter a paying round, play it,
+   and be paid; an operator can install, bond and be drawn.
+
+## 25A.2 Games: listed by the network
+
+- **The tile list** is `GET /games` of the census nodes, as built
+  (`fetchGames`): a game is kept only if `H(manifest) = id` and the developer
+  key signed it.
+- **Listed or unlisted replaces the compiled known-good table.** A game is
+  **listed** when the chain census shows it hosted (`hostedGames` in the
+  bonded advertisements) by at least **7 nodes** holding together at least
+  **34 %** of the census's bonded capital at the census height the page
+  verified. Both numbers are code constants of the client and the duty rule
+  (`GAME_LISTED_MIN_NODES`, `GAME_LISTED_MIN_BPS`). Nobody approves a game:
+  operators list it by hosting it.
+- A **listed** game takes stakes without a further question. An **unlisted**
+  game is shown apart, with its developer key and manifest id, and every
+  game type (replay, head-to-head, attested) takes a stake only after the
+  explicit confirmation of §0A.6. The outright refusal of an unknown replay
+  or head-to-head game ends.
+- **Everything a round needs comes from the signed manifest** the nodes
+  serve: cores, configs, shared-world configs, donation set, attestor keys
+  and threshold, fee, terms, period. The page keeps no second copy.
+- **No game is named in the page's code.** Title, icon, category, screen
+  orientation, whether older versions stay selectable, and how live counts
+  are summed are fields of the manifest's signed `info`. A game the page has
+  never heard of renders from its `info` alone. (Orange Pill Run is not a
+  network game; see §25A.8.)
+- **The game client is not on the site.** It is served by the round's hoster
+  (§25B). A new game, or a new version, is playable the moment enough nodes
+  host it - with no page build and no deploy.
+
+## 25A.3 Nodes: found from the chain, with hints from anyone
+
+- **The census is the list** (§25.1). The page verifies it against headers
+  from at least two independent chain sources, as built.
+- **Bootstrap hints replace `daily.json`.** A hint is an address that may be a
+  node; it is trusted for nothing. The page takes hints, in this order, until
+  it has reached nodes of at least **three different operators**:
+  1. the nodes it kept from its last visit (local storage);
+  2. `GET /bootstrap` of any node it can reach - that node's own census
+     endpoints, at most 64, newest advertisements first;
+  3. the hints compiled into the bundle at build time (at least 16 endpoints
+     of at least 5 operators, read from the census by the build - stale is
+     fine);
+  4. a bond-marker scan through the chain sources of §25A.6, which needs no
+     node at all.
+- **Nothing else rides the bootstrap.** Gateways come from each federation's
+  signed gateway seating (§23A), federations from their signed records, the
+  arbitration set from the census key's records (§5A.3B), exchange seats from
+  the round's committee. The frontend's payout key is in the bundle (it is
+  the frontend's own). Alternative routes (`testnet.alt`) end: a node is
+  reached at the endpoint its advertisement or address announcement (§25.3)
+  names, and at its hosting name (§25B.2).
+- **Address announcements are read by the page** (they were node-side only):
+  a newer signed announcement replaces the advertised endpoint until the
+  advertisement is updated.
+
+## 25A.4 Rounds: posted by the nodes, for every listed game
+
+- **The duty poster's game list is the listed games** (§25A.2), read from the
+  census at the duty day's census height - not `DUTY_APPS`. A game that
+  becomes listed on day d has rounds from day d + 2 (day d + 1 posts them).
+- **A game's round shapes are in its manifest.** A new signed manifest field,
+  the **duty template** (a trailing field with its own marker; a manifest
+  without it gets no duty rounds), names for each shape: kind (series, table
+  grid, market period), round and entry lengths, late join 0 or 45 s, players
+  per table, the stakes offered (each within the bracket table, §5A.10), and
+  how many a day. The poster writes exactly these; the hardcoded shapes, field
+  builders and `DUTY_TEMPLATE` values that are per game end. Network-wide
+  values (slots, threshold, bond minimum, protocol version) come from the
+  genesis and the node's build, as now.
+- **Posting needs coins, not a particular wallet.** A node posts when the
+  wallet it bonds from holds confirmed coins, whatever its chain source; the
+  rank order, the hourly fall-through and the backup ranks (§5A.5) decide who
+  posts. The publisher's fee back (§5A.5) repays it.
+- **On-demand tables are a duty too.** `POST /h2h-want` is taken by every
+  node; the node on duty for that slot (rank 1, then the next rank after 30 s)
+  publishes the table. No keeper answers it from one machine.
+- **A round is funded when its publication is confirmed** - for every round,
+  as it already is for a pulled series. The funded-rounds file ends.
+- **Retired with this section:** the six runner processes
+  (`run-testnet4-paid.mjs`), `testnet4-series.mjs`, `rps-grid-post.mjs`,
+  `market-series.mjs`, `duty-nextblock.mjs` as production tools (they stay as
+  test tools), and the free Daily on a private 2-of-2. A free round is a
+  round of the network with stake 0, posted by duty like any other.
+
+## 25A.5 Seats, guardians, attestors: no shared host
+
+- **Every node is reached at its own address.** No seat or guardian is
+  reached through a host of the developers or through a host it shares with
+  another operator's node. (On testnet4 both federations' fourteen seats were
+  behind one host on 2026-11-28; that ends with 2.0.)
+- **The page counts operators, not addresses.** Before a paying entry it
+  already shows how many operators a committee has (`operator_id`, §31). From
+  2.0 it also groups nodes by the host they are reached at, and says so when
+  one host answers for more than `f` seats of a committee.
+- **Attestors find seats from the census.** An attestor daemon takes its
+  seats and peers from the chain census of the rounds it attests, not from a
+  list given at start; its keys stay pinned by the game's manifest.
+
+## 25A.6 Outside services are lists
+
+| service | sources | rule |
+|---|---|---|
+| chain (headers, transactions, broadcast, bond-marker scan) | the operator's own Bitcoin node; at least three public Esplora/Electrum providers of different operators; any census node's `GET /headers` | page and installer need two agreeing sources for headers; broadcast goes to all; no source of the developers is required |
+| Nostr relays (results, zaps, badges) | at least three, of different operators | publish to all, read from any |
+| release channel | the release's signed manifest from the site, from the source repository, and from any node's `GET /release/latest.json` | a release is taken on its signature (the release key), never on where it came from |
+| price sources | as built: several venues per attestor and per seat | unchanged |
+| faucet (test networks only) | any | a convenience; nothing in a round depends on it |
+
+The installer's chain bridge, chain test and faucet addresses become lists
+of this table; one address of the developers may be in a list and may never
+be the only entry.
+
+## 25A.7 The frontend bundle is served by every node
+
+- Every node serves the reference frontend at `GET /app/` (the bundle's
+  files, content-addressed), taken with a release and checked against the
+  release's signed file list. A node may serve another frontend beside it.
+- A frontend is **an origin that holds the player's seed** (§24). It is paid
+  by `frontend_pk` (§0A.8) and nothing else; a node serving `/app/` names its
+  own payout key there.
+- The developers' site is the reference frontend at a well-known name. It
+  has no rights a copy lacks.
+
+## 25A.8 What stays with a frontend, and what is not the network's
+
+- **With the frontend, by design (§24B):** navigation, the lobby, the
+  wallet, deposit, withdraw, move, settings, the seed screens, entry and
+  stake, results and payouts. None of it is in a game (§25B.4).
+- **Season tables, badges, leaderboards** are read from the nodes
+  (`GET /season?scope=network`, merged by the client as built), not from a
+  site API.
+- **Not part of the network, and to be said so on the page:** analytics, the
+  explorer's marks, the night switch, feedback. They may fail without any
+  effect on a round.
+- **Orange Pill Run** is a game whose rounds are run by one service of the
+  developers. Under this section and §25B it is either ported to a network
+  game (rounds by committees, hosted by nodes) or shown apart, labelled as
+  operated by its service's operator and outside the "operated by" notice.
+  It must not be shown as a round of the network while one service runs it.
+
+## 25A.9 Order of work and acceptance
+
+1. Manifest: signed `info` fields and the duty template (new manifest
+   versions of every game; new ids).
+2. Client: listed/unlisted from the census; bootstrap hints; address
+   announcements; no game names; season from nodes.
+3. Node: `GET /bootstrap`, `GET /app/`, `GET /release/latest.json`; the duty
+   poster from the catalog and the templates; `/h2h-want` by duty; attestor
+   seat discovery.
+4. Installer: source lists.
+5. Operations: every seat at its own address; runners and keepers stopped.
+
+**Accepted when** the §25A.1 (5) test passes on testnet4 with the developers'
+site, tunnel host, runners and chain bridge switched off for 24 hours: games
+listed, duty rounds of every listed game posted and played, a paid round of
+each game settled and paid out, one new node installed and drawn.
+
+---
+
+# 25B. Rounds are hosted by their nodes *(SPEC 2026-11-28, owner's requirement for 2.0; not built)*
+
+> **A round's game is served to the player by a node of that round, at that
+> node's own name, by a real navigation of the browser.** The frontend keeps
+> the lobby and everything about money; it does not serve, frame or proxy a
+> round. Before every round the player is told who operates and who hosts
+> it. The purpose is that anyone - a player, an operator, a regulator - can
+> see from the address bar and from the network that the developers do not
+> run the round.
+
+## 25B.1 Two roles in the notice
+
+- **Operated by:** the round's drawn committee - 7 nodes, of which 5 sign
+  every result (§5A.7).
+- **Hosted by:** the one node of that committee that serves the game client
+  to this player, at its hosting name.
+
+The notice, shown by the frontend on its own page for at least 2 seconds
+before it navigates (and skippable after that), and again as a line on the
+result page:
+
+```text
+This round is operated by nodes 3f2a91bc, 91bc07d2, a07e5512, c4d1e9a0,
+5e88b3f1, 0b9f6c44, d612aa08 (5 of 7 sign every result)
+and hosted by node 91bc07d2 at node91bc07d2e41c5a.bitcoinarena.io.
+```
+
+- Node ids are the first 8 hex characters of the node key the page verified
+  in the census; a tap shows the full key, the node's `operator_id` and its
+  bond. The list is the page's own verified draw, never the hoster's word.
+- **At the start:** all seven drawn nodes. **On the result page:** the nodes
+  whose signatures the result carries, and every hoster the player was sent
+  to in that round.
+- **The line "The developers of Bitcoin Arena do not operate or host this
+  round" is shown only when it is true:** when no node of the committee
+  declares an `operator_id` of the frontend's own operator (the frontend
+  names its operator ids in its bundle). Where a developer-run node sits on
+  the committee, the notice names it as such instead. The notice never
+  claims more than the page verified.
+
+## 25B.2 The hosting name
+
+- **Form:** `node` + the first 16 hex characters of the node key + `.` + the
+  frontend's hosting zone, e.g. `node91bc07d2e41c5a.bitcoinarena.io`. The
+  label is computed by the page from the verified key; nobody chooses it.
+- **It resolves to the node itself.** The record is an A/AAAA record to the
+  node's address, or a CNAME to a name of the operator's own. The zone's
+  owner serves no byte of the round: no proxy, no tunnel, no CDN in front
+  (records are never proxied). TLS for the name ends at the node.
+- **The record is written on the node's own signed request,** automatically:
+  `PUT /name` at the zone's name service with `(label, target, time)` signed
+  by the node key whose prefix is the label; the service checks the
+  signature, that the key is bonded in the census, and nothing else. No
+  approval, no review. Changes are limited to one an hour; a record of a key
+  that left the census for 30 days is removed.
+- **The node obtains its own certificate** for the name (ACME HTTP-01 or
+  TLS-ALPN-01, built into the node). The zone carries a CAA record for the
+  certificate authorities used. (The zone is to be on the Public Suffix List
+  or the names placed under a dedicated zone: otherwise the authorities' per
+  domain limits bind the whole network, and one node's page could set a
+  cookie for the site's domain. Until then: the frontend uses no cookies at
+  all and reads none.)
+- **The name is an alias, not an authority.** A node is equally the hoster at
+  the endpoint of its own advertisement. A frontend without a hosting zone,
+  or after the zone is gone, navigates to that endpoint instead; the round is
+  the same. What identifies the hoster is its key (`GET /identity`, a nonce
+  signed by the node key), checked by the frontend before every navigation -
+  never the name.
+- A node that cannot be reached directly on port 443 at its own address
+  (tunnels that end TLS elsewhere, shared hosts) cannot host. Hosting is part
+  of the roles (§25B.6), so such a node is not drawn.
+
+## 25B.3 What a node serves
+
+- `GET /play/<round_id>` - the game client of the round's game: the one HTML
+  file whose SHA-256 is in the manifest's `clients[]`, byte for byte, with a
+  fixed set of response headers (a strict content security policy that
+  allows scripts and connections only to the node itself and to the round's
+  committee endpoints; no cookies).
+- `GET /asset/<sha256>` - every other file a client needs (scripts, WebGL
+  builds, images, sounds), content-addressed. A client loads further files
+  only by hash (subresource integrity or a hash-checked fetch), so pinning
+  the one HTML file pins everything. A game package (`arena-plugin/v2`)
+  carries these assets beside its clients; a node hosts a game only with all
+  of them. (Next Block's WebGL build becomes such a client; it no longer runs
+  inside the frontend's page.)
+- `GET /hosting/ready?round=<id>&nonce=<n>` - answers, signed by the node
+  key: round id, game id, the client hash it will serve, the nonce, its time.
+  A node answers only for a round it sits on and whose client it holds.
+- Every committee node holds the client of every round it sits on from the
+  moment it is drawn. Rank 1 hosts; **ranks 2 and 3 are the named backup
+  hosters** and the remaining four follow in rank order. All seven serve the
+  same bytes at their own names.
+
+## 25B.4 Money never leaves the frontend
+
+- **The seed, the wallet databases, the identity key and every signing of an
+  entry, lock, order, withdrawal or payment stay on the frontend's origin.**
+  A hosting name is a different origin: the browser gives it none of the
+  frontend's storage. The game is never framed by the frontend and never
+  runs in its origin (the same-origin blob frame and the `window.parent`
+  bridge end; §24's "the wallet seed never enters the game" becomes a fact of
+  the browser, not a convention).
+- **Entry happens before the navigation.** The player enters and stakes in
+  the lobby; the frontend builds and signs the entry and its locks as today.
+- **The handoff.** The frontend navigates to
+  `https://<hosting name>/play/<round_id>#<handoff>`. The handoff is in the
+  fragment (never sent to a server) and holds: round id, entry id, game id,
+  the client hash expected, the entry's **session key** (the key that signs
+  this entry's play frames, §11, and nothing else), the committee's verified
+  keys and endpoints, the player's display name, the hoster's rank, an expiry
+  (the round's end), and the frontend's return address. It holds no seed, no
+  wallet key, no identity key and no note.
+- **What the session key can do is all a hoster can ever take:** play, or
+  spoil, this one entry. It cannot move a sat. A hoster that serves a false
+  client can at worst lose the player that entry's stake; §25B.7 makes that
+  provable and costly.
+- **Money acts during a round** (a market order, a second stake, a top-up) are
+  requests to the frontend: the game opens the frontend's confirmation page
+  (a window of the frontend's origin, addressed with an origin check), which
+  shows what is asked in the frontend's own words and signs only on the
+  player's confirmation. A standing allowance for a round is the mechanism of
+  §24A and is granted in the lobby, before the navigation. A game can never
+  pay an invoice or sign as the player's identity without that page.
+- **The way back.** At the round's end, or when the player leaves, the game
+  navigates to the frontend's return address with the round id. The frontend
+  reads the result from the committee's signed records - never from anything
+  the hoster or the game says.
+- **The frontend says where the player is going and what is never asked
+  there:** "You are leaving <frontend> for a node of this round. A node never
+  asks for your recovery words."
+
+## 25B.5 Who hosts, and what happens when the hoster fails
+
+- **Rank.** The round's hosters are its committee in ascending order of
+  `H("ARENA/v1/Hoster" || round_id || node_pubkey)`. Anyone computes it from
+  the draw; nobody chooses. A table's rounds use the table's anchor round.
+- **Before the navigation** the frontend asks rank 1 for `/hosting/ready`
+  and `/identity`. An answer that is late (more than 2 s), unsigned, for
+  another client hash, or under another key, sends it to rank 2, then 3, and
+  on through all seven. It navigates to the first that stands and names that
+  node in the notice.
+- **If the navigation itself fails** (the name does not resolve, the page
+  does not load): the frontend kept, before navigating, that the player is in
+  this round and at which rank. When the player comes back to it - by the
+  browser's back button, or by opening the site - it sends them to the next
+  rank at once, without a question, and says "Hoster <id> did not answer;
+  now hosted by <id>".
+- **If the hoster fails during the round:** the game client already sends
+  every play frame to all seven seats (§11), not to the hoster. A loaded
+  client therefore plays on with the hoster gone. If it needs the hoster
+  again (an asset, a reload) and it does not answer within 3 s, the client
+  navigates to the next rank's `/play/<round_id>` with the same handoff; that
+  node serves the same bytes and the run resumes from the transcript the
+  seats hold (`GET /transcript`), on the round clock (§5A.5).
+- **Never back to the frontend's servers.** If no node of the committee
+  hosts, the round is not played through the site: the entry meets its start
+  deadline or it does not (§15, §16), and the outage rules decide. The
+  frontend shows that plainly.
+- Time spent finding a hoster is the player's run time on the round clock;
+  the probes are therefore short and the backups are warm.
+
+## 25B.6 Hosting is part of the roles
+
+- **There is no hoster role and no hoster fee.** Serving the round's client
+  is a duty of every drawn node, paid by the node fee it already earns. A
+  node that cannot host holds no verify or settlement seat.
+- **Hosting standing is an eligibility rule of the draw** (§5A.4), beside
+  bond, maturity and presence: a node is drawn for a round only if it holds
+  hosting standing at the round's census height. From its protocol version on
+  every seat and every page applies it; earlier rounds are drawn as before.
+- **Standing is earned by the daily hosting test** and carried the way
+  presence is (§5A.3): for each node and day, nine probers are drawn from the
+  census by VRF, as for the heartbeat; each tests the node in its own slot of
+  the day and signs a `HOSTING_ATTEST { node, day, prober, passed, at }`;
+  the day's duty posting commits the root of the nodes **without** standing,
+  and the draw of the next day leaves them out. A node has standing for day
+  d + 1 when at least **5 of its 9** probers attest a pass for day d. A new
+  node is tested on its first day in the census and is drawable the day
+  after.
+- **The test, as each prober runs it** against the node's hosting name and
+  its advertised endpoint:
+  1. the name resolves to the node, TLS is valid for it, `/identity` proves
+     the node key;
+  2. time to first byte of `/hosting/ready` at most **1 s**;
+  3. **bandwidth:** 16 MiB of bytes the prober names by seed (so no cache can
+     answer) from `GET /hosting/probe?seed=&n=` at **20 Mbit/s or more**
+     (the download completes in 6.4 s);
+  4. **the right bytes:** the client of one game the node advertises, chosen
+     by the prober, hashes to the manifest's `clients[]`, and three of its
+     assets hash to their names.
+  A prober that itself has no standing does not count. The numbers are code
+  constants (`HOSTING_PROBE_BYTES`, `HOSTING_MIN_MBPS`, `HOSTING_TTFB_MS`,
+  `HOSTING_PROBERS`, `HOSTING_PASSES`), changed like any other (§27A).
+- **A hoster that fails in a round** is reported by the round itself: each
+  seat probes the round's rank 1 to 3 during the entry window; when five
+  seats sign that a ranked node did not answer, that node loses standing from
+  the next day until it passes a test again, and the miss counts toward its
+  stall record exactly as a missed duty does (§5A.3). It keeps its fee for
+  what it signed.
+
+## 25B.7 A false client is provable
+
+A browser cannot check a page it navigates to; so serving is made
+accountable instead.
+
+- Every `/play` and `/asset` answer carries a header with the node's
+  signature over `(round id or asset hash, SHA-256 of the body, time)`.
+- Probers (§25B.6), the other seats of the round, and any client that
+  chooses to, fetch `/play/<round_id>` as a browser would and compare. **A
+  signed answer whose body does not hash into the manifest is a complete,
+  portable proof** - like two signed checkpoints (§13B) - and slashes the
+  node's bond under the slash-proof tag, with its own type byte.
+- An answer without the signature is a failed probe. A node that serves the
+  right bytes to probers and others to players is caught by any player's
+  client that keeps what it was served: the reference client, once loaded,
+  checks its own page's bytes against the handoff's client hash and reports
+  a mismatch to the seats with the signed header.
+- Stated plainly: a dishonest hoster can still try. What it can gain is one
+  entry's play; what it risks is its bond and its seat. The seed is out of
+  its reach by construction.
+
+## 25B.8 What changes for an operator, a game developer, a frontend
+
+- **Operator:** a publicly reachable address on port 443, a certificate for
+  the hosting name (automatic), bandwidth for the test. A node behind a
+  shared host or a third party's tunnel must move to a direct address or it
+  is no longer drawn.
+- **Game developer:** the client is one pinned HTML file plus
+  content-addressed assets, runs top-level on a node's origin, talks to the
+  seats directly and to the frontend only for money, and must run from a
+  handoff alone. The `window.parent.ARENA_GAME` bridge ends; its calls split
+  into what the session key can do (in the client) and what needs the
+  frontend (the confirmation page).
+- **Frontend:** lobby, notice, handoff, confirmation page, return, results.
+  It may run a hosting zone; it serves no round.
+
+## 25B.9 Order of work and acceptance
+
+1. Node: `/play`, `/asset`, `/hosting/ready`, `/hosting/probe`, signed
+   serving headers, ACME for the hosting name, package v2 with assets.
+2. Zone: the name service, CAA, the public-suffix question settled.
+3. Client: handoff, hoster rank, probes and failover, notice, return, the
+   confirmation page; the same-origin frame removed.
+4. Games: each game's client as a hosted client (Rock Paper Scissors, Up or
+   Down, Next Block).
+5. Protocol: `HOSTING_ATTEST`, the daily test, the no-standing root in the
+   duty posting, the draw filter, the false-client slash proof - one protocol
+   version.
+6. Operations: every testnet4 node at its own address with a passing test.
+
+**Accepted when,** on testnet4: a round of each game is entered on the site,
+played at a node's hosting name and returned; the address bar shows the
+node's name for the whole run; with rank 1 switched off before the
+navigation the player is sent to rank 2 within 3 s; with rank 1 switched off
+mid-round the run completes and settles; a node below the bandwidth floor is
+not drawn the next day; a node serving a changed client is slashed on the
+proof; and the seed is unreadable from the game's page (checked in a real
+browser).
+
+---
+
 # 26. Reference client experience
 
 ```text
