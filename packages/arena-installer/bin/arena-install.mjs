@@ -17,7 +17,7 @@
 // --port       the wizard's local port (127.0.0.1 only)
 // --seat-port  the node's port for connections from outside (8470, ruling 7)
 // --home       where the node lives (ARENA_HOME; ~/.bitcoinarena by default, ~/.arena-node for a node installed before 2026.1.9.8)
-// --update     update this node to a downloaded release: SHA256SUMS and SHA256SUMS.sig beside the asset are checked against the Arena
+// --update     update this node to a downloaded release: SHA256SUMS, SHA256SUMS.sigs (2 of 3 keys) and SHA256SUMS.sig beside the asset are checked against the Arena
 //              release key, the asset unpacked into <home>/releases/, the node backed up, moved and checked - rolled back if it fails
 // --add-bond   add <sats> to the bond as a second bond output beside the first, counted with it (the default way to raise a bond,
 //              add-bond.js). Without --yes it only shows the plan.
@@ -140,20 +140,25 @@ if (args.includes('--update-self')) {
 // AN UPDATE: checked, unpacked beside the running release, the node moved to it (update.js)
 if (args.includes('--update')) {
   const { updateNode } = await import('../src/update.js');
-  const { checkAsset } = await import('../src/release-verify.js');
-  const { readFileSync, mkdirSync, existsSync } = await import('node:fs');
+  const { checkAsset, keptKeyset, keepKeyset } = await import('../src/release-verify.js');
+  const { readFileSync, mkdirSync, existsSync, readdirSync } = await import('node:fs');
   const { execFileSync } = await import('node:child_process');
   const asset = resolve(opt('--update', ''));
   const at = dirname(asset);
   let sums, sig;
   try { sums = readFileSync(`${at}/SHA256SUMS`); sig = readFileSync(`${at}/SHA256SUMS.sig`, 'utf8'); }
   catch { console.error(`SHA256SUMS and SHA256SUMS.sig belong beside ${asset} (download them from the same release)`); process.exit(2); }
+  // 2-of-3 (kanban #3920): SHA256SUMS.sigs and any key-set change files (KEYSET-<seq>.json) beside it
+  let sigs = '';
+  try { sigs = readFileSync(`${at}/SHA256SUMS.sigs`, 'utf8'); } catch { /* only SHA256SUMS.sig: one key, refused below */ }
+  const keysets = readdirSync(at).filter((f) => /^KEYSET-\d+\.json$/.test(f)).map((f) => { try { return JSON.parse(readFileSync(`${at}/${f}`, 'utf8')); } catch { return null; } }).filter(Boolean);
   const { progressBar, within } = await import('../src/update-progress.js');
   const bar = progressBar({ tty: !!process.stdout.isTTY });
   bar.report({ pct: 0, step: 'Checking the signature' });
-  const c = checkAsset({ file: asset, sums, sig });
-  log.tag('update').verbose(`${asset}: SHA256SUMS and its signature beside it against the Arena release key: ${c.ok ? 'ok' : c.why}`);
+  const c = checkAsset({ file: asset, sums, sig, sigs, keysets, trusted: keptKeyset(home) });
+  log.tag('update').verbose(`${asset}: SHA256SUMS and its signatures beside it against the Arena release keys: ${c.ok ? `ok (${c.keys.length} keys)` : c.why}`);
   if (!c.ok) { bar.report({ failed: true, pct: 0, step: 'Checking the signature', why: c.why }); console.error(`Refused: ${c.why}`); process.exit(2); }
+  keepKeyset(home, c.keyset);
   const name = asset.split(/[\\/]/).pop().replace(/\.(tar\.gz|zip)$/, '');
   const dir = `${home}/releases`;
   mkdirSync(dir, { recursive: true });

@@ -3,7 +3,7 @@ name: node release
 # THE ARENA NODE ON GITHUB RELEASES (Linux, macOS, Windows). A tag v<version> builds every asset with the same script
 # (tools/release/build-linux.sh), tests the installer and the seat doors it uses, installs each asset fresh and checks it runs,
 # and drafts the release with the assets and SHA256SUMS. The draft is signed outside CI with the Arena release key
-# (tools/release/sign.sh, ruling 6: the key never sits in CI) and then published; the installer refuses unsigned assets.
+# (2 of 3 release keys, tools/release/sign-part.mjs + combine-sigs.mjs, kanban #3920; no key ever sits in CI) and then published; the installer refuses unsigned assets.
 
 on:
   push:
@@ -251,5 +251,5 @@ jobs:
         run: |
           cat assets/SHA256SUMS assets/SHA256SUMS.packages assets/SHA256SUMS.packages-mac | sort -k2 > SHA256SUMS
           gh release create "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft --title "Arena node ${{ github.ref_name }}" \
-            --notes "Testnet4 only. Windows: ArenaNodeSetup-*.exe. macOS: ArenaNode-*.dmg (drag Arena Node to Applications; the first time right-click > Open). Linux: arena-node_*.deb (then Arena Node in the menu, or arena-node-setup). Or download the asset for your machine, unpack it, run ./arena-install and open the link it prints (add --tunnel on a remote machine). SHA256SUMS is signed with the Arena release key (SHA256SUMS.sig), published at https://testnet.bitcoinarena.io/release-key.txt." \
+            --notes "Testnet4 only. Windows: ArenaNodeSetup-*.exe. macOS: ArenaNode-*.dmg (drag Arena Node to Applications; the first time right-click > Open). Linux: arena-node_*.deb (then Arena Node in the menu, or arena-node-setup). Or download the asset for your machine, unpack it, run ./arena-install and open the link it prints (add --tunnel on a remote machine). SHA256SUMS is signed by 2 of the 3 Arena release keys (SHA256SUMS.sigs; key 1 also in SHA256SUMS.sig, published at https://testnet.bitcoinarena.io/release-key.txt)." \
             assets/*.tar.gz assets/*.zip assets/*.exe assets/*.deb assets/*.dmg SHA256SUMS
