@@ -204,6 +204,13 @@ async function censusKey0() {
   say({ step: 'census key 0', key: genesis.publicKey.slice(0, 16), holders: 'nodes 1..4', threshold: 3 });
 }
 
+/** An audit-only node's dissent file on a slashing devnet (test-dissent.js `blind`, kanban #3901): empty, nothing armed. */
+function auditorDissent(k) {
+  const f = path('census', `dissent-auditor-${k + 1}.txt`);
+  mkdirSync(path('census'), { recursive: true });
+  if (!existsSync(f)) writeFileSync(f, '');
+  return f;
+}
 function startNode(k, { invite, apps, extra = {} }) {
   const port = PLAN.nodes[k], client = path('clients', `node-${k + 1}`);
   mkdirSync(client, { recursive: true });
@@ -319,7 +326,7 @@ async function up() {
       ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
       // ON A DEVNET THAT SLASHES, CENSUS KEY 0 AS THE SEVEN HAVE IT (kanban #3896, measured 2026-11-27: without it each auditor derived another census root at
       // the round's height - it counts no template-3 bond - and refused every paid round "that round names census root ... and the chain gives ...")
-      ...(SLASH ? { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', 'key0.json') } : {}) }) });
+      ...(SLASH ? { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', 'key0.json'), ARENA_TEST_DISSENT_FILE: auditorDissent(k) } : {}) }) });
   }
   for (const [k, port] of PLAN.auditors.entries()) {
     for (let i = 0; ; i++) {

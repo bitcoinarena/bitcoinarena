@@ -77,3 +77,17 @@ const lateNamed = () => {
 };
 export const LATE_POSTING_AFTER_MS = 10000n;
 export const postsLateOn = (entryIdBytes) => { const n = lateNamed(); return n !== null && !!entryIdBytes && hex(entryIdBytes) === n; };
+
+// AND AN AUDITOR THAT VOUCHES WITHOUT LOOKING (kanban #3901: the devnet's contradicted AUDIT, §13A.1 AUDIT_CONTRADICTED). The file's first line `<entry hex> blind`: this node,
+// as an auditor, counts its replay of that entry as the run its committee signed, and so signs an AUDIT over whatever the committee signed. With the seats switched to sign
+// that entry FAILED (`fail`) and switched back before the objection, the honest re-run contradicts the result the AUDIT vouched for. Regtest harnesses only, off by default.
+let blindAt = 0, blindFromFile = false;
+const blindNamed = () => {
+  if (!file) return false;
+  if (Date.now() - blindAt > 2000) {
+    blindAt = Date.now();
+    try { blindFromFile = /^\s*[0-9a-f]{64}\s+blind\b/i.test(readFileSync(file, 'utf8').split('\n')[0]); } catch { blindFromFile = false; }
+  }
+  return blindFromFile;
+};
+export const auditsBlindOn = (entryIdBytes) => dissentsOn(entryIdBytes) && blindNamed();
