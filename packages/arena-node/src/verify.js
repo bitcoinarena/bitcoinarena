@@ -1048,6 +1048,13 @@ export class Verifier {
     // nobody and is signed VOID - its reveal cannot change the seated players' verdicts. Its stake SEEN, not only its stake lock waiting for its
     // fee lock (kanban #1544): the settlement counts only a seen stake, so an unseen one played was a stake never at risk
     let seated = new Set((typeof this.round.seatedEntriesOf === 'function' ? this.round.seatedEntriesOf(roundIdBytes, contract.stakeMsat, { played: true }) : entries).map(({ entryId }) => hex(entryId)));
+    // A ROUND NOBODY ENTERED HERE ASKS NO PEER (kanban #3915, owner 2026-11-28; measured on the live Beelink seats: 35-65 requests/s each, GET /lock-set
+    // 11.5/s and GET /names 12/s of seat 1's, nearly all for the RPS grid's empty rounds): with no entry held there is no verdict to sign - the map below
+    // is over `entries` - yet the decide pulled every peer's lock set every LOCK_SET_PULL_MS until the window closed, carried names and reveals and kept an
+    // empty decision row. Now it returns at once. The lock set itself is untouched: a peer with an entry still steps this seat through GET / POST /lock-set
+    // (server.js), so its view, signature and certificate are made as before; an entry that reaches this seat after its close is decided by its retry
+    // (retryClose / the finality watch, `only`), which finds no stored decision and settles the certified set then.
+    if (!entries.length) return [];
     // ONE DECISION PER ROUND, NOT ONE PER RETRY (kanban #2625, state audit 2026-11-13 sm1-find-h2h 3): a retry signs only its entry (#1586), but
     // decided again from its OWN /reveals pull - past the result window (#1589 waits only until then) the watch retried A while the peer holding
     // B's reveal was silent (A the lone revealer, WIN, signed) and B a moment later when it answered (paper beats rock, B WIN, signed): one seat,
@@ -1230,6 +1237,8 @@ export class Verifier {
     try { closeMs = Number(decodeRoundContract(new Uint8Array(this.round.get(roundIdBytes).contract)).entryCloseMs); } catch { closeMs = null; }
     const list = entries || this.round.entriesOf(roundIdBytes);
     const players = new Set(list.filter((e) => e.entry && e.entry.playerPubkey instanceof Uint8Array).map((e) => hex(e.entry.playerPubkey)));
+    // kanban #3915: no player held, no record could be taken (check() refuses one naming no player of the round): no peer is asked
+    if (!players.size) return;
     // what the door would have taken, of a record and its consent: { rec, sig, consented }, or null
     const check = (bytes, sig, identitySig) => {
       const rec = decodeLobbyName(bytes);
