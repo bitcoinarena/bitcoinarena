@@ -10,6 +10,7 @@
 //   base + 3             the page server, only when DEVNET_PAGE_DIR names a built page
 //   base + 5             the runner's control door (GET /state, POST /open-free), 127.0.0.1 only
 //   base + 6, + 7        bitcoind's ZMQ block and transaction feeds, for the lnds
+//   base + 9             the arbitration set's service (DEVNET_ARBITER=1, kanban #3901): its claims door and MuSig doors, 127.0.0.1 only
 //   base + 8             the LNURL door a proposal's payout asks for an invoice (devnet.mjs liquidity), 127.0.0.1 only
 //   base + 10 .. 12      lnd A (rpc, p2p, rest), base + 20 .. 22 lnd B
 //   base + 30 .. 32      gateway A on lnd A (api, iroh, metrics), base + 40 .. 42 gateway B on lnd B: the two gateways of
@@ -59,16 +60,22 @@ export function devnetPorts(base = 24000) {
   const gateway = (o) => ({ api: b + o, iroh: b + o + 1, metrics: b + o + 2 });
   // AUDIT-ONLY NODES (kanban #1412: the head-to-head audit measured with six auditors outside the seven): DEVNET_AUDITORS of them, from base + 300
   const auditors = Array.from({ length: Math.max(0, Math.min(9, Number(process.env.DEVNET_AUDITORS || 0))) }, (_, k) => b + 300 + 10 * k);
-  const plan = { base: b, rpc: b + 1, p2p: b + 2, page: b + 3, control: b + 5, zmqBlock: b + 6, zmqTx: b + 7, lnurl: b + 8,
-    lnd: { a: lnd(10), b: lnd(20), c: lnd(50) }, gateway: { a: gateway(30), b: gateway(40) }, nodes, guardians, auditors };
+  // A SECOND FEDERATION (DEVNET_FED2=1, kanban #3901: the one a liquidation halts while the first stays the safe one its carriers pay into): four guardian
+  // nodes of their own from base + 400, each with its guardian at node + 1000 .. 4000, 3 of 4
+  const fed2 = process.env.DEVNET_FED2 === '1' ? Array.from({ length: 4 }, (_, k) => b + 400 + 10 * k) : [];
+  const fed2Guardians = fed2.map((p) => ({ api: p + 1000, p2p: p + 2000, ui: p + 3000, metrics: p + 4000 }));
+  const plan = { base: b, rpc: b + 1, p2p: b + 2, page: b + 3, control: b + 5, zmqBlock: b + 6, zmqTx: b + 7, lnurl: b + 8, arbiter: b + 9,
+    lnd: { a: lnd(10), b: lnd(20), c: lnd(50) }, gateway: { a: gateway(30), b: gateway(40) }, nodes, guardians, auditors, fed2, fed2Guardians };
   const all = [
     { port: plan.rpc, what: 'bitcoind rpc' }, { port: plan.p2p, what: 'bitcoind p2p' },
     { port: plan.zmqBlock, what: 'bitcoind zmq blocks' }, { port: plan.zmqTx, what: 'bitcoind zmq transactions' },
     { port: plan.page, what: 'page' }, { port: plan.control, what: 'runner control' }, { port: plan.lnurl, what: 'lnurl door' },
+    ...(process.env.DEVNET_ARBITER === '1' ? [{ port: plan.arbiter, what: 'arbiter' }] : []),
     ...Object.entries(plan.lnd.c).map(([role, port]) => ({ port, what: `lnd c ${role}` })),
     ...['a', 'b'].flatMap((x) => [...Object.entries(plan.lnd[x]).map(([role, port]) => ({ port, what: `lnd ${x} ${role}` })),
       ...Object.entries(plan.gateway[x]).map(([role, port]) => ({ port, what: `gateway ${x} ${role}` }))]),
     ...auditors.map((p, k) => ({ port: p, what: `auditor ${k + 1}` })),
+    ...fed2.flatMap((p, k) => [{ port: p, what: `fed2 node ${k + 1}` }, ...Object.entries(fed2Guardians[k]).map(([role, port]) => ({ port, what: `fed2 node ${k + 1} guardian ${role}` }))]),
     ...nodes.flatMap((p, k) => [{ port: p, what: `node ${k + 1}` },
       ...Object.entries(guardians[k]).map(([role, port]) => ({ port, what: `node ${k + 1} guardian ${role}` }))]),
   ];
@@ -139,9 +146,12 @@ export function portsOfPart(plan, name) {
   if (name === 'runner') return [plan.control];
   if (name === 'page') return [plan.page];
   if (name === 'lnurl') return [plan.lnurl];
+  if (name === 'arbiter') return [plan.arbiter];
   // the audit-only nodes (kanban #1412): a running one's port is this devnet's, so `up` on it again starts only what is down
   const au = /^auditor-(\d)$/.exec(name);
   if (au) return plan.auditors && plan.auditors[Number(au[1]) - 1] ? [plan.auditors[Number(au[1]) - 1]] : [];
+  const f2 = /^fed2-(\d)$/.exec(name);
+  if (f2) { const i = Number(f2[1]) - 1; return plan.fed2 && plan.fed2[i] ? [plan.fed2[i], ...Object.values(plan.fed2Guardians[i])] : []; }
   const k = /^node-(\d)$/.exec(name);
   if (k && Number(k[1]) >= 1 && Number(k[1]) <= NODE_COUNT) {
     const i = Number(k[1]) - 1;
