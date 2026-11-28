@@ -304,7 +304,10 @@ async function up() {
       ARENA_APPS: apps.join(','), ARENA_DONATION_NETWORK: 'regtest', [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`,
       // THE ROUNDS IT MAY HOLD, AS THE SEVEN READ THEM (measured 2026-11-10 12:36Z: without these each auditor answered every v2 round's
       // post "402 this node stores nothing for a round nobody has funded", held no round, and so audited none)
-      ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt') }) });
+      ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
+      // ON A DEVNET THAT SLASHES, CENSUS KEY 0 AS THE SEVEN HAVE IT (kanban #3896, measured 2026-11-27: without it each auditor derived another census root at
+      // the round's height - it counts no template-3 bond - and refused every paid round "that round names census root ... and the chain gives ...")
+      ...(SLASH ? { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', 'key0.json') } : {}) }) });
   }
   for (const [k, port] of PLAN.auditors.entries()) {
     for (let i = 0; ; i++) {
@@ -655,9 +658,11 @@ async function runner() {
           const windowMs = Math.max(60000, Math.min(Number(u.searchParams.get('windowMs') || PAID_WINDOW_MS), 3600000));
           // &game= a hosted game's round (kanban #1412: a head-to-head RPS round); &objectionMs= its objection window (under 600 s: the H2H short window)
           const g = u.searchParams.get('game'), om = u.searchParams.get('objectionMs');
+          // &censusHeight= (kanban #3896): a census at a later height than the first round's - bonds posted after `up` (the audit-only nodes, `devnet.mjs auditors`) are in it
+          const ch = u.searchParams.get('censusHeight');
           // a game whose plugin names its round fields (RPS_ROUND_FIELDS: run length, start deadline, min score) gets them
           const own = g === 'rock-paper-scissors' ? (await import('../../rock-paper-scissors/plugin/rock-paper-scissors.js')).RPS_ROUND_FIELDS : {};
-          const fields = { ...(g ? { ...fieldsOf(g), ...own } : {}), ...(om ? { objectionWindowMs: BigInt(Math.max(5000, Math.min(Number(om), 3600000))) } : {}) };
+          const fields = { ...(g ? { ...fieldsOf(g), ...own } : {}), ...(om ? { objectionWindowMs: BigInt(Math.max(5000, Math.min(Number(om), 3600000))) } : {}), ...(ch ? { censusHeight: Number(ch) } : {}) };
           const id = await open('paid', { stakeMsat: BigInt(u.searchParams.get('stakeMsat') || stake), entryAfterStartMs: windowMs, ...(Object.keys(fields).length ? { fields } : {}) });
           return send(201, state.rounds.find((r) => r.id === id));
         }

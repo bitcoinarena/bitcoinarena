@@ -148,6 +148,8 @@ export async function openLockRound(on, { minScore = 1, stakeMsat = STAKE, endMs
   // among its blocks. The round id follows from them.
   const bonded = bondedChainFor(drafted.nodes, drafted, slot, { endpoints: nodes.map((d) => `ws://127.0.0.1:${d.port}`),
     ...(on.hostedGames ? { hostedGames: on.hostedGames } : {}),
+    // each node signs its own bond body (kanban #3897: a round of 34+ draws only node-signed entries)
+    signers: nodes.map((d) => d.round.identity.secret),
     // a round of a later version is seated only on nodes whose advert lists it: the bonded nodes then speak 1 .. that version
     ...(drafted.protocolVersion > 1 ? { protocolVersions: Array.from({ length: drafted.protocolVersion }, (_, i) => i + 1) } : {}) });
   const c = { ...drafted, censusRoot: bonded.censusRoot, committeeTimeMs: bonded.committeeTimeMs };

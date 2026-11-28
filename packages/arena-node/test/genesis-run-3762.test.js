@@ -77,7 +77,7 @@ test('#3762 below protocol 34 a run whose marks name GENESIS stays as today: hel
   assert.equal(r.closingA, 'HOLDING');
 });
 
-test('#3762 from protocol 34 a run whose marks name GENESIS is FORFEIT 0 at every seat, over one transcript', { skip: !SUPPORTED_PROTOCOL_VERSIONS.includes(GENESIS_RUN_VERSION) && 'protocol 34 is not on this build yet (it comes with #3612/#3680)' }, async () => {
+test('#3762 from protocol 34 a run whose marks name GENESIS is FORFEIT 0 at every seat, over one transcript', { skip: !SUPPORTED_PROTOCOL_VERSIONS.includes(GENESIS_RUN_VERSION) && 'protocol 34 is not on this build' }, async () => {
   const r = await genesisRun(GENESIS_RUN_VERSION);
   console.log('  FACTS (v34):', JSON.stringify(r));
   assert.deepEqual([r.a, r.b], [['FORFEIT/0'], ['FORFEIT/0']]);
