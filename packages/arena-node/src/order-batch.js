@@ -167,6 +167,17 @@ export const PROPOSAL_PENDING_MAX = 16;
 // honest peers' answers timed out. What is left of a long honest list is read on the next pass (the cursor stays below it).
 export const SYNC_TAKE_MAX = 256;
 export const SYNC_TAKE_YIELD = 32;
+// A ROUND WHOSE SEATS DO NOT ANSWER IS NOT READ AGAIN EVERY SWEEP (kanban #3914, measured 2026-11-28: 275 market rounds at one seat with two dead
+// seats in their committee never heard a threshold, and every settle sweep - 60 s at most - asked every other seat of each again: ~11 MB/min from
+// one external seat into the seven Beelink seats). A failed read waits SYNC_RETRY_FIRST_MS, doubling to SYNC_RETRY_MAX_MS; a round failing for
+// SYNC_GIVE_UP_MS is not read again (until a restart, or a forced read). A peer that failed SYNC_PEER_FAILS reads in a row (any round) is
+// skipped, counted unheard, for SYNC_PEER_SKIP_MS doubling to SYNC_PEER_SKIP_MAX_MS. A read that reaches the threshold clears its round.
+export const SYNC_RETRY_FIRST_MS = Number(process.env.ARENA_SYNC_RETRY_FIRST_MS || 30000);
+export const SYNC_RETRY_MAX_MS = Number(process.env.ARENA_SYNC_RETRY_MAX_MS || 600000);
+export const SYNC_GIVE_UP_MS = Number(process.env.ARENA_SYNC_GIVE_UP_MS || 86400000);
+export const SYNC_PEER_FAILS = 3;
+export const SYNC_PEER_SKIP_MS = 60000;
+export const SYNC_PEER_SKIP_MAX_MS = 1800000;
 
 export class OrderBook {
   constructor(round, { plugins, peersFor = () => [], fetcher = (u, o) => fetch(u, o), now = () => Date.now(), intervalMs = Number(BATCH_MS), feesFor = null,
@@ -1529,11 +1540,34 @@ export class OrderBook {
     const kept = this.#synced.get(key);
     if (kept && kept.state === SYNC_STATE.KEPT && !force) return { ok: true, heard: kept.heard, needed: kept.needed, fresh: 0, kept: true };
     if (this.#syncing.has(key)) return this.#syncing.get(key);
-    const p = this.#syncOnce(roundIdBytes).finally(() => this.#syncing.delete(key));
+    const failed = this.#syncFailed.get(key);
+    if (failed && !force) {
+      const t = Number(this.now());
+      if (t - failed.first >= SYNC_GIVE_UP_MS) return { ...failed.last, givenUp: true };
+      if (t < failed.at) return { ...failed.last, waiting: failed.at - t };
+    }
+    const p = this.#syncOnce(roundIdBytes).then((r) => { this.#syncDone(key, r); return r; }).finally(() => this.#syncing.delete(key));
     this.#syncing.set(key, p);
     return p;
   }
   #synced = new Map();    // round id hex -> { state, epoch, heard, needed } (SYNC_STATE, kanban #1182)
+  #syncFailed = new Map();   // round id hex -> { first, at, tries, last } a round whose reads heard no threshold (kanban #3914)
+  #peerFails = new Map();    // seat base -> { n, until } consecutive failed asks of that seat (kanban #3914)
+  #syncDone(key, r) {
+    if (r && r.ok) { this.#syncFailed.delete(key); return; }
+    if (!r || r.status !== 409) return;   // only an unheard threshold waits; a round that is no market here answers at once as before
+    const t = Number(this.now()), was = this.#syncFailed.get(key), tries = (was ? was.tries : 0) + 1;
+    this.#syncFailed.delete(key);
+    this.#syncFailed.set(key, { first: was ? was.first : t, at: t + Math.min(SYNC_RETRY_MAX_MS, SYNC_RETRY_FIRST_MS * 2 ** (tries - 1)), tries, last: r });
+    if (this.#syncFailed.size > 8192) this.#syncFailed.delete(this.#syncFailed.keys().next().value);
+  }
+  #peerSkipped(base) { const f = this.#peerFails.get(base); return !!f && Number(this.now()) < f.until; }
+  #peerAnswered(base, ok) {
+    if (ok) { this.#peerFails.delete(base); return; }
+    const n = ((this.#peerFails.get(base) || {}).n || 0) + 1;
+    this.#peerFails.set(base, { n, until: n >= SYNC_PEER_FAILS ? Number(this.now()) + Math.min(SYNC_PEER_SKIP_MAX_MS, SYNC_PEER_SKIP_MS * 2 ** (n - SYNC_PEER_FAILS)) : 0 });
+    if (this.#peerFails.size > 1024) this.#peerFails.delete(this.#peerFails.keys().next().value);
+  }
   /**
    * THE ONE TRANSITION OF A ROUND'S READ (kanban #1182), compare-and-set on its epoch:
    *   'kept' { epoch, heard, needed }  -> KEPT, only when no certificate was stored since the read began (its epoch is the round's still)
@@ -1589,6 +1623,7 @@ export class OrderBook {
     let reached = () => {};
     const enough = new Promise((resolve) => { reached = resolve; });
     const ask = async (base) => {
+      if (this.#peerSkipped(base)) { state.unheard.push(`${base}: not asked (failed ${this.#peerFails.get(base).n} reads in a row)`); return; }
       let body;
       const ac = typeof AbortController === 'function' ? new AbortController() : null;
       let timer = null;
@@ -1601,7 +1636,8 @@ export class OrderBook {
         if (!r.ok) throw new Error(`answered ${r.status}`);
         body = await Promise.race([jsonUpTo(r, BODY_MOST), late]); // kanban #2458: capped
         if (!body || !Array.isArray(body.certificates)) throw new Error('answered no list of certificates');
-      } catch (e) { state.unheard.push(`${base}: ${e.message}`); return; } finally { clearTimeout(timer); }
+      } catch (e) { state.unheard.push(`${base}: ${e.message}`); this.#peerAnswered(base, false); return; } finally { clearTimeout(timer); }
+      this.#peerAnswered(base, true);
       const next = await this.#take(roundIdBytes, rid, base, body, held, state, cursors.get(base));
       if (next !== undefined) cursors.set(base, next);
       state.answered += 1;
