@@ -16,6 +16,8 @@ const KEPT_MS = 10000;
 // 13's emergency grid had a drawn window every 15 min. `drawable(roundHex)` answers whether its committee is drawn; a no is asked
 // again after a minute, a yes is kept.
 const UNDRAWN_ASK_MS = 60000;
+/** Rounds read per statement by the index (kanban #3904). */
+export const LIVE_PAGE = 1024;
 
 export function gameLive(round, { nowMs = () => Date.now(), windowOf = () => null, drawable = null } = {}) {
   const db = round.db;
@@ -24,7 +26,10 @@ export function gameLive(round, { nowMs = () => Date.now(), windowOf = () => nul
   let kept = null;
   const index = () => {
     // a round live now was stored at most a series' lead before it (72 h): older rows are not read at all
-    for (const r of db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? AND opened_ms > ? ORDER BY rowid').all(lastRow, nowMs() - 4 * 86400000)) {
+    // PAGE BY PAGE (kanban #3904): four days of rounds are ~180,000 contracts on a testnet4 seat - one .all() held them all at once
+    for (let rows; !rows || rows.length === LIVE_PAGE;) {
+    rows = db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? AND opened_ms > ? ORDER BY rowid LIMIT ?').all(lastRow, nowMs() - 4 * 86400000, LIVE_PAGE);
+    for (const r of rows) {
       lastRow = r.rowid;
       let c; try { c = decodeRoundContract(new Uint8Array(r.contract)); } catch { continue; }
       const run = BigInt(c.blockTicks || 0) * 1000n / 60n;
@@ -37,6 +42,7 @@ export function gameLive(round, { nowMs = () => Date.now(), windowOf = () => nul
       // start - the late join, a Tick Tock round's six hours - is live until its entry close plus one run, not its start plus one
       const lastRunEnd = c.entryCloseMs > c.startTimeMs ? c.entryCloseMs + run : c.startTimeMs + run;
       rounds.set(toHex(new Uint8Array(r.round_id)), { game: toHex(c.gameId), open, end: lastRunEnd + 30000n });
+    }
     }
   };
   /** { [gameId hex]: { rounds, players } } - the rounds live now and the players entered in them. */
