@@ -26,7 +26,7 @@ import { isOldTestnet4Id, isOldTestnet4Series, OLD_TESTNET4_SERIES_BOND_HEIGHT }
 import { SERIES_WRITE_AHEAD_MS, seriesRoundCheck, seriesId, seriesRound, ROUNDS_PER_SERIES, roundsPerSeries, isGridSeries, seriesLeadIsValid, findSeriesPublication, seriesPublicationOutput } from '../../arena-protocol/src/series.js';
 import { parseSeriesLine, readSeriesLines, seriesLineOf } from './series-line.js';
 import { blockRandom, blockRandomReady } from '../../arena-protocol/src/block-random.js';
-import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX, SERVED_ANSWER_BYTES_MAX } from '../../arena-protocol/src/served-nodes.js';
+import { servedNodes, mergeServedRounds, SERVED_WINDOW_MS, SERVED_HELD_MAX, SERVED_ANSWER_BYTES_MAX, undrawnRootTaken } from '../../arena-protocol/src/served-nodes.js';
 import { decodePurchase } from '../../arena-protocol/src/purchase.js';
 import { itemOf } from '../../arena-protocol/src/items.js';
 import { textUpTo, jsonUpTo, listedGames, PEER_LISTING_BYTES, PEER_PACKAGE_BYTES, answersUpTo } from './peer-read.js';   // kanban #1540, #1723
@@ -2921,7 +2921,8 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
       if (!p || !p.ok) return null;
       for (const e of p.drawn || p.committee) out.add(toHex(e.pubkey).toLowerCase());
     }
-    return out;
+    // kanban #3867: and the threshold its committee signs by - a drawn round is credited only with that many signers, on the page as here
+    return { keys: out, threshold: Math.min(roundThreshold(c.gameVerifySlots), roundThreshold(c.settlementSlots)) };
   };
   const servedHeldOf = (x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex), contract: typeof x.contract === 'string' ? fromHex(x.contract) : null });
   // kanban #2912: the distinct censuses (as node key sets) of this seat's newest rounds, newest first - at most `most` of them
@@ -12900,9 +12901,12 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         const mergedBy = (bonded, drawn = drawnOfServed) => servedNodes({ rounds: mergeServedRounds(heldIn, { bonded, drawn }).rounds, fromMs: from, toMs: to, verify: verifyOnce });
         let merged = mergedBy(bondedNodeKeys());   // kanban #2739, #3147: only drawn committees
         if (merged.root !== toHex(p.servedRoot)) for (const keys of recentCensusKeySets()) { const m = mergedBy(keys); if (m.root === toHex(p.servedRoot)) { merged = m; break; } }
-        // kanban #3147: the page draws no committee yet (it has no census and beacon for every round of 24 h), so a record built by a page of
-        // today is still taken under the undrawn merge - else a purchase paid out would be refused after the money went. Page side: follow-up.
-        if (merged.root !== toHex(p.servedRoot)) for (const keys of [bondedNodeKeys(), ...recentCensusKeySets()]) { const m = mergedBy(keys, null); if (m.root === toHex(p.servedRoot)) { merged = m; break; } }
+        // kanban #3147 / #3867 (RULED 2026-11-28): a purchase marked drawn (layout 37) is kept only under this seat's drawn merge - no fallback. One of an
+        // earlier layout (a page from before the draw) is still taken under the undrawn merge, only below the network's named cutoff height
+        // (UNDRAWN_PURCHASE_CUTOFF, set after the drawing page is live) - nothing already paid is refused before it
+        let undrawnNet = null; try { undrawnNet = networkOf(net.networkId); } catch { undrawnNet = null; }
+        if (merged.root !== toHex(p.servedRoot) && undrawnRootTaken({ drawn: !!p.drawn, network: undrawnNet, height }))
+          for (const keys of [bondedNodeKeys(), ...recentCensusKeySets()]) { const m = mergedBy(keys, null); if (m.root === toHex(p.servedRoot)) { merged = m; break; } }
         const got = await keepItemPurchase({ p, manifest: game.manifest, networkSet: vestedShares(forced.recipients, height), networkSets: vestedSetsNear(forced.recipients, height), gameSet: game.donationSet,
           served: { fromMs: merged.fromMs, toMs: merged.toMs, nodes: merged.nodes, root: merged.root }, port: await portOfFederation(p.federationId), db: round.db,
           verify: (sg, m, k) => schnorr.verify(sg, m, k), reserveKey: itemReserveKey, keepReserve: (row) => round.putDonationOutputs([row]), keepDonations: (rows) => round.putDonationOutputs(rows), fees: feesAtHeight(height),

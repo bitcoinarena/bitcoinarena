@@ -21,7 +21,10 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { itemsSecretFor } from '../../arena-protocol/src/player-key.js';
 import { entryItemDigest } from '../../arena-protocol/src/contracts.js';
 import { ITEMS_VERSION, RESERVES_VERSION } from '../../arena-protocol/src/constants.js';
-import { newestCheckedCensus } from './committee.js';
+import { newestCheckedCensus, clientCommittee } from './committee.js';
+import { decodeRoundContract, roundId } from '../../arena-protocol/src/contracts.js';
+import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
+import { DRAWN_SERVED_VERSION } from '../../arena-protocol/src/served-nodes.js';
 import { seatsOf, seatVoice } from './seat-identity.js';
 // the checked census's node keys (hex), the seat keys a host's URLs prove themselves against (kanban #3575, #3577)
 const censusKeyList = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
@@ -77,7 +80,12 @@ export async function readJsonUpTo(r, maxBytes) {
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
 // `bondedKeys` (kanban #1896): the node keys (hex) of a census this page checked. A round's committee counts only when all its keys are
 // among them (mergeServedRounds `bonded`); with none the page cannot tell a node from a URL, and nothing is read.
-export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000, bondedKeys = null }) {
+// `drawnOf` (kanban #3867, RULED 2026-11-28): async (roundIdHex, contract bytes) -> { keys: Set of hex, threshold } | null - the round's committee as this page
+// draws it from its census and beacon (pageDrawOf). A round is credited only when its committee is that draw and enough of it signed; a round whose
+// draw this page cannot verify (no contract, a census it cannot load) is left out, never credited undrawn - the seats' drawn merge, the same root.
+// Answers also `speaks37`: an answer names a round of DRAWN_SERVED_VERSION or later (the network has rolled: the record is marked drawn).
+export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000, bondedKeys = null, drawnOf = null }) {
+  if (typeof drawnOf !== 'function') return { ok: false, why: 'this page cannot draw the rounds\' committees, so it reads no served list (kanban #3867)' };
   const bonded = bondedKeys ? new Set([...bondedKeys].map((k) => String(k).toLowerCase())) : null;
   if (!bonded || !bonded.size) return { ok: false, why: 'this page has checked no census, so it cannot tell which keys are nodes: no served list is read' };
   const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
@@ -92,15 +100,57 @@ export async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 
       const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return;
       const a = await readJsonUpTo(r, SERVED_ANSWER_BYTES_MAX);   // kanban #2365: one seat's answer is read up to a bound, as on the seat
-      held[i] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
+      held[i] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex),
+        contract: typeof x.contract === 'string' ? fromHex(x.contract) : null }));   // kanban #3867: with its contract, to draw it
     } catch { /* a seat that does not answer adds nothing */ }
   }));
   const answered = held.filter(Boolean).length;
   if (!answered) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
+  // kanban #3867: each distinct round (its contract as named) drawn once - the draw is per census and beacon, which pageDrawOf caches
+  const draws = new Map();
+  let speaks37 = false;
+  const todo = [];
+  for (const a of held.filter(Boolean)) for (const r of a) {
+    const k = `${toHex(r.roundId)}:${r.contract instanceof Uint8Array ? toHex(r.contract) : ''}`;   // a round named without its contract: drawOf answers null for it
+    if (draws.has(k)) continue;
+    draws.set(k, null);
+    todo.push([k, r]);
+  }
+  for (let i = 0; i < todo.length; i += 8) {
+    await Promise.all(todo.slice(i, i + 8).map(async ([k, r]) => {
+      try { const d = await drawnOf(toHex(r.roundId), r.contract); draws.set(k, d && d.keys instanceof Set ? d : null); } catch { draws.set(k, null); }
+      try { if (r.contract && Number(decodeRoundContract(r.contract).protocolVersion) >= DRAWN_SERVED_VERSION) speaks37 = true; } catch { /* not a contract */ }
+    }));
+  }
+  const drawn = (rid, contract) => draws.get(`${toHex(rid)}:${contract instanceof Uint8Array ? toHex(contract) : ''}`) || null;
   // kanban #2361: the page holds no record of its own - no answer's rounds are taken as the reader's, every answer's checks are charged
-  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false, bonded }).rounds, fromMs, toMs: BigInt(toMs), verify });
+  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false, bonded, drawn }).rounds, fromMs, toMs: BigInt(toMs), verify });
   if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
-  return { ok: true, served, seats: answered };
+  return { ok: true, served, seats: answered, speaks37 };
+}
+
+/**
+ * THE PAGE'S DRAW OF A SERVED ROUND (kanban #3867): the round's game and settlement committees as clientCommittee derives them from the round's census
+ * and beacon over this page's own headers - never a seat's word - as { keys, threshold }, or null when it cannot be drawn here. The census and its
+ * check are kept by census root (committee.js), so the rounds of one series or table cost one census load; each round is drawn in memory from it.
+ */
+export function pageDrawOf({ seats, curve, fetch, draw = clientCommittee }) {
+  const kept = new Map();
+  return async (ridHex, contractBytes) => {
+    let c; try { c = decodeRoundContract(contractBytes); } catch { return null; }
+    if (toHex(roundId(c)) !== String(ridHex)) return null;
+    const k = `${ridHex}:${toHex(contractBytes)}`;
+    if (kept.has(k)) return kept.get(k);
+    let got; try { got = await draw(ridHex, c, seats, { curve, fetcher: fetch, compare: false }); } catch { got = null; }
+    let out = null;
+    if (got && got.ok && got.drawn) {
+      const keys = new Set();
+      for (const role of ['game', 'settlement']) for (const x of got.drawn[role] || []) keys.add(toHex(x instanceof Uint8Array ? x : x.pubkey).toLowerCase());
+      if (keys.size) out = { keys, threshold: Math.min(receiptsNeeded(c.gameVerifySlots), receiptsNeeded(c.settlementSlots)) };
+    }
+    kept.set(k, out);
+    return out;
+  };
 }
 
 /**
@@ -146,7 +196,7 @@ export async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000,
  * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
  */
 // `bondedKeys`: the node keys (hex) of a census this page checked (kanban #1896); left out, the newest census this page checked.
-export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5, storage = null, bondedKeys = null, walletOf = null, wallets = null }) {
+export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5, storage = null, bondedKeys = null, walletOf = null, wallets = null, drawnOf = null, curve = null }) {
   const no = (step, why) => ({ ok: false, step, why });
   const item = itemOf(manifest, itemId);
   if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
@@ -173,7 +223,9 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
   }
   const toMs = BigInt(nowMs() - 60000);                     // a minute back: the newest FINALs have reached every seat
   if (!bondedKeys) { const c = newestCheckedCensus(); bondedKeys = c ? c.entries.map((e) => toHex(e.pubkey)) : null; }
-  const got = await servedFromSeats({ seats, toMs, fetch, verify, bondedKeys });
+  // kanban #3867: the page draws every round it credits (its curve: the page's ARENA_CURVE)
+  if (!drawnOf) { const cv = curve || (typeof globalThis !== 'undefined' ? globalThis.ARENA_CURVE : null); if (cv) drawnOf = pageDrawOf({ seats, curve: cv, fetch }); }
+  const got = await servedFromSeats({ seats, toMs, fetch, verify, bondedKeys, drawnOf });
   if (!got.ok) return no('served', got.why);
   let built;
   try {
@@ -188,7 +240,7 @@ export async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, f
   // WRITTEN AHEAD (kanban #2274): the purchase is kept before the payment and again with its transaction the moment the federation
   // answers it, so a record the seats do not keep is handed again on the next press, never paid again. One that cannot be written pays nothing.
   const rec = { seats: [...(seats || [])], federationId, devsPct: Number(devsPct), servedFromMs: String(got.served.fromMs), servedToMs: String(got.served.toMs),
-    servedRoot: got.served.root, reserveKey: reserveKey ? toHex(reserveKey) : null, reserveMsat: built.reserve ? String(built.reserve.msat) : null,
+    servedRoot: got.served.root, drawn: !!(got.speaks37 && terms.reserves), reserveKey: reserveKey ? toHex(reserveKey) : null, reserveMsat: built.reserve ? String(built.reserve.msat) : null,
     outputs: built.outputs.length, boughtAtMs: String(nowMs()), submitted: null, body: null, mark: paidRecordMark() };
   // kanban #3117: read again right before the write-ahead (the reads above awaited the seats) - another tab that wrote this purchase
   // meanwhile is never written over; nothing is paid, the next press goes on with that one
@@ -226,7 +278,7 @@ async function finishPurchase({ rec, keptKey, storage, manifest, item, itemId, t
     const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: rec.devsPct, playerPubkey: player.pubkey,
       federationId: fromHex(rec.federationId), txid: fromHex(txid), servedFromMs: BigInt(rec.servedFromMs), servedToMs: BigInt(rec.servedToMs), servedRoot: fromHex(rec.servedRoot),
       outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(rec.boughtAtMs),
-      ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey: fromHex(rec.reserveKey) } : {}) };
+      ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey: fromHex(rec.reserveKey) } : {}), ...(rec.drawn ? { drawn: true } : {}) };   // kanban #3867: layout 37
     rec.body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(player.sign(purchaseId(record))) });
     rec.purchaseId = toHex(purchaseId(record));
     try { keptKey = paidRecordPutIf(storage, keptKey, rec); } catch { /* kanban #3117: never over another payment; handed below; a failed hand-over is then kept in nothing but this answer's retry */ }

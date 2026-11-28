@@ -71,7 +71,7 @@ for (const [name, AC] of Object.entries(BUNDLES)) {
     const tabA = { paySubmit: async (j) => { aWaiting(); await gate; paid.push(T1); return asSubmitted(T1, j); }, lockAccepted: async (s) => { if (JSON.parse(s).txid === T1) throw new Error(REFUSAL); return accepted(s); } };
     const tabB = { paySubmit: async (j) => { const t = txidN(paid.length); paid.push(t); return asSubmitted(t, j); }, lockAccepted: async (s) => { if (JSON.parse(s).txid === T1) throw new Error(REFUSAL); return accepted(s); } };
     const base = { manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, federationId: F1, player, seats: ['https://s1', 'https://s2'], fetch, verify, nowMs: () => NOW,
-      bondedKeys: NODE_KEYS.map(toHex), storage };
+      bondedKeys: NODE_KEYS.map(toHex), drawnOf: async () => ({ keys: new Set([...NODE_KEYS].map((k) => (typeof k === 'string' ? k : toHex(k)))) }), storage };
     const pA = AC.buyItem({ ...base, wallet: tabA });
     await aReached;
     const b1 = await AC.buyItem({ ...base, wallet: tabB });   // A's write-ahead has no answer yet: dropped, "look at the wallet history"

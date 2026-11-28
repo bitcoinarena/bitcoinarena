@@ -812,6 +812,14 @@ const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RULES_VERS
  * only, #3743); signed, the 35 cases pass. Round creators write 35 only once every seat of the network lists it.
  */
 const POOL_FIRST_VERSION = 35;
+/**
+ * A LATE SETTLEMENT NEVER PAYS THE SERIES PUBLISHER (kanban #3882, RULED 2026-11-28; §5A.5 reimburses the first confirmed publication once): the fee back is
+ * paid by round 0's own settlement and by nothing else - a settlement that replaces it (another txid for the same table, a fallback claim of it) still
+ * names the publisher, a late loser's second settlement beside it does not: its fee lock's nodes' part goes whole to the sitting seats' pools. By the
+ * round's version; a late settlement of an earlier round is built and co-signed as before, so a fixed and an unfixed seat derive the same bytes.
+ */
+const LATE_NO_PUBLISHER_VERSION = 37;
+const latePaysNoPublisher = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= LATE_NO_PUBLISHER_VERSION;
 /** Whether a market round of protocol version `v` is a pool once it holds a backed plain pick, orders or not (kanban #3854). */
 const poolsFirst = (v) => Number.isInteger(v) && v >= POOL_FIRST_VERSION;
 /**
@@ -16904,6 +16912,8 @@ function finalSigned({ roundId, entryId, runId, records, committee, slots, final
 const SERVED_WINDOW_MS = 24 * 3600 * 1000;
 // kanban #3037: the distinct committee keys whose FINALs must verify on a round the reader holds only from answers
 const SERVED_SIGNERS_MIN = 2;
+/** kanban #3867: the version from which a purchase's served root is drawn on the page as on the seats (purchase.js PURCHASE_DRAWN_LAYOUT). */
+const DRAWN_SERVED_VERSION = 37;
 const TAG_SERVED_NODES = 'ARENA/v1/ServedNodes';
 const snIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 
@@ -16976,7 +16986,8 @@ function servedNodes({ rounds, fromMs, toMs, verify }) {
     }
     // THE SAME RULE FOR THE SEAT'S OWN ROUNDS (kanban #3157, #1489 r1120b-refute-11-3): own rounds were exempt, so a round where only the seat's own
     // FINAL was held was credited at the seat and refused by the page (no own record) - the page paid under one root, the seat rebuilt another
-    if (sources && signers.size < SERVED_SIGNERS_MIN) {
+    // kanban #3867: a drawn round needs as many signers as its drawn committee's threshold (the merge's `signersMin`), never fewer than SERVED_SIGNERS_MIN
+    if (sources && signers.size < Math.max(SERVED_SIGNERS_MIN, Number(round.signersMin) || 0)) {
       if (inWindow.length) refused.push({ round: rid, why: `only ${signers.size} committee key(s) signed a FINAL on it: one node's word is not a round (kanban #3037)` });
       continue;
     }
@@ -17061,7 +17072,7 @@ const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
 // null (a reader that draws nothing) reads as before.
 function mergeServedRounds(held, { own = true, bonded = null, drawn = null } = {}) {
   const hx = (b) => toHex(b);
-  const rounds = new Map(), conflicts = new Set();
+  const rounds = new Map(), conflicts = new Set(), need = new Map();
   (held || []).forEach((seat, at) => {
     if (!Array.isArray(seat)) return;
     const seen = new Set();
@@ -17074,6 +17085,8 @@ function mergeServedRounds(held, { own = true, bonded = null, drawn = null } = {
       if (typeof drawn === 'function' && !(own && at === 0)) {   // kanban #3147: the committee is the census draw, or the copy does not count
         let set = null;
         try { set = drawn(r.roundId, r.contract instanceof Uint8Array ? r.contract : null); } catch { set = null; }
+        // kanban #3867: a draw may also say the threshold its committee signs by ({ keys, threshold }) - the round is credited only with that many signers
+        if (set && !(set instanceof Set) && set.keys instanceof Set) { if (Number.isInteger(set.threshold)) need.set(hx(r.roundId), Math.max(need.get(hx(r.roundId)) || 0, set.threshold)); set = set.keys; }
         if (!(set instanceof Set) || !r.committee.every((k) => set.has(hx(k)))) continue;
       }
       const committee = [...new Set(r.committee.map(hx))].sort().join();
@@ -17107,8 +17120,22 @@ function mergeServedRounds(held, { own = true, bonded = null, drawn = null } = {
     }
   });
   const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
-  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()], sources: [...r.sources.values()], own: r.own })),
+  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()], sources: [...r.sources.values()], own: r.own,
+    ...(need.has(hx(r.roundId)) ? { signersMin: need.get(hx(r.roundId)) } : {}) })),
     conflicts: [...conflicts] };
+}
+
+/**
+ * THE UNDRAWN FALLBACK'S END (kanban #3867, RULED 2026-11-28): a purchase of an earlier layout (not marked drawn) is kept under the undrawn merge
+ * only below a named cutoff height per network, set after the page bundle that draws is live - from that height a seat refuses an undrawn root.
+ * null: not named yet, the fallback stands (nothing already paid is refused). Order: page first, then seats, then the cutoff.
+ */
+const UNDRAWN_PURCHASE_CUTOFF = Object.freeze({ regtest: null, testnet4: null, mainnet: null });
+/** May a seat keep this purchase under the undrawn merge at chain height `height`? Never for a purchase marked drawn. */
+function undrawnRootTaken({ drawn = false, network, height, cutoffs = UNDRAWN_PURCHASE_CUTOFF }) {
+  if (drawn) return false;
+  const at = cutoffs ? cutoffs[network] : null;
+  return at === null || at === undefined || !(Number(height) >= Number(at));
 }
 
 // ---- arena-protocol/src/items.js
@@ -19900,6 +19927,13 @@ const PURCHASE_WINDOW_SLACK_MS = 3600000;
  */
 const PURCHASE_RESERVES_LAYOUT = 12;
 /**
+ * A PURCHASE WHOSE SERVED ROOT IS DRAWN (kanban #3867, RULED 2026-11-28): written as LAYOUT 37 - the purchase's protocol version, the next one -
+ * with the fields of layout 12. It says the served root credits only rounds whose committee is the census draw (served-nodes.js
+ * mergeServedRounds `drawn`), on the page exactly as on the seats: a seat keeps such a purchase only when its own drawn merge gives the same
+ * root, never an undrawn one. decodePurchase marks it `drawn: true`. The page writes it once the network speaks 37.
+ */
+const PURCHASE_DRAWN_LAYOUT = 37;
+/**
  * THE PAYMENT NAMES THE ITEM (kanban #1180): the image of every output's payout contract is this commitment - the buyer, the game (its
  * developer and name), the item, its price and the served window - not the buyer's key alone. Each field is known before the payment
  * and is in the record, so a seat rebuilds it. With the key alone one payment fitted any item of the same price: a record for item A
@@ -19929,8 +19963,9 @@ function encodePurchase(p) {
     if (!Number.isInteger(share) || share < 0 || share > 100) throw new Error('on the reserves\' terms a developers\' share is a whole percent; which ones the fees in force allow, purchaseStands says');
     if (!pIs32(p.gameId) || !pIs33(p.reserveKey)) throw new Error('a purchase on the reserves\' terms names its game version by 32 bytes and the reserve key by 33');
   } else if (!itemDevShareOk(share)) throw new Error(`a purchase's developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
+  if (p.drawn && !reserves) throw new Error('a purchase marked drawn (layout 37) is on the reserves\' terms');
   const w = new Writer();
-  w.u8(TYPE_ITEM_PURCHASE); w.u16(reserves ? PURCHASE_RESERVES_LAYOUT : share === ITEM_DEV_SHARE_DEFAULT ? ITEMS_VERSION : PURCHASE_SHARE_VERSION);
+  w.u8(TYPE_ITEM_PURCHASE); w.u16(reserves ? (p.drawn ? PURCHASE_DRAWN_LAYOUT : PURCHASE_RESERVES_LAYOUT) : share === ITEM_DEV_SHARE_DEFAULT ? ITEMS_VERSION : PURCHASE_SHARE_VERSION);
   w.bytes32(p.gameDevPubkey); w.str(p.gameName); w.str(p.itemId); w.u64(BigInt(p.priceSat));
   if (reserves) { w.u8(share); w.bytes32(p.gameId); w.bytes(p.reserveKey, 33); }
   else if (share !== ITEM_DEV_SHARE_DEFAULT) w.u8(share);
@@ -19945,18 +19980,19 @@ function decodePurchase(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_ITEM_PURCHASE) throw new Error('not an item purchase');
   const version = r.u16();
-  if (version !== ITEMS_VERSION && version !== PURCHASE_SHARE_VERSION && version !== PURCHASE_RESERVES_LAYOUT) throw new Error(`an item purchase of version ${version}`);
+  if (version !== ITEMS_VERSION && version !== PURCHASE_SHARE_VERSION && version !== PURCHASE_RESERVES_LAYOUT && version !== PURCHASE_DRAWN_LAYOUT) throw new Error(`an item purchase of version ${version}`);
+  const drawn = version === PURCHASE_DRAWN_LAYOUT;
   const head = { gameDevPubkey: r.bytes32(), gameName: r.str(), itemId: r.str(), priceSat: r.u64() };
   const devsPct = version === ITEMS_VERSION ? ITEM_DEV_SHARE_DEFAULT : r.u8();
   if (version === PURCHASE_SHARE_VERSION && (devsPct === ITEM_DEV_SHARE_DEFAULT || !itemDevShareOk(devsPct)))
     throw new Error(`a version-${PURCHASE_SHARE_VERSION} purchase names a developers' share below ${ITEM_DEV_SHARE_DEFAULT} %, one of ${ITEM_DEV_SHARES.join(', ')}`);
   const terms = {};
-  if (version === PURCHASE_RESERVES_LAYOUT) {
+  if (version === PURCHASE_RESERVES_LAYOUT || drawn) {
     if (!Number.isInteger(devsPct) || devsPct < 0 || devsPct > 100) throw new Error('on the reserves\' terms a developers\' share is a whole percent');
     terms.gameId = r.bytes32(); terms.reserveKey = r.bytes(33);
     if (!pIs33(terms.reserveKey)) throw new Error('a reserve key is a 33-byte compressed key');
   }
-  const p = { ...head, devsPct, ...terms, playerPubkey: r.bytes32(), federationId: r.bytes32(),
+  const p = { ...head, devsPct, ...terms, ...(drawn ? { drawn: true } : {}), playerPubkey: r.bytes32(), federationId: r.bytes32(),
     txid: r.bytes32(), servedFromMs: r.u64(), servedToMs: r.u64(), servedRoot: r.bytes32(),
     outputs: r.vec((rr) => ({ outIdx: rr.u32(), pk: rr.bytes(33), msat: rr.u64() })), boughtAtMs: r.u64() };
   r.end();
@@ -26267,6 +26303,9 @@ function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = null, sha
   const net = netStakeMsat(entry);
   if (lock.amountMsat !== net) return refuse(`the late loser's lock holds ${lock.amountMsat} msat and its entry's net stake is ${net}`);
   if (!(winnerLocks instanceof Map)) return refuse('the winners\' stake locks are a Map by player key');
+  // kanban #3882: a late settlement of a round of LATE_NO_PUBLISHER_VERSION or later names no publisher - one a seat is handed with one is not signed
+  if (latePaysNoPublisher(contract) && signerNodes && signerNodes.publisher)
+    return refuse('a late settlement never pays the series publisher: the fee back is paid once, by round 0\'s own settlement (§5A.5, kanban #3882)');
 
   const inputFeesMsat = lnv2FeeMsat(fees, net);
   const spendableMsat = net - inputFeesMsat;
@@ -32031,6 +32070,9 @@ function paidRecordKeys(storage) {
 
 
 
+
+
+
 // the checked census's node keys (hex), the seat keys a host's URLs prove themselves against (kanban #3575, #3577)
 const censusKeyList = () => { const c = newestCheckedCensus(); return c ? c.entries.map((e) => toHex(e.pubkey)) : []; };
 
@@ -32085,7 +32127,12 @@ async function readJsonUpTo(r, maxBytes) {
 /** The served list of the 24 h before `toMs`, from every seat that answers. Answers { ok, served, seats } or { ok: false, why }. */
 // `bondedKeys` (kanban #1896): the node keys (hex) of a census this page checked. A round's committee counts only when all its keys are
 // among them (mergeServedRounds `bonded`); with none the page cannot tell a node from a URL, and nothing is read.
-async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000, bondedKeys = null }) {
+// `drawnOf` (kanban #3867, RULED 2026-11-28): async (roundIdHex, contract bytes) -> { keys: Set of hex, threshold } | null - the round's committee as this page
+// draws it from its census and beacon (pageDrawOf). A round is credited only when its committee is that draw and enough of it signed; a round whose
+// draw this page cannot verify (no contract, a census it cannot load) is left out, never credited undrawn - the seats' drawn merge, the same root.
+// Answers also `speaks37`: an answer names a round of DRAWN_SERVED_VERSION or later (the network has rolled: the record is marked drawn).
+async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000, bondedKeys = null, drawnOf = null }) {
+  if (typeof drawnOf !== 'function') return { ok: false, why: 'this page cannot draw the rounds\' committees, so it reads no served list (kanban #3867)' };
   const bonded = bondedKeys ? new Set([...bondedKeys].map((k) => String(k).toLowerCase())) : null;
   if (!bonded || !bonded.size) return { ok: false, why: 'this page has checked no census, so it cannot tell which keys are nodes: no served list is read' };
   const fromMs = BigInt(toMs) - BigInt(SERVED_WINDOW_MS);
@@ -32100,15 +32147,57 @@ async function servedFromSeats({ seats, toMs, fetch, verify, timeoutMs = 15000, 
       const r = await fetch(`${String(s).replace(/\/$/, '')}/served?to=${toMs}&finals=1`, { signal: AbortSignal.timeout(timeoutMs) });
       if (!r.ok) return;
       const a = await readJsonUpTo(r, SERVED_ANSWER_BYTES_MAX);   // kanban #2365: one seat's answer is read up to a bound, as on the seat
-      held[i] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
+      held[i] = (a.held || []).slice(0, SERVED_HELD_MAX).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex),
+        contract: typeof x.contract === 'string' ? fromHex(x.contract) : null }));   // kanban #3867: with its contract, to draw it
     } catch { /* a seat that does not answer adds nothing */ }
   }));
   const answered = held.filter(Boolean).length;
   if (!answered) return { ok: false, why: 'no seat answered who served a round in the last 24 hours' };
+  // kanban #3867: each distinct round (its contract as named) drawn once - the draw is per census and beacon, which pageDrawOf caches
+  const draws = new Map();
+  let speaks37 = false;
+  const todo = [];
+  for (const a of held.filter(Boolean)) for (const r of a) {
+    const k = `${toHex(r.roundId)}:${r.contract instanceof Uint8Array ? toHex(r.contract) : ''}`;   // a round named without its contract: drawOf answers null for it
+    if (draws.has(k)) continue;
+    draws.set(k, null);
+    todo.push([k, r]);
+  }
+  for (let i = 0; i < todo.length; i += 8) {
+    await Promise.all(todo.slice(i, i + 8).map(async ([k, r]) => {
+      try { const d = await drawnOf(toHex(r.roundId), r.contract); draws.set(k, d && d.keys instanceof Set ? d : null); } catch { draws.set(k, null); }
+      try { if (r.contract && Number(decodeRoundContract(r.contract).protocolVersion) >= DRAWN_SERVED_VERSION) speaks37 = true; } catch { /* not a contract */ }
+    }));
+  }
+  const drawn = (rid, contract) => draws.get(`${toHex(rid)}:${contract instanceof Uint8Array ? toHex(contract) : ''}`) || null;
   // kanban #2361: the page holds no record of its own - no answer's rounds are taken as the reader's, every answer's checks are charged
-  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false, bonded }).rounds, fromMs, toMs: BigInt(toMs), verify });
+  const served = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { own: false, bonded, drawn }).rounds, fromMs, toMs: BigInt(toMs), verify });
   if (!served.nodes.length) return { ok: false, why: 'no node served a round in the last 24 hours: the nodes\' half has nobody to go to' };
-  return { ok: true, served, seats: answered };
+  return { ok: true, served, seats: answered, speaks37 };
+}
+
+/**
+ * THE PAGE'S DRAW OF A SERVED ROUND (kanban #3867): the round's game and settlement committees as clientCommittee derives them from the round's census
+ * and beacon over this page's own headers - never a seat's word - as { keys, threshold }, or null when it cannot be drawn here. The census and its
+ * check are kept by census root (committee.js), so the rounds of one series or table cost one census load; each round is drawn in memory from it.
+ */
+function pageDrawOf({ seats, curve, fetch, draw = clientCommittee }) {
+  const kept = new Map();
+  return async (ridHex, contractBytes) => {
+    let c; try { c = decodeRoundContract(contractBytes); } catch { return null; }
+    if (toHex(roundId(c)) !== String(ridHex)) return null;
+    const k = `${ridHex}:${toHex(contractBytes)}`;
+    if (kept.has(k)) return kept.get(k);
+    let got; try { got = await draw(ridHex, c, seats, { curve, fetcher: fetch, compare: false }); } catch { got = null; }
+    let out = null;
+    if (got && got.ok && got.drawn) {
+      const keys = new Set();
+      for (const role of ['game', 'settlement']) for (const x of got.drawn[role] || []) keys.add(toHex(x instanceof Uint8Array ? x : x.pubkey).toLowerCase());
+      if (keys.size) out = { keys, threshold: Math.min(receiptsNeeded(c.gameVerifySlots), receiptsNeeded(c.settlementSlots)) };
+    }
+    kept.set(k, out);
+    return out;
+  };
 }
 
 /**
@@ -32154,7 +32243,7 @@ async function handToSeats({ seats, door, body, fetch, timeoutMs = 60000, keys =
  * 50 - the nodes' half is paid whatever it is). Answers { ok, purchaseId, txid, priceSat, paidSat, devsPct, outputs, keptBy } or { ok: false, step, why }.
  */
 // `bondedKeys`: the node keys (hex) of a census this page checked (kanban #1896); left out, the newest census this page checked.
-async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5, storage = null, bondedKeys = null, walletOf = null, wallets = null }) {
+async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federationId, player, seats, fetch, verify, nowMs = () => Date.now(), devsPct = null, reserveNeeded = 5, storage = null, bondedKeys = null, walletOf = null, wallets = null, drawnOf = null, curve = null }) {
   const no = (step, why) => ({ ok: false, step, why });
   const item = itemOf(manifest, itemId);
   if (!item) return no('item', `"${manifest && manifest.gameName}" sells no item "${itemId}"`);
@@ -32181,7 +32270,9 @@ async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federati
   }
   const toMs = BigInt(nowMs() - 60000);                     // a minute back: the newest FINALs have reached every seat
   if (!bondedKeys) { const c = newestCheckedCensus(); bondedKeys = c ? c.entries.map((e) => toHex(e.pubkey)) : null; }
-  const got = await servedFromSeats({ seats, toMs, fetch, verify, bondedKeys });
+  // kanban #3867: the page draws every round it credits (its curve: the page's ARENA_CURVE)
+  if (!drawnOf) { const cv = curve || (typeof globalThis !== 'undefined' ? globalThis.ARENA_CURVE : null); if (cv) drawnOf = pageDrawOf({ seats, curve: cv, fetch }); }
+  const got = await servedFromSeats({ seats, toMs, fetch, verify, bondedKeys, drawnOf });
   if (!got.ok) return no('served', got.why);
   let built;
   try {
@@ -32196,7 +32287,7 @@ async function buyItem({ manifest, itemId, networkSet, gameSet, wallet, federati
   // WRITTEN AHEAD (kanban #2274): the purchase is kept before the payment and again with its transaction the moment the federation
   // answers it, so a record the seats do not keep is handed again on the next press, never paid again. One that cannot be written pays nothing.
   const rec = { seats: [...(seats || [])], federationId, devsPct: Number(devsPct), servedFromMs: String(got.served.fromMs), servedToMs: String(got.served.toMs),
-    servedRoot: got.served.root, reserveKey: reserveKey ? toHex(reserveKey) : null, reserveMsat: built.reserve ? String(built.reserve.msat) : null,
+    servedRoot: got.served.root, drawn: !!(got.speaks37 && terms.reserves), reserveKey: reserveKey ? toHex(reserveKey) : null, reserveMsat: built.reserve ? String(built.reserve.msat) : null,
     outputs: built.outputs.length, boughtAtMs: String(nowMs()), submitted: null, body: null, mark: paidRecordMark() };
   // kanban #3117: read again right before the write-ahead (the reads above awaited the seats) - another tab that wrote this purchase
   // meanwhile is never written over; nothing is paid, the next press goes on with that one
@@ -32234,7 +32325,7 @@ async function finishPurchase({ rec, keptKey, storage, manifest, item, itemId, t
     const record = { gameDevPubkey: manifest.gameDevPubkey, gameName: manifest.gameName, itemId, priceSat: item.priceSat, devsPct: rec.devsPct, playerPubkey: player.pubkey,
       federationId: fromHex(rec.federationId), txid: fromHex(txid), servedFromMs: BigInt(rec.servedFromMs), servedToMs: BigInt(rec.servedToMs), servedRoot: fromHex(rec.servedRoot),
       outputs: outs.map((d) => ({ outIdx: Number(d.out_idx), pk: fromHex(d.recipient_pk), msat: BigInt(d.amount_msat) })), boughtAtMs: BigInt(rec.boughtAtMs),
-      ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey: fromHex(rec.reserveKey) } : {}) };
+      ...(terms.reserves ? { gameId: gameIdOf(manifest), reserveKey: fromHex(rec.reserveKey) } : {}), ...(rec.drawn ? { drawn: true } : {}) };   // kanban #3867: layout 37
     rec.body = JSON.stringify({ purchase: toHex(encodePurchase(record)), signature: toHex(player.sign(purchaseId(record))) });
     rec.purchaseId = toHex(purchaseId(record));
     try { keptKey = paidRecordPutIf(storage, keptKey, rec); } catch { /* kanban #3117: never over another payment; handed below; a failed hand-over is then kept in nothing but this answer's retry */ }

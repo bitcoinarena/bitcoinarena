@@ -21,6 +21,8 @@ import { splitSignedFinalSig, decodeFinalSig, finalSigId } from './final-sig.js'
 export const SERVED_WINDOW_MS = 24 * 3600 * 1000;
 // kanban #3037: the distinct committee keys whose FINALs must verify on a round the reader holds only from answers
 export const SERVED_SIGNERS_MIN = 2;
+/** kanban #3867: the version from which a purchase's served root is drawn on the page as on the seats (purchase.js PURCHASE_DRAWN_LAYOUT). */
+export const DRAWN_SERVED_VERSION = 37;
 export const TAG_SERVED_NODES = 'ARENA/v1/ServedNodes';
 const snIs32 = (b) => b instanceof Uint8Array && b.length === 32;
 
@@ -93,7 +95,8 @@ export function servedNodes({ rounds, fromMs, toMs, verify }) {
     }
     // THE SAME RULE FOR THE SEAT'S OWN ROUNDS (kanban #3157, #1489 r1120b-refute-11-3): own rounds were exempt, so a round where only the seat's own
     // FINAL was held was credited at the seat and refused by the page (no own record) - the page paid under one root, the seat rebuilt another
-    if (sources && signers.size < SERVED_SIGNERS_MIN) {
+    // kanban #3867: a drawn round needs as many signers as its drawn committee's threshold (the merge's `signersMin`), never fewer than SERVED_SIGNERS_MIN
+    if (sources && signers.size < Math.max(SERVED_SIGNERS_MIN, Number(round.signersMin) || 0)) {
       if (inWindow.length) refused.push({ round: rid, why: `only ${signers.size} committee key(s) signed a FINAL on it: one node's word is not a round (kanban #3037)` });
       continue;
     }
@@ -178,7 +181,7 @@ export const SERVED_ANSWER_BYTES_MAX = 32 * 1024 * 1024;
 // null (a reader that draws nothing) reads as before.
 export function mergeServedRounds(held, { own = true, bonded = null, drawn = null } = {}) {
   const hx = (b) => toHex(b);
-  const rounds = new Map(), conflicts = new Set();
+  const rounds = new Map(), conflicts = new Set(), need = new Map();
   (held || []).forEach((seat, at) => {
     if (!Array.isArray(seat)) return;
     const seen = new Set();
@@ -191,6 +194,8 @@ export function mergeServedRounds(held, { own = true, bonded = null, drawn = nul
       if (typeof drawn === 'function' && !(own && at === 0)) {   // kanban #3147: the committee is the census draw, or the copy does not count
         let set = null;
         try { set = drawn(r.roundId, r.contract instanceof Uint8Array ? r.contract : null); } catch { set = null; }
+        // kanban #3867: a draw may also say the threshold its committee signs by ({ keys, threshold }) - the round is credited only with that many signers
+        if (set && !(set instanceof Set) && set.keys instanceof Set) { if (Number.isInteger(set.threshold)) need.set(hx(r.roundId), Math.max(need.get(hx(r.roundId)) || 0, set.threshold)); set = set.keys; }
         if (!(set instanceof Set) || !r.committee.every((k) => set.has(hx(k)))) continue;
       }
       const committee = [...new Set(r.committee.map(hx))].sort().join();
@@ -224,6 +229,20 @@ export function mergeServedRounds(held, { own = true, bonded = null, drawn = nul
     }
   });
   const pick = (copies) => { let best = null; for (const c of copies.values()) if (!best || c.seats > best.seats) best = c; return best.committee; };
-  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()], sources: [...r.sources.values()], own: r.own })),
+  return { rounds: [...rounds.values()].map((r) => ({ roundId: r.roundId, committee: pick(r.copies), finals: [...r.finals.values()], sources: [...r.sources.values()], own: r.own,
+    ...(need.has(hx(r.roundId)) ? { signersMin: need.get(hx(r.roundId)) } : {}) })),
     conflicts: [...conflicts] };
+}
+
+/**
+ * THE UNDRAWN FALLBACK'S END (kanban #3867, RULED 2026-11-28): a purchase of an earlier layout (not marked drawn) is kept under the undrawn merge
+ * only below a named cutoff height per network, set after the page bundle that draws is live - from that height a seat refuses an undrawn root.
+ * null: not named yet, the fallback stands (nothing already paid is refused). Order: page first, then seats, then the cutoff.
+ */
+export const UNDRAWN_PURCHASE_CUTOFF = Object.freeze({ regtest: null, testnet4: null, mainnet: null });
+/** May a seat keep this purchase under the undrawn merge at chain height `height`? Never for a purchase marked drawn. */
+export function undrawnRootTaken({ drawn = false, network, height, cutoffs = UNDRAWN_PURCHASE_CUTOFF }) {
+  if (drawn) return false;
+  const at = cutoffs ? cutoffs[network] : null;
+  return at === null || at === undefined || !(Number(height) >= Number(at));
 }
