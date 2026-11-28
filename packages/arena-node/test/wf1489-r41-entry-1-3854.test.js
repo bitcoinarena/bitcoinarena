@@ -21,8 +21,8 @@ import { YES, NO } from '../../arena-protocol/src/order-book.js';
 import { UP_DOWN_OUTCOMES } from '../../arena-protocol/src/up-down.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
 import { POOL_FIRST_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from '../../arena-protocol/src/constants.js';
-// 2.0: 35 is spoken only once 34 is (constants.js POOL_FIRST_VERSION) - until then the protocol-35 cases are skipped, as genesis-run-3762's
-const AT35 = !SUPPORTED_PROTOCOL_VERSIONS.includes(POOL_FIRST_VERSION) && 'protocol 35 is spoken on 2.0 only with 34 (#3612/#3680)';
+// 2.0 speaks 34-36 since kanban #3897 (the lock fixture's bonds are node-signed, as a 34+ draw needs); a build without 35 skips these cases
+const AT35 = !SUPPORTED_PROTOCOL_VERSIONS.includes(POOL_FIRST_VERSION) && 'protocol 35 is not spoken on this build';
 
 // ON 2.0, 27 AND UP IS ALSO THE ARENA LOCK (arena-lock.js NAMED_CLAIM_VERSION, regtest's point 0): this fixture's locks are stock contracts, so its
 // rounds sit below regtest's named-claim point by the harness switch, as wf1489-r20-h2h-1 and h2h-lock-set-2561 do (kanban #1489 port of #3854)

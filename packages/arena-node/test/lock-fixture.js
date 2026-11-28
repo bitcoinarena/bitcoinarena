@@ -24,6 +24,7 @@ import { b32, rand, STAKE, WINDOW_MS, contractFor, opts } from './window-fixture
 import { TEST_FEDERATION_ID } from '../../arena-protocol/src/test-federation.js';
 import { chainOf, publicationOf } from '../../arena-protocol/tools/chainview.js';
 import { bondTransaction } from '../../arena-protocol/tools/bond.js';
+import { advertId } from '../../arena-protocol/src/advert.js';
 import { deriveCensus } from '../../arena-protocol/src/census.js';
 import { parseTransaction } from '../../arena-protocol/src/tx.js';
 import { beaconFromChain } from '../../arena-protocol/src/beacon.js';
@@ -104,19 +105,22 @@ export function bondedChainSlot(port = lockPort()) {
 // placeholder for a key no daemon stands behind.
 // `hostedGames`: the games the bonded nodes' advertisements host - nextblock unless a test hands others
 // `protocolVersions`: what the bonded nodes' advertisements speak (a round of a version none of them speaks seats nobody) - [1]
-export function bondedChainFor(nodes, contract, slot = bondedChainSlot(), { endpoints = [], hostedGames = [NEXTBLOCK_GAME_ID], protocolVersions = [1], declares = null } = {}) {
+export function bondedChainFor(nodes, contract, slot = bondedChainSlot(), { endpoints = [], hostedGames = [NEXTBLOCK_GAME_ID], protocolVersions = [1], declares = null, signers = null } = {}) {
   const hosted = [...hostedGames].sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
   slot.federationId = contract.federationId;
   slot.committeeSec = Math.floor(Number(contract.committeeTimeMs) / 1000);
   slot.views.clear();
   slot.guardianKeys = nodes.map((_, i) => Uint8Array.from([0x02, ...new Uint8Array(32).fill(0x60 + i)]));
-  slot.bonds = nodes.map((key, i) => bondTransaction({
+  // `signers` (kanban #3897): each node's secret, so its bond body is one its node signed - from protocol 34 an entry its node did not sign is no
+  // part of the draw (sortition.js SIGNED_DRAW_VERSION, #3743), and a seat's census then assigns the round no keys
+  slot.bonds = nodes.map((key, i) => { const advert = {
     nodePubkey: key, operatorId: `operator${i}`, protocolVersions, hostedGames: hosted, roles: ['game', 'settlement'],
     endpoint: endpoints[i] || `ws://node${i}`, region: 'eu-west', capacityClass: 1, softwareHash: b32(2), settlementCapabilities: 0,
     lightningCapabilities: 0, bondTxid: new Uint8Array(32), bondVout: 0, bondScriptTemplateVersion: 1, payoutPubkey: b32(3),
     guardianOf: [{ federationId: contract.federationId, guardianKey: slot.guardianKeys[i] }], timestamp: 1788700000000n,
     ...(declares ? { declares } : {}),
-  }, { previousTxid: b32(0xa0 + i), previousVout: 0, outputKey: bondFor(key) }));
+  }; return bondTransaction(advert, { previousTxid: b32(0xa0 + i), previousVout: 0, outputKey: bondFor(key),
+    ...(signers && signers[i] ? { signature: schnorr.sign(advertId(advert), signers[i]) } : {}) }); });
   // THE ROUND'S OWN COMMITTEE TIME: the chain is mined around it (above), so it stands - the entry window it opens is the
   // contract's, unchanged. Returned so the fixture spreads exactly the fields the ruling names.
   const committeeTimeMs = contract.committeeTimeMs;
