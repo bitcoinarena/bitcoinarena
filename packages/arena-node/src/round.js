@@ -152,7 +152,8 @@ const verifyNode = (signature, message, pubkey) => {
 const sendRow = (r) => ({ entryId: new Uint8Array(r.entry_id), attempt: r.attempt, roundId: new Uint8Array(r.round_id),
   address: r.address, invoice: r.invoice, paymentHash: r.payment_hash, invoiceMsat: BigInt(r.invoice_msat), payoutMsat: BigInt(r.payout_msat),
   owedMsat: BigInt(r.owed_msat), gatewayUrl: r.gateway_url, gatewayPk: r.gateway_pk, expiration: BigInt(r.expiration),
-  txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why, donation: !!r.donation });
+  txid: r.txid, outIdx: r.out_idx === null ? null : Number(r.out_idx), preimage: r.preimage, state: r.state, why: r.why, donation: !!r.donation,
+  ...(r.verify ? { verify: r.verify } : {}) });   // kanban #3828: a donation plan's LUD-21 verify URL
 
 /** A transcript (transcript.js) frames each batch with a u16 length: no batch longer than this can be in one. */
 export const TRANSCRIPT_BATCH_MAX_BYTES = 65535;
@@ -3456,14 +3457,14 @@ export class Round {
    * donation_sends under its send id, since a recipient is no entry; every reader below reads both.
    */
   putSendPlan({ entryId, roundId, attempt = 0, address, invoice, paymentHash, invoiceMsat, payoutMsat, owedMsat, gatewayUrl, gatewayPk,
-    expiration, state = 'PLANNED', why, donation = false }) {
+    expiration, state = 'PLANNED', why, donation = false, verify = '' }) {
     const now = this.now();
     return this.db.prepare(`INSERT INTO ${donation ? 'donation_sends' : 'winnings_sends'} (entry_id, attempt, round_id, address, invoice, payment_hash, invoice_msat, payout_msat, `
-      + 'owed_msat, gateway_url, gateway_pk, expiration, state, why, planned_ms, updated_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+      + 'owed_msat, gateway_url, gateway_pk, expiration, state, why, planned_ms, updated_ms, verify) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
       + 'ON CONFLICT(entry_id, attempt) DO NOTHING')
       .run(Buffer.from(entryId), attempt, Buffer.from(roundId), String(address), String(invoice), String(paymentHash).toLowerCase(),
         Number(invoiceMsat), Number(payoutMsat), Number(owedMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(), Number(expiration),
-        state, String(why), now, now).changes > 0;   // false: that (entry, attempt) was kept already, and the first row stands
+        state, String(why), now, now, String(verify || '')).changes > 0;   // false: that (entry, attempt) was kept already, and the first row stands
   }
 
   /**
@@ -3471,12 +3472,12 @@ export class Round {
    * own attempt N+1 and the peers split between them for good. A row still PLANNED (nothing signed on it, nothing funded) is replaced by a
    * seat's re-send whose payment hash is lower; true if it was.
    */
-  replaceSendPlan({ entryId, attempt, invoice, paymentHash, invoiceMsat, payoutMsat, gatewayUrl, gatewayPk, expiration, why, donation = false }) {
+  replaceSendPlan({ entryId, attempt, invoice, paymentHash, invoiceMsat, payoutMsat, gatewayUrl, gatewayPk, expiration, why, donation = false, verify = '' }) {
     if (!(attempt > 0)) return false;
     return this.db.prepare(`UPDATE ${donation ? 'donation_sends' : 'winnings_sends'} SET invoice = ?, payment_hash = ?, invoice_msat = ?, payout_msat = ?, gateway_url = ?, `
-      + "gateway_pk = ?, expiration = ?, why = ?, updated_ms = ? WHERE entry_id = ? AND attempt = ? AND state = 'PLANNED' AND payment_hash > ?")
+      + "gateway_pk = ?, expiration = ?, why = ?, updated_ms = ?, verify = ? WHERE entry_id = ? AND attempt = ? AND state = 'PLANNED' AND payment_hash > ?")
       .run(String(invoice), String(paymentHash).toLowerCase(), Number(invoiceMsat), Number(payoutMsat), String(gatewayUrl), String(gatewayPk).toLowerCase(),
-        Number(expiration), String(why), this.now(), Buffer.from(entryId), attempt, String(paymentHash).toLowerCase()).changes > 0;
+        Number(expiration), String(why), this.now(), String(verify || ''), Buffer.from(entryId), attempt, String(paymentHash).toLowerCase()).changes > 0;
   }
 
   /**

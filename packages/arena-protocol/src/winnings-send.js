@@ -121,3 +121,33 @@ export const proposedExpiration = (height, gw) => BigInt(height) + BigInt(gw.exp
 
 /** The invoice's own payment hash, hex. */
 export const paymentHashOf = (invoice) => toHex(decodeBolt11(invoice).paymentHash);
+
+/**
+ * A DONATION SEND ONLY ON AN INVOICE THE ADDRESS PROVES IT ISSUED (kanban #3828, RULED 2026-11-28): signed by the address's node key is not enough -
+ * on a shared or custodial node every account has that key. From DONATION_PROOF_VERSION (the round's own version) the address's pay callback must
+ * return a LUD-21 `verify` URL with the invoice, https on the same host the LNURL-pay endpoint was read from; every checking seat fetches it itself
+ * and requires status OK and a `pr` equal byte for byte to the plan's invoice, whose payment hash is the plan's. Unproven, the share is planned
+ * HELD. Rounds of an earlier version are planned and signed as before. Winnings sends are not changed by this rule.
+ */
+export const DONATION_PROOF_VERSION = 37;
+export const provesDonationInvoice = (contract) => !!contract && Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= DONATION_PROOF_VERSION;
+
+/** Why a verify URL is not one the address's own host gives (null when it is): https, the endpoint's host exactly (`endpointHost` as host[:port]). */
+export function verifyUrlRefusal(verify, endpointHost) {
+  let u;
+  try { u = new URL(String(verify || '')); } catch { return 'the address gives no LUD-21 verify URL with its invoice'; }
+  if (u.protocol !== 'https:') return `the address's verify URL is not https (${u.protocol})`;
+  const host = u.port ? `${u.hostname.toLowerCase()}:${u.port}` : u.hostname.toLowerCase();
+  if (!endpointHost || host !== String(endpointHost).toLowerCase()) return `the address's verify URL is on ${host}, not on the address's own host ${endpointHost}`;
+  return null;
+}
+
+/** Does the verify URL's answer prove the plan's invoice? { ok } or { ok: false, why }. */
+export function donationProofStands({ answer, invoice, paymentHash }) {
+  if (!answer || typeof answer !== 'object') return { ok: false, why: 'the verify URL answered no JSON object' };
+  if (answer.status !== 'OK') return { ok: false, why: `the verify URL answered status ${String(answer.status).slice(0, 40)}${answer.reason ? `: ${String(answer.reason).slice(0, 120)}` : ''}` };
+  if (typeof answer.pr !== 'string' || answer.pr !== String(invoice)) return { ok: false, why: 'the verify URL names another invoice than the plan\'s' };
+  let h; try { h = paymentHashOf(answer.pr); } catch (e) { return { ok: false, why: `the verified invoice does not decode: ${e.message}` }; }
+  if (h !== String(paymentHash).toLowerCase()) return { ok: false, why: 'the verified invoice pays another payment hash than the plan\'s' };
+  return { ok: true };
+}
