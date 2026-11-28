@@ -22,7 +22,7 @@ import { decodeTranscript, transcriptHash, checkTranscript, transcriptBelongsToE
 import { decodeCheckpoint, checkpointId, splitSigned } from '../../arena-protocol/src/checkpoint.js';
 import { splitSignedReceipt, decodeCheckpointReceipt, receiptId, SIGNED_RECEIPT_BYTES } from '../../arena-protocol/src/receipt.js';
 import { entryId as entryIdOf } from '../../arena-protocol/src/contracts.js';
-import { resultFrom, runId } from './verdict.js';
+import { resultFrom, runId, runIdAs } from './verdict.js';
 import { replay } from './replay.js';
 import { dissentsOn } from './test-dissent.js';
 import { loadValueRefusal } from './load-checks.js';
@@ -313,7 +313,7 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
       vouched = true;
       if (typeof keepRun === 'function') { try { keepRun(mine, key); } catch { /* remembering is a saving, never a verdict */ } }
       const ownBuilt = resultFrom({ answer: own, contract, entry, transcript: { ...t, hash: th }, entryId, nodePubkey: NOBODY, stopped: true });
-      return ownBuilt.ok && hex(runId(ownBuilt.result)) === hex(signedResultId) ? 'refuse' : 'carried';
+      return ownBuilt.ok && hex(runIdAs(ownBuilt.result, t.batches, signedResultId)) === hex(signedResultId) ? 'refuse' : 'carried';   // kanban #3903
     };
     let verdict = null;
     if (typeof knownRun === 'function') { let k = null; try { k = knownRun(marks); } catch { k = null; } verdict = await tryRun(k && Array.isArray(k.ticks) ? k : null); }
@@ -358,9 +358,12 @@ export async function checkObjectionBundle({ bundle, roundId, entryId, entry, co
   }
   const built = resultFrom({ answer, contract, entry, transcript: { ...t, hash: th }, entryId, nodePubkey: NOBODY, stopped: true });
   if (!built.ok) return no('replay', `the transcript does not replay under the round's core: ${built.why}`);
-  const replayed = runId(built.result);
-  const claimed = runId({ roundId: o.roundId, playerPubkey: o.playerPubkey, outcome: o.claimedOutcome, score: o.claimedScore,
-    transcriptHash: o.transcriptHash, simCoreHash: contract.simCoreHash, nodePubkey: NOBODY });
+  // IN THE FORM THE COMMITTEE SIGNED (kanban #3903): a price round's signed result carries its front, read off the run's attested samples - without it
+  // the replayed and claimed ids never equalled the signed one, every objection to an honest price round held, and an auditor never AUDITed one
+  const replayed = runIdAs(built.result, t.batches, signedResultId);
+  const claimedResult = { roundId: o.roundId, playerPubkey: o.playerPubkey, outcome: o.claimedOutcome, score: o.claimedScore,
+    transcriptHash: o.transcriptHash, simCoreHash: contract.simCoreHash, nodePubkey: NOBODY };
+  const claimed = runIdAs(claimedResult, t.batches, signedResultId);
   const facts = { replayedRunId: hex(replayed), claimedRunId: hex(claimed), signedRunId: hex(signedResultId),
     replayed: { outcome: built.result.outcome, score: built.result.score, ...(answer && answer.hashes ? { hashes: answer.hashes } : {}) }, claimed: { outcome: o.claimedOutcome, score: o.claimedScore } };
   if (hex(replayed) !== hex(claimed))

@@ -220,3 +220,14 @@ export function verifiedFinal(records, { contract, signerNodes: joined }) {
  * being "no, because you are not me".
  */
 export const runId = (r) => resultId({ ...r, nodePubkey: new Uint8Array(32) });
+/**
+ * THE RUN AS A SIGNED RESULT NAMES IT, WITH OR WITHOUT ITS PRICE FRONT (kanban #3903): a price round's result carries the front its run ended on (§13
+ * front_*, resultFrom priceRound), read off the run's own attested samples. A run rebuilt from a transcript is the same run whichever of the two forms its
+ * committee signed: `signedId` given, answers the form that equals it (the front read off `batches`), else the plain run id.
+ */
+export function runIdAs(result, batches, signedId = null) {
+  const plain = runId(result);
+  if (!signedId || !Array.isArray(batches)) return plain;
+  const fronted = runId({ ...result, ...frontOfRun(batches) });
+  return same(fronted, signedId) ? fronted : plain;
+}
