@@ -14,7 +14,9 @@ export AWS_LC_SYS_PREBUILT_NASM=1 CARGO_NET_RETRY=10 CARGO_PROFILE_RELEASE_DEBUG
 export CFLAGS_x86_64_pc_windows_gnu="-Wno-unused-command-line-argument" CXXFLAGS_x86_64_pc_windows_gnu="-Wno-unused-command-line-argument"
 export LIBCLANG_PATH=/Library/Developer/CommandLineTools/usr/lib
 export BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_gnu="-I$B/zig-aarch64-macos-0.16.0/lib/include -I$B/zig-aarch64-macos-0.16.0/lib/libc/include/any-windows-any"
-export FEDIMINT_BUILD_FORCE_GIT_HASH=5fa01c5d7e66c73074bd0cd96db83f0d86f15429 CARGO_TARGET_DIR=$B/target-custody
+# FORK_HASH (kanban #3910): the fork commit checked out in $F. 1.9's fedimintd and fedimint-cli: 20d79ed6d24 (branch blwp/custody-19-3910) = 5fa01c5d7e6 +
+# packages/arena-node/tools/fedimint-spent-nonces.patch; its gatewayd and arena-stake-lock stay 5fa01c5d's (BINS="fedimintd fedimint-cli")
+export FEDIMINT_BUILD_FORCE_GIT_HASH=${FORK_HASH:-20d79ed6d240f358c4484b57d4366ce146f859dd} CARGO_TARGET_DIR=$B/target-custody
 say() { echo "$(date -u +%T) $*"; }
 rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu x86_64-apple-darwin >/dev/null 2>&1 || { say "rustup targets failed"; exit 1; }
 cd $F

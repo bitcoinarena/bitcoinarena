@@ -116,24 +116,28 @@ fi
 # tools/release/custody-build.sh (stripped; Linux against glibc 2.31), pinned here by SHA-256 and fetched from this repo's release
 # custody-76012ad9 (ARENA_CUSTODY_DIR: a local copy instead). A system without a pinned binary gets a release without custody - the
 # wizard says so (gateway.js findGatewayd).
-CUSTODY_TAG=custody-5fa01c5d   # kanban #584 (2026-10-22, urgent): fork 5fa01c5d7e6 = upstream v0.12.2 (the LNv2 gateway fund-loss fixes) + the BLWP commits of 7e8caa9fd3a
+# AND THE LIQUIDATION PATCH (kanban #3910): 5fa01c5d's fedimintd and fedimint-cli lacked packages/arena-node/tools/fedimint-spent-nonces.patch - no guardian
+# could publish a spent set (blwp_spent_nonces), no arbiter validate a claim (`module mintv2 validate`, check-pending). Release custody-20d79ed6: fedimintd and
+# fedimint-cli of the fork 20d79ed6d24 (branch blwp/custody-19-3910) = 5fa01c5d7e6 + that patch, built 2026-11-28 on the MacBook (FORK_HASH=20d79ed6d240f358c4484b57d4366ce146f859dd
+# BINS="fedimintd fedimint-cli" tools/release/custody-build.sh); gatewayd and arena-stake-lock unchanged, the bytes of custody-5fa01c5d. custody-check.sh holds every release to it.
+CUSTODY_TAG=custody-20d79ed6   # was custody-5fa01c5d: kanban #584 (2026-10-22, urgent): fork 5fa01c5d7e6 = upstream v0.12.2 (the LNv2 gateway fund-loss fixes) + the BLWP commits of 7e8caa9fd3a
 # the pinned binaries, "<bin>:<os>-<arch>" -> SHA-256 (out/SHA256SUMS.custody of tools/release/custody-build.sh)
 declare -A CUSTODY_SHA=(
   [gatewayd:windows-x64]=ee4a435f13fdc62c65a39625b0ab7f563a0b3eeffcd790e0b25076631e57a6bb
-  [fedimintd:windows-x64]=78297d65677112f060cad06f24d5519cc6ff24aabd76f243314dee663992ca01
-  [fedimint-cli:windows-x64]=40672f9f4940ff05f87384bf973975c65a4e58badfa9ff32a2f2bd85966dadf0
+  [fedimintd:windows-x64]=8cd663eaf838c039e21194657738e2200f3f4351d5844f44264eb58d2074390c
+  [fedimint-cli:windows-x64]=c8de7199a83323167db40d60011024affda41fdc8e76be2f89254fe041d5f7dc
   [gatewayd:darwin-arm64]=e7bf5c7abeba4e594258b9c172289981cde006d7dfbfabc4e216866378650915
   [gatewayd:darwin-x64]=d0c3db84eff8cc5225ad15978c2640f2ac2f268a8686f265d7ece052a5271a8e
   [gatewayd:linux-arm64]=edfdcc2ac125088d223f6f1b6f4b9c5c5ee54768a2a128e02476bb313f7c886d
   [gatewayd:linux-x64]=7448fb5e43f010eb207397ad42eb7d23f8d7e08f50d1786c39b232a7f89bf40d
-  [fedimintd:darwin-arm64]=701f15908dd2bc9c0d6ea0de5b4a98aa94c689d1d0d7c4adac152ecef3670b4f
-  [fedimintd:darwin-x64]=1a7299bef2de53057eaef93709f57545cfc71fc07029eb5a98c5a754d1e2234f
-  [fedimintd:linux-arm64]=304ad329690b73484b1228fb33f574a5c272f9aacd48e293ec09995ebaa61f8c
-  [fedimintd:linux-x64]=cbfb9ecad56b271ac4501c154aa1ee7a51eebdcbe23d4e66b118fb4c5b5c1283
-  [fedimint-cli:darwin-arm64]=a5a6d1f8f2c7acde00b52be2e7af3f8997279d7d6877012aa3198b4b621ffae9
-  [fedimint-cli:darwin-x64]=9d590a30e3e62a75c8289cef33b800ed6372fac65b23391b8017f2cc200a8bc1
-  [fedimint-cli:linux-arm64]=bd6a3f3c1ec1ea2d730726c03f36ebfc75b3767d5f780ebcdf03ad1c62a7488e
-  [fedimint-cli:linux-x64]=1eb63589f6753fc2da3c1e2c6c5ead2b6aeb88b5b319784ad81a0a80e1bf8a75
+  [fedimintd:darwin-arm64]=d1bcf21b02a8afb5528ac1e437ceae4c186c303e43989c01cc616cb637dc1f5d
+  [fedimintd:darwin-x64]=aa474a6a15f9bbb923cdb1c61c33f74b2e0a6a9a19d08fb89df5ae82035b7aa8
+  [fedimintd:linux-arm64]=c24f48ec31d13ef361f6e988e12a3de335bc882d7c2f3be4e3b52edf0ffa8c5a
+  [fedimintd:linux-x64]=a48cb23ac9fcb97f1a3ed0edfac152ded435dd8d62c7cff0b7c10f5485c9a682
+  [fedimint-cli:darwin-arm64]=596c61d0a5cb06f3885db6497745fc41ac28e74c0b94ef1b90fabe2dd6f5be34
+  [fedimint-cli:darwin-x64]=8c98e310994e4e99f540edf85b50cade422fe4e899ce9e52028cb335e41c0064
+  [fedimint-cli:linux-arm64]=698c26347e344570845d0c8d89bbe55f9d328c41de3178f3200ac8ea76e5345f
+  [fedimint-cli:linux-x64]=43080ede49ee30136bfcbde3854719168df5efe0a2613c194aadd04ccb1ec426
   [arena-stake-lock:windows-x64]=3e48d66650f22071a7f8a278292dd192822e392cb88b47aa22d8ccff2116b930
   [arena-stake-lock:darwin-arm64]=5c2098f857017a305aa91fed2ffa009b9e39011641b799527062ebcf56d9b434
   [arena-stake-lock:darwin-x64]=ed3d2aa607d8a4641b097f9efc1564d218812e90f40e645ed21341de983500bd
@@ -154,6 +158,10 @@ for BIN in gatewayd fedimintd fedimint-cli arena-stake-lock; do
   mkdir -p "$STAGE/runtime/custody"
   install -m 0755 "$CACHE/$F" "$STAGE/runtime/custody/$BIN$EXE"
 done
+# and the custody carries the liquidation patch (kanban #3910: custody-5fa01c5d did not - no spent set, no claim validated): a release without it stops here
+if [ -f "$STAGE/runtime/custody/fedimintd$EXE" ]; then
+  bash "$ROOT/tools/release/custody-check.sh" "$STAGE/runtime/custody/fedimintd$EXE" "$STAGE/runtime/custody/fedimint-cli$EXE" || exit 1
+fi
 
 if [ "$OS" = windows ]; then rm "$STAGE/packages/arena-installer/node_modules"; cp -R "$STAGE/packages/arena-node/node_modules" "$STAGE/packages/arena-installer/node_modules"; fi
 # (and the apps' arena-sdk, a link the .zip would lose too: a copy of the folder - kanban #569)
