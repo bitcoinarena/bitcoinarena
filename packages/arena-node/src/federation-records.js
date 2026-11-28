@@ -12,6 +12,7 @@
 // A seat that is a guardian signs the body (GET /federation-record); every seat gathers the guardians' signatures from
 // their endpoints and, at the threshold, keeps the signed record and mirrors it at GET /federations. A record whose status
 // is DRAINING, CRITICAL or CLOSED makes the federation draining at this seat (no new round names it).
+import { roundsAfter } from './rounds-paged.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { nodeBonds } from '../../arena-protocol/src/census.js';
@@ -398,7 +399,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
       highRow = top && top.m !== null ? Number(top.m) : 0; lowRow = highRow + 1;
       return;
     }
-    for (const r of round.db.prepare('SELECT rowid, round_id, contract FROM rounds WHERE rowid > ? ORDER BY rowid').all(highRow)) { highRow = r.rowid; keepRow(r); }
+    for (const r of roundsAfter(round.db, 'rowid, round_id, contract', highRow)   /* kanban #3904: a page at a time */) { highRow = r.rowid; keepRow(r); }
   };
   /** The next CHUNK rows below the lowest read so far, newest first. */
   const older = () => {
