@@ -50,7 +50,7 @@ const paidTo = (paid, xonlyHex) => paid.filter((o) => String(o.pk).toLowerCase()
 
 test('a seat that invents a round with its own made-up committee is paid nothing of the nodes\' half', async () => {
   const w = wallet();
-  const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32),
+  const r = await buyItem({ drawnOf: async () => ({ keys: new Set([...NODE_KEYS].map((k) => (typeof k === 'string' ? k : toHex(k)))) }), manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32),
     player, seats: ['https://good', 'https://bad'], fetch: seats([fake]), verify, nowMs: () => NOW });
   assert.equal(r.ok, true, r.why);
   const toSybils = SYBIL_KEYS.reduce((t, k) => t + paidTo(w.paid, k), 0n);
@@ -60,7 +60,7 @@ test('a seat that invents a round with its own made-up committee is paid nothing
 test('a seat that names a real round with another committee does not take the honest nodes\' share away', async () => {
   const w = wallet();
   const hijack = { roundId: toHex(ROUND), committee: [SYBIL_KEYS[0]], finals: [] };
-  const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32),
+  const r = await buyItem({ drawnOf: async () => ({ keys: new Set([...NODE_KEYS].map((k) => (typeof k === 'string' ? k : toHex(k)))) }), manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32),
     player, seats: ['https://good', 'https://bad'], fetch: seats([hijack, fake]), verify, nowMs: () => NOW });
   assert.equal(r.ok, true, r.why);
   for (const k of NODE_KEYS) assert.ok(paidTo(w.paid, toHex(k)) > 0n, `node ${toHex(k).slice(0, 16)} served the round and is paid nothing`);

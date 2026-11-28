@@ -45,6 +45,13 @@ export const PURCHASE_WINDOW_SLACK_MS = 3600000;
  */
 export const PURCHASE_RESERVES_LAYOUT = 12;
 /**
+ * A PURCHASE WHOSE SERVED ROOT IS DRAWN (kanban #3867, RULED 2026-11-28): written as LAYOUT 37 - the purchase's protocol version, the next one -
+ * with the fields of layout 12. It says the served root credits only rounds whose committee is the census draw (served-nodes.js
+ * mergeServedRounds `drawn`), on the page exactly as on the seats: a seat keeps such a purchase only when its own drawn merge gives the same
+ * root, never an undrawn one. decodePurchase marks it `drawn: true`. The page writes it once the network speaks 37.
+ */
+export const PURCHASE_DRAWN_LAYOUT = 37;
+/**
  * THE PAYMENT NAMES THE ITEM (kanban #1180): the image of every output's payout contract is this commitment - the buyer, the game (its
  * developer and name), the item, its price and the served window - not the buyer's key alone. Each field is known before the payment
  * and is in the record, so a seat rebuilds it. With the key alone one payment fitted any item of the same price: a record for item A
@@ -74,8 +81,9 @@ export function encodePurchase(p) {
     if (!Number.isInteger(share) || share < 0 || share > 100) throw new Error('on the reserves\' terms a developers\' share is a whole percent; which ones the fees in force allow, purchaseStands says');
     if (!pIs32(p.gameId) || !pIs33(p.reserveKey)) throw new Error('a purchase on the reserves\' terms names its game version by 32 bytes and the reserve key by 33');
   } else if (!itemDevShareOk(share)) throw new Error(`a purchase's developers' share is one of ${ITEM_DEV_SHARES.join(', ')} %`);
+  if (p.drawn && !reserves) throw new Error('a purchase marked drawn (layout 37) is on the reserves\' terms');
   const w = new Writer();
-  w.u8(TYPE_ITEM_PURCHASE); w.u16(reserves ? PURCHASE_RESERVES_LAYOUT : share === ITEM_DEV_SHARE_DEFAULT ? ITEMS_VERSION : PURCHASE_SHARE_VERSION);
+  w.u8(TYPE_ITEM_PURCHASE); w.u16(reserves ? (p.drawn ? PURCHASE_DRAWN_LAYOUT : PURCHASE_RESERVES_LAYOUT) : share === ITEM_DEV_SHARE_DEFAULT ? ITEMS_VERSION : PURCHASE_SHARE_VERSION);
   w.bytes32(p.gameDevPubkey); w.str(p.gameName); w.str(p.itemId); w.u64(BigInt(p.priceSat));
   if (reserves) { w.u8(share); w.bytes32(p.gameId); w.bytes(p.reserveKey, 33); }
   else if (share !== ITEM_DEV_SHARE_DEFAULT) w.u8(share);
@@ -90,18 +98,19 @@ export function decodePurchase(bytes) {
   const r = new Reader(bytes);
   if (r.u8() !== TYPE_ITEM_PURCHASE) throw new Error('not an item purchase');
   const version = r.u16();
-  if (version !== ITEMS_VERSION && version !== PURCHASE_SHARE_VERSION && version !== PURCHASE_RESERVES_LAYOUT) throw new Error(`an item purchase of version ${version}`);
+  if (version !== ITEMS_VERSION && version !== PURCHASE_SHARE_VERSION && version !== PURCHASE_RESERVES_LAYOUT && version !== PURCHASE_DRAWN_LAYOUT) throw new Error(`an item purchase of version ${version}`);
+  const drawn = version === PURCHASE_DRAWN_LAYOUT;
   const head = { gameDevPubkey: r.bytes32(), gameName: r.str(), itemId: r.str(), priceSat: r.u64() };
   const devsPct = version === ITEMS_VERSION ? ITEM_DEV_SHARE_DEFAULT : r.u8();
   if (version === PURCHASE_SHARE_VERSION && (devsPct === ITEM_DEV_SHARE_DEFAULT || !itemDevShareOk(devsPct)))
     throw new Error(`a version-${PURCHASE_SHARE_VERSION} purchase names a developers' share below ${ITEM_DEV_SHARE_DEFAULT} %, one of ${ITEM_DEV_SHARES.join(', ')}`);
   const terms = {};
-  if (version === PURCHASE_RESERVES_LAYOUT) {
+  if (version === PURCHASE_RESERVES_LAYOUT || drawn) {
     if (!Number.isInteger(devsPct) || devsPct < 0 || devsPct > 100) throw new Error('on the reserves\' terms a developers\' share is a whole percent');
     terms.gameId = r.bytes32(); terms.reserveKey = r.bytes(33);
     if (!pIs33(terms.reserveKey)) throw new Error('a reserve key is a 33-byte compressed key');
   }
-  const p = { ...head, devsPct, ...terms, playerPubkey: r.bytes32(), federationId: r.bytes32(),
+  const p = { ...head, devsPct, ...terms, ...(drawn ? { drawn: true } : {}), playerPubkey: r.bytes32(), federationId: r.bytes32(),
     txid: r.bytes32(), servedFromMs: r.u64(), servedToMs: r.u64(), servedRoot: r.bytes32(),
     outputs: r.vec((rr) => ({ outIdx: rr.u32(), pk: rr.bytes(33), msat: rr.u64() })), boughtAtMs: r.u64() };
   r.end();

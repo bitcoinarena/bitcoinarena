@@ -12,6 +12,9 @@ import { decodePurchase, purchaseStands } from '../../arena-protocol/src/purchas
 import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 import { pointKey } from '../../arena-protocol/test/point-key-fixture.js';  // kanban #1675: fixture keys are curve points
 
+// kanban #3867: the page draws every round it credits - here the census draw of this round is its committee
+const DRAWN = async () => ({ keys: new Set(NODE_KEYS_HEX()), threshold: 2 });
+const NODE_KEYS_HEX = () => NODE_KEYS.map((k) => toHex(k));
 const b32 = (n) => new Uint8Array(32).fill(n);
 const pk33 = (n) => pointKey(0x02, n);
 const verify = (s, m, k) => schnorr.verify(s, m, k);
@@ -28,7 +31,7 @@ const finals = NODES.map((s) => signFinalSig({ roundId: ROUND, entryId: b32(1), 
 function seatsWith({ keep = 200 } = {}) {
   const posted = [];
   const fetch = async (url, o = {}) => {
-    if (url.includes('/served?')) return { ok: true, json: async () => ({ held: [{ roundId: toHex(ROUND), committee: NODE_KEYS.map(toHex), finals: finals.map(toHex) }] }) };
+    if (url.includes('/served?')) return { ok: true, json: async () => ({ held: [{ roundId: toHex(ROUND), committee: NODE_KEYS.map(toHex), finals: finals.map(toHex), contract: 'cc' }] }) };
     if (url.endsWith('/item-purchase')) { posted.push(JSON.parse(o.body)); return { ok: keep === 200, status: keep, text: async () => 'not now' }; }
     if (url.includes('/items?')) return { ok: true, json: async () => ({ items: [{ id: 'ab'.repeat(32), itemId: 'large-truck', gameName: 'nextblock' }] }) };
     throw new Error(`no such door ${url}`);
@@ -42,7 +45,7 @@ const walletPaying = (fail = null) => ({
 
 test('bought: the split paid in one transaction, the signed record handed to a seat, and it stands there', async () => {
   const { fetch, posted } = seatsWith();
-  const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: 'fe'.repeat(32),
+  const r = await buyItem({ drawnOf: DRAWN, manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: 'fe'.repeat(32),
     player, seats: ['https://s1', 'https://s2'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex) });
   assert.equal(r.ok, true, r.why);
   assert.deepEqual([r.keptBy, r.priceSat, r.outputs, posted.length], ['https://s1', 500n, 5, 2]);   // kanban #2420: handed to every seat, kept by two
@@ -57,7 +60,7 @@ test('bought: the split paid in one transaction, the signed record handed to a s
 // sats. Node fees are never optional."): at 0 % the three nodes alone are paid, 250 sat, and the record a seat gets stands
 test('bought at 0 %: the nodes\' half alone, 250 sat, the record version 11 standing at the seat; a share not offered is refused', async () => {
   const { fetch, posted } = seatsWith();
-  const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: 'fe'.repeat(32),
+  const r = await buyItem({ drawnOf: DRAWN, manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: 'fe'.repeat(32),
     player, seats: ['https://s1'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex), devsPct: 0 });
   assert.equal(r.ok, true, r.why);
   assert.deepEqual([r.priceSat, r.paidSat, r.devsPct, r.outputs], [500n, 250n, 0, 3]);
@@ -66,7 +69,7 @@ test('bought at 0 %: the nodes\' half alone, 250 sat, the record version 11 stan
   assert.equal(p.outputs.reduce((t, o) => t + o.msat, 0n), 249999n, '3 x 83333 msat: the nodes\' half, floored per node');
   const served = { fromMs: p.servedFromMs, toMs: p.servedToMs, nodes: NODE_KEYS.map((k) => ({ key: toHex(k), rounds: 1 })).sort((a, b) => (a.key < b.key ? -1 : 1)), root: toHex(p.servedRoot) };
   assert.equal(purchaseStands(p, { manifest: MANIFEST, networkSet: NET, gameSet: NET, served, verify }).ok, true);
-  const odd = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: 'fe'.repeat(32),
+  const odd = await buyItem({ drawnOf: DRAWN, manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: walletPaying(), federationId: 'fe'.repeat(32),
     player, seats: ['https://s1'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex), devsPct: 25 });
   assert.deepEqual([odd.ok, odd.step], [false, 'share']);
 });
@@ -74,11 +77,11 @@ test('bought at 0 %: the nodes\' half alone, 250 sat, the record version 11 stan
 test('refused by step: an item not sold, a payment that fails, a record no seat keeps (paid, kept for a retry)', async () => {
   const { fetch } = seatsWith();
   const base = { manifest: MANIFEST, networkSet: NET, gameSet: NET, federationId: 'fe'.repeat(32), player, seats: ['https://s1'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex) };
-  assert.deepEqual(Object.entries(await buyItem({ ...base, itemId: 'gold-truck', wallet: walletPaying() })).filter(([k]) => k !== 'why'), [['ok', false], ['step', 'item']]);
-  const failed = await buyItem({ ...base, itemId: 'large-truck', wallet: walletPaying('Balance is too low') });
+  assert.deepEqual(Object.entries(await buyItem({ drawnOf: DRAWN, ...base, itemId: 'gold-truck', wallet: walletPaying() })).filter(([k]) => k !== 'why'), [['ok', false], ['step', 'item']]);
+  const failed = await buyItem({ drawnOf: DRAWN, ...base, itemId: 'large-truck', wallet: walletPaying('Balance is too low') });
   assert.deepEqual([failed.ok, failed.step], [false, 'payment']); assert.match(failed.why, /Balance is too low/);
   const notKept = seatsWith({ keep: 409 });
-  const r = await buyItem({ ...base, fetch: notKept.fetch, itemId: 'large-truck', wallet: walletPaying() });
+  const r = await buyItem({ drawnOf: DRAWN, ...base, fetch: notKept.fetch, itemId: 'large-truck', wallet: walletPaying() });
   assert.deepEqual([r.ok, r.step], [false, 'record']); assert.match(r.why, /paid \(transaction 9a9a.*no seat kept the record yet: https:\/\/s1: 409 not now/);
   assert.ok(r.retry && r.purchaseId, 'the record to hand again');
 });
@@ -90,10 +93,10 @@ test('#3081 refused by the guardians: not paid, the kept record dropped, the nex
   const kept = new Map(), storage = { getItem: (k) => kept.get(k) ?? null, setItem: (k, v) => kept.set(k, String(v)), removeItem: (k) => kept.delete(k) };
   const base = { manifest: MANIFEST, networkSet: NET, gameSet: NET, federationId: 'fe'.repeat(32), player, seats: ['https://s1'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex), storage };
   const refusing = { ...walletPaying(), lockAccepted: async () => { throw new Error('the guardians did not accept the lock transaction: The transaction had an invalid input: 2-The note is already spent'); } };
-  const r = await buyItem({ ...base, itemId: 'large-truck', wallet: refusing });
+  const r = await buyItem({ drawnOf: DRAWN, ...base, itemId: 'large-truck', wallet: refusing });
   assert.deepEqual([r.ok, r.step], [false, 'payment']); assert.match(r.why, /not paid: the federation refused the payment \(The transaction had an invalid input/);
   assert.equal(kept.size, 0, 'nothing kept as paid');
-  const again = await buyItem({ ...base, itemId: 'large-truck', wallet: walletPaying() });
+  const again = await buyItem({ drawnOf: DRAWN, ...base, itemId: 'large-truck', wallet: walletPaying() });
   assert.equal(again.ok, true, again.why); assert.equal(posted.length, 1);
 });
 

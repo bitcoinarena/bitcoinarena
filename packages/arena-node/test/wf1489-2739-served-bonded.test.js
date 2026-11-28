@@ -35,19 +35,21 @@ test('one seat\'s invented round of a made-up key does not make the seats\' serv
   // the lying seat: the honest round as every seat holds it, plus one invented round whose committee is one key it made up and signed for
   const madeUp = b32(0x77), madeUpKey = schnorr.getPublicKey(madeUp), invented = b32(0x99);
   const evilHeld = [...honestHeld, { roundId: invented, committee: [madeUpKey], finals: [final(madeUp, invented)] }];
-  const wire = (held) => ({ held: held.map((r) => ({ roundId: toHex(r.roundId), committee: r.committee.map(toHex), finals: r.finals.map(toHex) })) });
+  const wire = (held) => ({ held: held.map((r) => ({ roundId: toHex(r.roundId), committee: r.committee.map(toHex), finals: r.finals.map(toHex), contract: 'cc' })) });   // kanban #3867: with the round's contract, to draw it
   const answers = { 'https://honest.example': wire(honestHeld), 'https://evil.example': wire(evilHeld) };
   const fetch = async (url) => {
     const base = Object.keys(answers).find((b) => String(url).startsWith(b + '/served'));
     return base ? new Response(JSON.stringify(answers[base]), { headers: { 'content-type': 'application/json' } }) : new Response('no', { status: 404 });
   };
   // THE BUYER'S PAGE (item-buy.js): what the purchase names and pays
-  const page = await servedFromSeats({ seats: Object.keys(answers), toMs, fetch, verify, bondedKeys });
+  // kanban #3867: page and seat both credit only the census draw - here the three honest seats, threshold 2
+  const DRAW = { keys: new Set(bondedKeys), threshold: 2 };
+  const page = await servedFromSeats({ seats: Object.keys(answers), toMs, fetch, verify, bondedKeys, drawnOf: async () => DRAW });
   assert.ok(page.ok, page.why);
   assert.ok(!page.served.nodes.some((n) => n.key === toHex(madeUpKey)), 'the page leaves the made-up key out (#1896)');
   // AN HONEST SEAT AT POST /item-purchase (server.js): its own record first, then every other seat's answer, merged as it merges them
-  const parse = (a) => (a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex) }));
-  const held = [honestHeld, parse(answers['https://evil.example'])];
+  const parse = (a) => (a.held || []).map((x) => ({ roundId: fromHex(x.roundId), committee: x.committee.map(fromHex), finals: x.finals.map(fromHex), contract: fromHex(x.contract) }));
+  const held = [honestHeld.map((r) => ({ ...r, contract: fromHex('cc') })), parse(answers['https://evil.example'])];
   // kanban #2739: the seat now merges with the node keys of the census of its newest round as `bonded` (server.js bondedNodeKeys) - here
   // the same three honest seats the page checked - at both merges (POST /item-purchase and the funding signal's servedRoundsBetween)
   const src = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
@@ -55,7 +57,7 @@ test('one seat\'s invented round of a made-up key does not make the seats\' serv
   // kanban #2912: the purchase merge runs through mergedBy (its own census first, then its recent rounds' censuses for the record's root)
   assert.equal((src.match(/mergeServedRounds\(held\.filter\(Boolean\), \{ bonded: bondedNodeKeys\(\)(, drawn: drawnOfServed)? \}\)|mergedBy\(bondedNodeKeys\(\)\)/g) || []).length, 2, 'both seat merges pass the census node keys as bonded');
   assert.match(src, /const mergedBy = \(bonded(, drawn = drawnOfServed)?\) => servedNodes\(\{ rounds: mergeServedRounds\(heldIn, \{ bonded(, drawn)? \}\)/, 'the purchase merge filters by a census (#2912)');
-  const seat = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { bonded: new Set(bondedKeys) }).rounds, fromMs, toMs, verify });
+  const seat = servedNodes({ rounds: mergeServedRounds(held.filter(Boolean), { bonded: new Set(bondedKeys), drawn: () => DRAW }).rounds, fromMs, toMs, verify });
   console.log(`  page root ${page.served.root.slice(0, 16)} (${page.served.nodes.length} nodes), seat root ${seat.root.slice(0, 16)} (${seat.nodes.length} nodes: ${seat.nodes.map((n) => n.key.slice(0, 8)).join(' ')})`);
   assert.ok(!seat.nodes.some((n) => n.key === toHex(madeUpKey)), 'the seat counts a key no census bonds, named by one seat alone, as a served node');
   assert.equal(seat.root, page.served.root, 'the seat rebuilds another served root than the page paid: every paid purchase is refused');

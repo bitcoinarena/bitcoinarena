@@ -36,7 +36,7 @@ test('a paid item record is not left with the one seat that says 200 first (it r
     throw new Error(`no such door ${url}`);
   };
   const r = await buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet, federationId: 'fe'.repeat(32),
-    player, seats: ['https://evil', 'https://s2', 'https://s3'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex) });
+    player, seats: ['https://evil', 'https://s2', 'https://s3'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex), drawnOf: async () => ({ keys: new Set([...NODE_KEYS].map((k) => (typeof k === 'string' ? k : toHex(k)))) }) });
   assert.equal(r.ok, true, r.why);
   // the evil seat said 200 and dropped the record: unless another seat holds it, the purchase never reaches the two GET /items needs
   assert.ok(postedTo.filter((h) => h !== 'evil').length >= 1, `the paid record went only to ${JSON.stringify(postedTo)} - one lying seat buries the purchase`);

@@ -66,7 +66,7 @@ for (const [name, AC] of Object.entries(BUNDLES)) {
     const { storage } = shared();
     const w = twoFederations();
     const base = { manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, player, seats: ['https://s1', 'https://s2'], fetch, verify, nowMs: () => NOW,
-      bondedKeys: NODE_KEYS.map(toHex), storage, walletOf: w.walletOf, wallets: w.wallets };
+      bondedKeys: NODE_KEYS.map(toHex), drawnOf: async () => ({ keys: new Set([...NODE_KEYS].map((k) => (typeof k === 'string' ? k : toHex(k)))) }), storage, walletOf: w.walletOf, wallets: w.wallets };
     const first = await AC.buyItem({ ...base, wallet: w.f1, federationId: F1 });   // T1 submitted, acceptance read failed (network)
     // the other tab spent F1's notes (T1 refused, F1 below the price): the page's buy loop now hands F2, the first federation holding the price
     const presses = [];

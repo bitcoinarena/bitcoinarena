@@ -62,7 +62,7 @@ for (const [name, AC] of Object.entries(BUNDLES)) {
   test(`#3081 two tabs (${name}): a late refusal of T1 in tab A does not drop T2's paid record kept by tab B`, async () => {
     const { kept, storage } = shared();
     const w = wallets();
-    const base = { manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, federationId: 'fe'.repeat(32), player, seats: ['https://s1', 'https://s2'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex), storage };
+    const base = { manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, federationId: 'fe'.repeat(32), player, seats: ['https://s1', 'https://s2'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex), drawnOf: async () => ({ keys: new Set([...NODE_KEYS].map((k) => (typeof k === 'string' ? k : toHex(k)))) }), storage };
     const pA = AC.buyItem({ ...base, wallet: w.tabA });          // tab A: pays T1, awaits its acceptance
     await w.aReached;
     const b1 = await AC.buyItem({ ...base, wallet: w.tabB });    // tab B: the kept T1 resumed, refused -> dropped

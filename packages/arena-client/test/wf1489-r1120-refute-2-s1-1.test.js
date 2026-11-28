@@ -43,7 +43,7 @@ for (const [name, AC] of Object.entries(BUNDLES)) {
   test(`#3081 in the ${name} bundle: a purchase the guardians refuse is not kept as paid`, async () => {
     const { kept, storage } = store();
     const r = await AC.buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: refusing, federationId: 'fe'.repeat(32),
-      player, seats: ['https://s1'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex), storage });
+      player, seats: ['https://s1'], fetch, verify, nowMs: () => NOW, bondedKeys: NODE_KEYS.map(toHex), drawnOf: async () => ({ keys: new Set([...NODE_KEYS].map((k) => (typeof k === 'string' ? k : toHex(k)))) }), storage });
     console.log(`  FACTS (${name} buyItem): ${JSON.stringify({ ok: r.ok, step: r.step, why: r.why })}; kept ${kept.size}`);
     assert.equal(r.ok, false);
     assert.match(r.why, /not paid: the federation refused the payment/, 'the page still says "paid, acceptance not read yet"');

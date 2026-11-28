@@ -30,7 +30,7 @@ for (const [name, b] of builds) {
     const seats = got.games[0].nodes;
     const w = wallet();
     const r = await b.buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32),
-      player, seats, fetch, verify, nowMs: () => NOW, bondedKeys: [...NODE_KEYS, '01'.repeat(32), '02'.repeat(32)] });
+      player, seats, fetch, verify, nowMs: () => NOW, bondedKeys: [...NODE_KEYS, '01'.repeat(32), '02'.repeat(32)], drawnOf: async () => ({ keys: new Set([...NODE_KEYS].map((k) => (typeof k === 'string' ? k : toHex(k)))) }) });
     assert.equal(r.ok, true, r.why);
     const toSybil = paidTo(w.paid, SYBIL_KEY);
     assert.equal(toSybil, 0n, `the stranger's made-up key took ${toSybil} msat; the page counted ${seats.length} "seats": ${seats.join(', ')}`);
@@ -42,7 +42,7 @@ for (const [name, b] of builds) {
   test(`${name}: with no census checked the page reads no served list and pays nothing`, async () => {
     const w = wallet();
     const r = await b.buyItem({ manifest: MANIFEST, itemId: 'large-truck', networkSet: NET, gameSet: NET, wallet: w, federationId: 'fe'.repeat(32),
-      player, seats: ['https://good1', 'https://good2'], fetch, verify, nowMs: () => NOW, bondedKeys: [] });
+      player, seats: ['https://good1', 'https://good2'], fetch, verify, nowMs: () => NOW, bondedKeys: [], drawnOf: async () => ({ keys: new Set([...NODE_KEYS].map((k) => (typeof k === 'string' ? k : toHex(k)))) }) });
     assert.equal(r.ok, false); assert.equal(r.step, 'served'); assert.equal(w.paid.length, 0);
   });
 }
