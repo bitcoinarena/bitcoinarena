@@ -1502,10 +1502,24 @@ export class LockSettlement {
     const row = typeof this.round.lockSettlement === 'function' ? this.round.lockSettlement(roundIdBytes) : null;
     const settled = !!(row && row.state === ACCEPTED);
     const miss = () => { this.summaryMisses.delete(key); this.summaryMisses.set(key, Date.now()); if (this.summaryMisses.size > SUMMARY_SETTLED_MOST) this.summaryMisses.delete(this.summaryMisses.keys().next().value); return null; };
-    let got;
-    try { got = await this.planOf(roundIdBytes, { withSends: true }); } catch { return miss(); }
-    if (!got || !got.ok) return miss();
-    if (got.plan.claims.length !== moves.claims.length || got.plan.payouts.length !== moves.payouts) return miss();
+    // THE ROW MAY STAND ON THE FALLBACK CLAIM (kanban #3902, spec §23.2): a round whose locks' fallback_after came before its FINAL is settled by the
+    // fallback's own table (its node row only for the seats with a signed result, the rest to the reserves) - another payout count than the claim's
+    // plan, so a rebuild of the claim alone never matched and every seat inside it answered ACCEPTED with "moved": null (2.0 devnet dn3897, RPS
+    // 25b7de93: 12 payouts landed, the claim's plan has 11), and the page found no settlement to collect from. The plan that matches the kept moves
+    // is answered: the fallback's first when this seat keeps a fallback batch of the landed txid, the claim's first otherwise. Read only, signs nothing.
+    const fbFirst = !!(this.round.namedBatchOf && this.round.namedBatchOf(roundIdBytes, 'fallback', moves.txid));
+    const claimed = new Set((moves.claims || []).map(String));
+    const matches = (g) => !!(g && g.ok && g.plan.payouts.length === moves.payouts && g.plan.claims.length === moves.claims.length
+      && g.plan.claims.every((c) => !c.outpoint || claimed.has(`${toHex(c.outpoint.txid)}:${String(c.outpoint.outIdx)}`)));
+    // only an Arena lock (protocol 27, NAMED_CLAIM_HEIGHT) has a fallback claim: any other round's miss costs one rebuild, as before (#2737)
+    let named = fbFirst;
+    if (!named) { try { const r = this.round.get(roundIdBytes); named = !!(r && namedClaims(decodeRoundContract(new Uint8Array(r.contract)))); } catch { named = false; } }
+    let got = null;
+    for (const fallback of fbFirst ? [true, false] : named ? [false, true] : [false]) {
+      let g; try { g = await this.planOf(roundIdBytes, { withSends: true, ...(fallback ? { fallback: true } : {}) }); } catch { g = null; }
+      if (matches(g)) { got = g; break; }
+    }
+    if (!got) return miss();
     this.summaryMisses.delete(key);
     const s = planSummary(moves.txid, got.plan);
     const store = settled ? this.settledSummaries : this.summaries, most = settled ? SUMMARY_SETTLED_MOST : SUMMARY_MOST;
