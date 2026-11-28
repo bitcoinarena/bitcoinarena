@@ -567,6 +567,19 @@ over the price now with a 60 s expiry: it fills at its batch's one clearing pric
 back at settlement. Both go through the same entry, deposit and locks; the page hands their locks to every seat until
 entry close, since a batch needs 5 seats holding an order's locks.
 
+**0A.7b.4b Pool first (RULED, spec 2026-11-27, kanban #3854; replaces
+#1417 option B for new markets).** A late, cheap act of one participant must
+never flip a market's kind. At close a market is a **book** only if a
+certified batch holds an order **and** the round has no backed plain pick;
+with any backed plain pick it is a **pool**: the plain picks settle as a
+pool as if no order had been posted, and every order's stake comes back by
+its expiry path. The inputs are the backed-entry set and the certified-batch
+set at close, which every seat already signs, so there is no arrival order
+and no new door rule. Gated by the market's own protocol version (the next
+one); markets created before keep #1417 option B. In 2.0 (`market_kind`,
+#1425) the kind is fixed in the signed market definition: a pool refuses
+orders, a book refuses plain picks, and nothing is inferred.
+
 **0A.7b.5 How the seats agree a batch**. A page posts
 a signed order to every seat (`POST /order`), and each seat keeps it with the
 time it arrived. Batch k takes what reached any seat before its cutoff,
@@ -2233,6 +2246,20 @@ own 5 s). No new series was needed: the 45 s in the bytes stand. The
 ruling every series round closed its entry at its start and all players
 started together; a series with late join 0 keeps exactly that.
 
+**A run is timed by the round clock from its join tick (RULED, spec
+2026-11-25, kanban #3704, audit #3680).** Tick `t` of an entry is due at
+`start_time + t x tick_ms` (`t >= join_tick`), never from the moment a seat
+saw the stake held. The start window and the door walk-away count from
+`start_time + join_tick x tick_ms`. A mark more than `MARK_LAG_TICKS` (600)
+plus the start deadline behind that clock is not receipted. A stake seen
+held only after `join_tick + start_deadline` makes the entry `ENTRY_VOID`
+there (§23.1 step 5): a tick-0 entry that locks at start + 44 s does not
+play 49 s behind the round. A stake seen in time counts its held marks only
+inside the lag bound; ticks it cannot catch up are lost to it (§15). Free
+rounds follow the same clock rule without the stake part. Gated by the
+round's protocol version (the next one); rounds of earlier
+versions keep the stake-seen origin (#2826, #3568).
+
 **Continuing is the default.** While a player's run of round `i` is on the
 road, the page enters round `i+1` for them (its entry window is open: the
 committee of `i+1` exists long before, §5A.5), so the next run starts with
@@ -3660,6 +3687,20 @@ objects carry their own verification.
   by tick, a fork by parent, a fork held at one seat, a split (with and
   without a qualifier), and the equivocator's own objection (refused).
 
+- **Two signed batches on one head (RULED, spec 2026-11-25, kanban
+  #3711).** Two different input batches the client signed on the same
+  `previousHash` are a same-parent fork and nothing else: neither "first
+  seen" nor "the one a quorum holds" decides. They forfeit exactly when
+  both were receipted by some seat (ruling (b) above); a refused batch does
+  not count. The client therefore never signs a second batch on a head any
+  seat has receipted: after a real refusal from its home seat it sends the
+  batch a peer already took, the same signed bytes, to the home seat and to
+  every seat, and continues on top of it. If the home seat refuses that
+  batch's content, the client still continues on it at the seats that took
+  it, and §13C closes the split at the round's close. Only a batch no seat
+  receipted (a lost answer, a stake wait, #3696) may be re-signed. No
+  protocol change.
+
 > **Why:** An earlier draft had 5 nodes and threshold 3, so two 3-subsets always overlap
 > in at least one node — divergence was in principle detectable. But the
 > document never said what that node must *do*, which left "run several
@@ -3732,6 +3773,46 @@ posting (two test faults, off by default: `ARENA_TEST_DISSENT_FILE` with
 
 ---
 
+# 13D. Copied run
+
+> **In a shared world, an entry whose run copies an earlier joiner's
+> inputs forfeits the entry** *(RULED, spec 2026-11-24, kanban #3615 and
+> #3663, from feedback #445 / #3612)*.
+
+- **Why.** Under a shared-world config (§12) the same inputs relative to
+  the join tick are the same run and the same score, so a copy takes a
+  place it did not play for. Under per-player worlds the same inputs play
+  a different world; the rule does not apply there.
+- **The measure: input changes, not ticks (#3663).** Each entry's stream is
+  reduced to its change list: `(t - join_tick, word)` for every tick whose
+  word differs from the word at the tick before; the first tick compares
+  with "no input", and a release (back to the empty word) is a change like
+  any other. A held key is one change when pressed and one when released;
+  idle stretches add nothing. Two players holding throttle together from
+  their join are one change each and never match.
+- **The match.** The later joiner forfeits when its change list and an
+  earlier joiner's share a common prefix of at least **32 changes** - the
+  same relative tick and the same word for each, from the first change of
+  both. That covers an exact copy, a copy that stops early, one that plays
+  on after the original ends, and copy-then-deviate. Equal `join_tick`:
+  neither forfeits (neither could have read the other). The earlier entry
+  is never touched.
+- **The close.** Before signing, a seat compares each entry with every
+  earlier-joined entry of the round over the canonical transcripts it
+  holds; a match signs `FORFEIT`, score 0, and logs `[close] <entry>
+  FORFEIT: copied run of <earlier entry> (§13D)`. A re-run signs the same,
+  and an objection against that entry is refused at the door, as in §13B.
+  The stake follows the §13B FORFEIT path (the loser pool with a qualifier,
+  else the remainder split; never back to the copier).
+- **Bound and gated.** The rule is bound into the Entry Contract like
+  `equivocation_rule_hash` and applies only to rounds whose contract names
+  the next protocol version or later with a shared-world config; earlier
+  rounds close as before. Transcripts stay readable while the round runs
+  (reload and peer catch-up need them): the rule makes a copy worthless
+  instead of hiding the original.
+
+---
+
 # 14. Finality
 
 > Once a player's result is `FINAL`, later infrastructure failure does not
@@ -3754,6 +3835,23 @@ PROVISIONAL -> PROVISIONALLY_FINAL -> FINAL -> SETTLED
                         +-> (valid objection) -> re-replay -> FINAL
 PROVISIONAL -> VOID / ENTRY_VOID          (refund; reachable only from PROVISIONAL)
 ```
+
+**A seat may leave an old game version unloaded (RULED, spec 2026-11-25,
+kanban #3706, audit #3679).** A local hosting choice, not a protocol rule:
+no signed byte changes. A seat may skip loading a game version at start
+when all four hold: (1) it is not the current version of any series or template
+the seat serves, and no round of it is open, posted or scheduled (no entry
+window, no future series round naming it); (2) every round of it is past
+`final_after` (§13A) with no objection, re-run or §13C dispute pending at
+this seat; (3) every round of it is settled with the settlement at least 6
+blocks deep, or is void with nothing left to sign; (4) 24 h have passed
+since its last round end (`stake_expiry_blocks`, one day). The package
+archive, the signed manifest and its ancestor chain, and every stored
+transcript, checkpoint, receipt, result and settlement record stay, with
+their endpoints; nothing is deleted. A replay, an objection or re-run, a
+peer's re-verify, a reorg that takes a settlement below 6 blocks, or a new
+round naming the version loads it on demand; the seat reports it as "kept,
+unloaded", never as unknown.
 
 ---
 
@@ -4082,6 +4180,19 @@ parcels loaded, and it is declared with the load at roll-out, so a replay
 sets the same C. A run declares no load until roll-out and starts at C = 0.
 A load stored before the room was declared (an older transcript) carries no
 room and keeps C = 0.7, so a stored run never moves.
+
+**The bed follows the entry's truck (RULED, spec 2026-11-25, kanban #3707,
+from #3695).** The bed capacity of an entry is the capacity of the truck its
+unlocks select: 0 .. 511180 with the larger truck (unlock 10dec674...),
+0 .. 393216 for every other entry. The load bound is 0 .. that capacity at
+the batch door, in the objection check and at the arbiter (one function),
+the same number is C's denominator and caps the FEWEST/CHEAPEST tables. Only
+unlocks the entry carries and owns count. The capacities come from a truck
+table in the game registration (a default and a capacity per unlock id),
+read from the signed package the round names; a game version without the
+table means 393216 for everyone. Gated by the round's game version, which
+names the minimum arena-node version that reads the table; no arena
+protocol version.
 
 Both are part of the round's config (§27A.7.5): a round is scored by the
 par, the T bounds and the cargo rule its `config_hash` names.
@@ -5508,6 +5619,24 @@ federation cannot sign for itself, so it is not a federation record:
 4. **Seats derive HALTED.** A seat holding a halt proof lists the federation
    HALTED at `GET /liquidations` and counts the liquidation clocks from the
    halt height; no HALTED record is signed by anyone.
+5. **The arbiter settles on the proof (RULED, spec 2026-11-28, kanban
+   #3901).** The arbitration set settles claims on a halt proof a strict
+   majority of seats list, without a HALTED record. It does not trust the
+   listing: it checks the proof itself against its own census (the check
+   the seats run), checks that no verified record or absence attestation
+   names a session after `S` (step 2), and counts every clock from the halt
+   height. The remainder payees come from the newest verified record. A
+   signed HALTED record, where one exists, settles as before; with both,
+   the earlier halt height counts.
+6. **The slash carries the proof (same ruling).** A guardian ABANDONED by
+   step 3 is slashed by an `AbandonedProof` of a new kind, with its own
+   type byte, that carries the halt proof (its observations) and the newest
+   verified record in place of a record row. The census-key holders judge
+   it with the same halt-proof check; it slashes exactly that record's
+   guardians missing from the `answering[]` of a majority of observations,
+   and its output goes into the liquidation escrow like any abandoned
+   slash. The record-row kind is unchanged. A recovery (step 2) before the
+   slash is spent voids both the claim plan and the proof. 2.0 only.
 
 **Notes still in issuance at the halt (RULED HERE, same delegation).** A
 receive or a reissue whose transaction the consensus accepted, but whose
@@ -6914,6 +7043,16 @@ genesis_parameters {
   claim_blocks           the liquidation claim window (§23A.5)
 }
 ```
+
+**`census_min_nodes` counts at the role floor (RULED, spec 2026-11-27,
+kanban #3855, port of #3571 / PR #33).** Only keys whose bond reaches the
+floor the round names for that role (`drawFloorSats`) count toward the
+census minimum, on 1.9 as on 2.0, so a creator-named high floor cannot
+shrink the drawable set to its own nodes. Gated by the round's protocol
+version, not the seat's build: earlier rounds keep `bond_min`, so old and
+new seats agree on the same round during a roll; the page's committee
+derivation uses the same gate. The page bundle that knows the rule ships
+before the seats.
 
 **The genesis config.** `genesis_config_hash` is the `config_hash` of the
 first `game_config` (§27A.7.1) - the one with no `parent` - and it carries
