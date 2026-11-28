@@ -27,7 +27,7 @@ import { ed25519 } from '@noble/curves/ed25519.js';
 import { schnorr } from '@noble/curves/secp256k1.js';
 
 import { decodeRoundContract, decodeEntryContract, entryFederation } from '../../arena-protocol/src/contracts.js';
-import { takesAnyFederation, runsDisjointRules } from '../../arena-protocol/src/constants.js';
+import { takesAnyFederation, runsDisjointRules, latePaysNoPublisher } from '../../arena-protocol/src/constants.js';
 import { splitByFederation } from '../../arena-protocol/src/federation-settlement.js';
 import { pluginForRound, payoutRuleOfRound } from './plugins.js';
 import { heldOutcomes, marketFinalityOf, attestedTable } from './game-market.js';
@@ -553,8 +553,11 @@ export class LockSettlement {
     const ef = takesAnyFederation(contract) ? entryFederation(contract, e) : null;
     const gf = await this.giftsFor(contract, { feeLocks: feeLock ? 1 : 0, federationHex: ef && ef.ok ? toHex(ef.federationId) : null });
     if (!gf.ok) return gf;
+    // kanban #3882: a late loser's settlement of a new-version round is built without the series publisher - its fee back was round 0's own settlement's
+    let lateNodes = feeLock ? this.signerNodesFor(roundIdBytes, contract) : null;
+    if (lateNodes && lateNodes.publisher && latePaysNoPublisher(contract)) { const { publisher: _dropped, ...rest } = lateNodes; lateNodes = rest; }
     const args = { roundId: roundIdBytes, entryId: entryIdBytes, entry, lock, feeLock, shares, fees,
-      signerNodes: feeLock ? this.signerNodesFor(roundIdBytes, contract) : null, contract, ...this.roundFees(contract), ...(gf.gifts ? { gifts: gf.gifts } : {}) };
+      signerNodes: lateNodes, contract, ...this.roundFees(contract), ...(gf.gifts ? { gifts: gf.gifts } : {}) };
     // THE BASE PLAN the late sends are sized from (C3b-2a). With a winnings sender it is never signed, so a winner whose
     // lock row is missing here does not block it: its payout goes by send, refunding to the committee key.
     // WINNINGS-AUTO (RULED 2026-10-01): the late shares are paid by payout contracts to the winners' own lock keys
