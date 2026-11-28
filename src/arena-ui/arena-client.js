@@ -619,7 +619,9 @@ const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36]);
+const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37]);
+// 37 (kanban #3824 and the other rulings of 2026-11-28): the entry proof at the door (entry-proof.js ENTRY_PROOF_VERSION). Gated on the round's own
+// version; round creators write 37 only once the page and every seat list it.
 // 34, 35, 36 (kanban #3897, the 2.0 release): 34 the signed draw (#3743), the genesis run (#3762) and the bound identity proof (#3800); 35 pool first
 // (#3854); 36 the census minimum at the role floor (#3855 - 2.0 counts it there for every round already, PR #33). Each gates on the round's own
 // version, so no older round changes; round creators write 34+ only once the page and every seat list them.
@@ -1287,6 +1289,8 @@ const TYPE_CONTRIBUTION_LEAVE = 0x4a;
 const TYPE_CONTRIBUTION_TERMINATION = 0x4b;
 // A GUARDIAN THAT SIGNED A SPENT-SET COPY ABOVE THE HALT'S BOUND (kanban #1269, §5A.3 offence row, RULED #1262): the copy and the halt proof (bound-slash.js)
 const TYPE_BOUND_PROOF = 0x4c;
+// A GUARDIAN THE HALT PROOF NAMES ABANDONED (§23A.5 step 3, RULED 2026-11-28 on kanban #3901 Q2): the halt proof and the newest record (halt-abandoned-slash.js)
+const TYPE_HALT_ABANDONED_PROOF = 0x4f;
 // AN ATTESTED VALUE (feature 8, protocol 2026.0.7): a scalar market's attestors' word on the number it asked for - its
 // own type, so an outcome attestation's bytes (0x1d) never decode as one, nor the other way round
 const TYPE_VALUE_ATTESTATION = 0x2a;
@@ -4309,6 +4313,50 @@ function checkBatchPrices({ batch, roundId, committee, threshold, verify, requir
     if (bare) return { ok: false, why: `a ${bare} without the committee's attestation: the player never chooses the price (§11)` };
   }
   return { ok: true, attested: attests.length };
+}
+
+// ---- arena-protocol/src/entry-proof.js
+// SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
+// AN ENTRY PROVES ITS SESSION KEY AT THE DOOR (kanban #3824, RULED 2026-11-28, spec answer (a)). An entry travels with an entry proof: a signature
+// by the entry's session key over tagged_hash("ARENA/v1/EntryProof", entry_id). POST /entry carries it, the seat-to-seat relay carries it
+// unchanged, and a seat stores it with the entry. A seat refuses an entry without a valid proof (400) before any other check; it is never taken,
+// never relayed, and never holds a session key. So only the owner of a session key can make an entry that names it, and the one-entry-per-session-key
+// rule of #1479/#1597 only ever meets entries that key signed.
+// The proof is an envelope beside the Entry Contract: the entry id, the commitment and every signed result are unchanged.
+// The session key is the key the run's marks are signed with (Ed25519, round.js), so the proof is a signature of that key's scheme.
+// Every round, free and paid, of every game; gated by the round's protocol version (ENTRY_PROOF_VERSION): a round of an earlier version is taken and
+// relayed as before, so a mixed committee agrees per round. Old seats ignore the extra header.
+
+
+const ENTRY_PROOF_VERSION = 37;
+const ENTRY_PROOF_TAG = 'ARENA/v1/EntryProof';
+/** The header POST /entry, the relay and GET /entry carry the proof in: 64 bytes as hex. */
+const ENTRY_PROOF_HEADER = 'x-arena-entry-proof';
+
+/** Does this round require the proof? By the round's own version, never the seat's. */
+const requiresEntryProof = (contract) => !!contract && Number.isInteger(contract.protocolVersion) && contract.protocolVersion >= ENTRY_PROOF_VERSION;
+
+/** What the session key signs: tagged_hash("ARENA/v1/EntryProof", entry_id). */
+const entryProofDigest = (entryId) => {
+  if (!(entryId instanceof Uint8Array) || entryId.length !== 32) throw new Error('an entry id is 32 bytes');
+  return taggedHash(ENTRY_PROOF_TAG, entryId);
+};
+
+/** Is `proof` (64 bytes) the session key's signature over this entry id? `verify(sig, msg, pubkey)` is the session scheme's (Ed25519; the curve is
+ *  injected, as everywhere in this package). Never throws. */
+function entryProofHolds({ entryId, sessionPubkey, proof, verify }) {
+  if (!(proof instanceof Uint8Array) || proof.length !== 64) return false;
+  if (!(sessionPubkey instanceof Uint8Array) || sessionPubkey.length !== 32) return false;
+  try { return !!verify(proof, entryProofDigest(entryId), sessionPubkey); } catch { return false; }
+}
+
+/** A header value (hex) as 64 bytes, or null. */
+function entryProofFromHeader(value) {
+  const s = String(Array.isArray(value) ? value[0] : (value || '')).trim().toLowerCase();
+  if (!/^[0-9a-f]{128}$/.test(s)) return null;
+  const out = new Uint8Array(64);
+  for (let i = 0; i < 64; i++) out[i] = parseInt(s.slice(2 * i, 2 * i + 2), 16);
+  return out;
 }
 
 // ---- arena-protocol/src/receipt.js
@@ -37887,6 +37935,7 @@ async function contributionSharesAgreed({ rid, nodes, fetcher = (u) => fetch(u) 
 
 
 
+
 // THE RULE A PLAYER CHECKS AN INVOICE WITH, IMPORTED AND NOT REWRITTEN.
 //
 // `server.js` says at its own /invoice door that this rule "lives on their
@@ -38105,9 +38154,9 @@ const FEED_WINDOW = 32;
 // A SEAT STILL TAKING THE HANDOUT IS ASKED AGAIN (kanban #828, 2026-11-02 04:05:41Z, both players of round a5fc9c2f): postHandout goes on once enough seats
 // took it, the entry goes to one seat, and that seat's handout can still be on its way; its 400 ended the join with the stake already locked. 8 s; any other refusal stands.
 // Answers { status, bytes }; each ask is bounded by ENTRY_ANSWER_MS (kanban #3596), and a seat silent past it throws.
-async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500, answerMs = ENTRY_ANSWER_MS } = {}) {
+async function postEntry(url, body, { fetcher = (...a) => fetch(...a), tries = 16, waitMs = 500, answerMs = ENTRY_ANSWER_MS, headers = null } = {}) {
   for (let n = 0; ; n++) {
-    const r = await entryAnswered(fetcher, url, body, answerMs);
+    const r = await entryAnswered(fetcher, url, body, answerMs, headers);
     if (r.status === 201) return r;
     const said = entryWords(r.bytes);
     // AND A SEAT WHOSE SEATING CERTIFICATE IS STILL ON ITS WAY (the owner's report 2026-11-10 08:54Z, round 0ff01991: the six seats had signed the seating,
@@ -38174,12 +38223,17 @@ const LOCK_ACCEPT_HEAD_MS = 3000;   // the lock client's acceptance first; the s
 // peer, so the stake lock was handed to no seat and the session never opened. A seat silent past the bound did not take the entry; the
 // feed's 'no such entry' path offers it again. The market's submitPick bounds the same door (ENTRY_WAIT_MS).
 const ENTRY_ANSWER_MS = 15000;
-async function entryAnswered(fetcher, url, body, ms = ENTRY_ANSWER_MS) {
+/** kanban #3824: the header carrying an entry's proof, made by `sign` (the session key's async signer); null when there is no signer or it fails. */
+async function entryProofHeadersFor(entryIdBytes, sign) {
+  if (typeof sign !== 'function') return null;
+  try { const sig = await sign(entryProofDigest(entryIdBytes)); return sig && sig.length === 64 ? { [ENTRY_PROOF_HEADER]: toHex(sig) } : null; } catch { return null; }
+}
+async function entryAnswered(fetcher, url, body, ms = ENTRY_ANSWER_MS, headers = null) {
   let timer;
   const late = new Promise((_, no) => { timer = setTimeout(() => no(new Error(`no answer to the entry within ${ms} ms`)), ms); });
   try {
     return await Promise.race([(async () => {
-      const r = await fetcher(url, { method: 'POST', body, signal: AbortSignal.timeout(ms) });
+      const r = await fetcher(url, { method: 'POST', body, ...(headers ? { headers } : {}), signal: AbortSignal.timeout(ms) });
       const bytes = typeof r.arrayBuffer === 'function' ? new Uint8Array(await r.arrayBuffer()) : new TextEncoder().encode(String(await r.text()));
       return { status: r.status, bytes };
     })(), late]);
@@ -38583,7 +38637,10 @@ class Client {
     // and this entry is not sent - the seats that took the first refuse the lock under any other
     if (this.stakeLock && typeof this.stakeLock.onNamed === 'function') this.stakeLock.onNamed(mine);
     let r;
-    try { r = await postEntry(`${this.base}/entry`, encodeEntryContract(entry)); } catch (e) {
+    // THE ENTRY PROOF (kanban #3824): the session key - the one this client signs the marks with - signs the entry id; sent for every round
+    // (a seat of an older round ignores the header, a round of ENTRY_PROOF_VERSION or later takes no entry without it)
+    this.entryProofHeaders = await entryProofHeadersFor(mine, this.sign);
+    try { r = await postEntry(`${this.base}/entry`, encodeEntryContract(entry), { headers: this.entryProofHeaders }); } catch (e) {
       // a seat's own refusal stands; silence is asked about (kanban #3673)
       if (/^the node refused the entry/.test(String(e && e.message))) throw e;
       const seats = [this.base, ...(Array.isArray(this.peers) ? this.peers : [])];
@@ -38743,7 +38800,7 @@ class Client {
   /** Signer nodes this client's entry on one other committee node. */
   async joinOn(base) {
     try {
-      const p = await entryAnswered((...a) => fetch(...a), `${base}/entry`, encodeEntryContract(this.joinedEntry));   // bounded (kanban #3596)
+      const p = await entryAnswered((...a) => fetch(...a), `${base}/entry`, encodeEntryContract(this.joinedEntry), ENTRY_ANSWER_MS, this.entryProofHeaders || null);   // bounded (kanban #3596); with its proof (#3824)
       // and the player's claim on its locks (kanban #1897, #1938)
       if (p.status === 201 && this.stakeLock && typeof this.stakeLock.claimFor === 'function')
         (this.lockClaimed = this.lockClaimed || []).push(postLockClaim({ node: base, entryId: entryId(this.joinedEntry), claimFor: this.stakeLock.claimFor }));
@@ -48031,7 +48088,8 @@ function pickSheet({ market, contract = null, stakeMsat = contract ? contract.st
 // called with { entryId, entries } as soon as the seats answered the entry, while the locks are handed after it
 // `onSubmitted({ entryId, node })` (kanban #601): once, as soon as the first seat took the entry - the order is the player's from then on
 // `handedOut` (postHandout's `posted`): a seat's entry is posted once that seat answered its handout - one slow seat is not waited on by the others
-async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null, handedOut = null }) {
+// `proof` (kanban #3824): the entry proof as hex - the session key's signature over entryProofDigest(entry id) - sent beside the entry to every seat
+async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries = null, onSubmitted = null, handedOut = null, proof = null }) {
   const eid = entryId(entry);
   const bytes = encodeEntryContract(entry);
   // EVERY SEAT AT ONCE; what each answered kept as it comes (`entriesNow`), all of them in `entriesAll`
@@ -48041,7 +48099,7 @@ async function submitPick({ entry, stakeLock, nodes, fetcher = fetch, onEntries 
     let x;
     try {
       if (handedOut && handedOut.get(node)) await handedOut.get(node);
-      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes, signal: AbortSignal.timeout(ENTRY_WAIT_MS) });
+      const r = await fetcher(`${String(node).replace(/\/+$/, '')}/entry`, { method: 'POST', body: bytes, ...(proof ? { headers: { 'x-arena-entry-proof': String(proof) } } : {}), signal: AbortSignal.timeout(ENTRY_WAIT_MS) });
       x = { node, status: r.status, why: r.status === 201 ? null : (await r.text()).trim() };
       // the player's claim on the entry's locks, beside it (kanban #1897, #1938): no copy of the entry can take them
       if (r.status === 201 && stakeLock && typeof stakeLock.claimFor === 'function') postLockClaim({ node, entryId: eid, claimFor: stakeLock.claimFor, fetcher });   // never throws; not waited on
@@ -50412,6 +50470,7 @@ return { Client: Client, markState: markState, catchUpCore: catchUpCore,
          GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,
          encodeRoundContract: encodeRoundContract, roundId: roundId,
          encodeEntryContract: encodeEntryContract, entryId: entryId,
+         entryProofDigest: entryProofDigest, entryProofHeadersFor: entryProofHeadersFor,
          parseEmergencyCode: parseEmergencyCode, emergencySecret: emergencySecret, signEmergencyDeparture: signEmergencyDeparture,
          encodeEmergencyDeparture: encodeEmergencyDeparture, EMERGENCY_FRESH_BLOCKS: EMERGENCY_FRESH_BLOCKS,
          centsToTapeUnits: centsToTapeUnits,

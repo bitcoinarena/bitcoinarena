@@ -115,6 +115,12 @@ export function openStore(path = ':memory:') {
       joined_ms  INTEGER NOT NULL
     );
 
+    -- THE ENTRY PROOF KEPT WITH AN ENTRY (kanban #3824): the session key's signature over the entry id, handed on with it by the relay
+    CREATE TABLE IF NOT EXISTS entry_proofs (
+      entry_id   BLOB PRIMARY KEY,
+      proof      BLOB NOT NULL
+    );
+
     -- One row per TICK, not per message. That is what makes a repeated batch
     -- harmless: the second write of a tick is refused by the key, not by a
     -- caller remembering to look.

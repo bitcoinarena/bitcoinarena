@@ -3,6 +3,7 @@
 // A PAYING FEDERATION ROUND ON TWO SIGNER NODES AND A FAKE LOCK PORT, PLAYED TO ITS CLOSE (moved out of
 // lock-settlement.test.js so the winnings test drives the very same round): `lockRound` stands it, `lockAndPlay`
 // locks a player's stake and fee and plays their run, `closeRound`, `standing` and `untilSettled` watch it settle.
+import { entryProofDigest, ENTRY_PROOF_HEADER } from '../../arena-protocol/src/entry-proof.js';
 import { headToHeadCommit } from '../../arena-protocol/src/head-to-head.js';
 import { CLOCK } from './block-clock.js';
 import assert from 'node:assert/strict';
@@ -206,7 +207,7 @@ const reservesOf = (w) => { const f = pluginForRound(w.c, (w.a || w.nodes[0]).ro
 // outputs are split over when the test names no `donation.target`
 const donationTargetOf = (w) => { const d = (w.a || w.nodes[0]); const t = d.settlements && d.settlements.donationTargetFor ? d.settlements.donationTargetFor(w.c) : null; return t && t.ok ? t.target : null; };
 // `order`: { price (PRICE_SCALE units), expiryMs } - a market order: the entry buys `pick` at that limit
-export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null, lockFirst = true, lockClaim = true, stakeHeld = true } = {}) {
+export async function lockAndPlay(w, who, { session: fixedSession = null, feeLock = true, feeFirst = false, address = false, noMarks = false, fork = null, staleMarks = 1, game = null, donation = null, pick = undefined, hidden = null, order = null, only = null, unreached = [], expirySpan = null, frontendPk = null, lockHeaders = null, lockFirst = true, lockClaim = true, stakeHeld = true, sessionPub = null, proof = 'sign' } = {}) {
   const session = fixedSession || ed25519.utils.randomSecretKey();   // `session`: a fixed session key, for a test that enters twice with one (kanban #1479)
   const preimage = secretScalar();
   const e = rand(32);
@@ -226,7 +227,7 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
   // `donation` to choose the target; its msat is then the split's, not its own.
   const reserves = reservesOf(w);
   const entry = {
-    roundId: w.rid, playerPubkey: who.key, sessionPubkey: ed25519.getPublicKey(session),
+    roundId: w.rid, playerPubkey: who.key, sessionPubkey: sessionPub || ed25519.getPublicKey(session),   // `sessionPub`: another's public session key, its secret unknown (kanban #3824)
     stakeCommitment: sha256(preimage), stakeMsat: w.c.stakeMsat, feeMsat: reserves ? reserves.nodesMsat : entryFeeMsat(w.c.stakeMsat, gameFeeBps(w)),
     donationMsat: reserves ? reserves.protocolDevsMsat + reserves.gameDevsMsat + reserves.reservesMsat : (donation ? donation.msat : 0n),
     joinTick: 0, worldSecret: play.worldSecret, vssSharesRef: handoutId(dealt.handout), stakePoint: dealt.handout.commitments[0],
@@ -317,7 +318,9 @@ export async function lockAndPlay(w, who, { session: fixedSession = null, feeLoc
     const shown = lockFirst ? { headers: { [STAKE_LOCK_HEADER]: JSON.stringify({ outpoint: shownAt, fields: lockFieldsToJson(fields) }) } } : {};
     const handed = await fetch(`${base}/handout`, { method: 'POST', body: encodeHandout(dealt.handout), ...shown });
     assert.equal(handed.status, 201, handed.status === 201 ? undefined : await handed.text());
-    const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry) });
+    // THE ENTRY PROOF (kanban #3824): signed by the session key the fixture holds (`proof: 'sign'`), none (`null`), or the bytes given
+    const pf = proof === 'sign' ? ed25519.sign(entryProofDigest(eid), session) : proof;
+    const joined = await fetch(`${base}/entry`, { method: 'POST', body: encodeEntryContract(entry), ...(pf ? { headers: { [ENTRY_PROOF_HEADER]: toHex(pf) } } : {}) });
     assert.equal(joined.status, 201, await joined.text());
     // THE PLAYER'S CLAIM ON THE ENTRY'S LOCKS, as the page sends it with its entry (kanban #1897, #1938): signed by the stake point
     if (lockClaim) {

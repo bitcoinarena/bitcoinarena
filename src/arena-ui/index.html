@@ -3994,6 +3994,17 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
     // SHA-256("arena/order-session/v1" || seed || round id || order number, 4 bytes big-endian) - every tab and device holding the
     // seed makes the same key, so an order is cancelled and its shares sold from any of them, also after a reload. Before, the key was
     // random and kept in the tab alone: an order read back from the seats could be neither cancelled nor sold. Answers { pkcs8Hex, pub }.
+    // THE ENTRY PROOF (kanban #3824): the entry's session key signs entryProofDigest(entry id); sent beside the entry (submitPick `proof`). `key`: the
+    // session's private CryptoKey or its PKCS#8 hex. Null when the key is not the entry's own or the browser cannot sign - a seat of an older round
+    // takes the entry without it; a round of protocol ENTRY_PROOF_VERSION or later refuses it.
+    window.ARENA_ENTRY_PROOF = async function entryProof(entry, key) {
+      try {
+        const k = typeof key === 'string' ? await crypto.subtle.importKey('pkcs8', ARENACLIENT.fromHex(key), { name: 'Ed25519' }, false, ['sign']) : key;
+        if (!k) return null;
+        const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, k, ARENACLIENT.entryProofDigest(ARENACLIENT.entryId(entry))));
+        return sig.length === 64 ? ARENACLIENT.toHex(sig) : null;
+      } catch { return null; }
+    };
     window.ARENA_ORDER_SESSION_KEY = async function orderSessionKey(seed, roundIdHex, order) {
       const n = new Uint8Array(4); new DataView(n.buffer).setUint32(0, Number(order) >>> 0, false);
       const msg = new Uint8Array([...new TextEncoder().encode('arena/order-session/v1'), ...seed, ...ARENACLIENT.fromHex(roundIdHex), ...n]);
@@ -4973,7 +4984,9 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         { let ownId = null; try { ownId = ARENACLIENT.toHex(ARENACLIENT.entryId(entry)); } catch { /* the seats' id, written once they answered */ }
           rememberHidden(hiddenRecord(ownId)); }
         try { if (window.ARENA_MADE_ENTRY) window.ARENA_MADE_ENTRY(ARENACLIENT.toHex(ARENACLIENT.entryId(entry))); } catch { /* the move still goes */ }   // kanban #2035
-        const all = ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x) });
+        let proof = null;   // kanban #3824
+        try { if (hiddenKeyPkcs8 && typeof window.ARENA_ENTRY_PROOF === 'function') proof = await window.ARENA_ENTRY_PROOF(entry, hiddenKeyPkcs8); } catch { proof = null; }
+        const all = ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, onEntries: (x) => entriesIn(x), proof });
         all.then((x) => entriesIn(x), (e) => entriesIn({ entries: [], why: e.message }));
         // THIS TAB'S NAME RECORD, FROM THE TAP UNTIL THE CLOSE (kanban #1263; #1364, measured on UI 590: a move tapped 1.5 s before the close had its entry
         // taken, but the record went out only once every seat had answered the entry - after the close, where a head-to-head round takes none - so the
@@ -5034,7 +5047,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
       if (chosen) {
         // THE ENTRY IN FULL HERE (the session completes a run's entry with its round id and session key; a pick opens none):
         // a session key of its own, Ed25519 as a run's, that signs nothing - a pick sends no mark
-        let sessionPubkey = random(32), sessionKeyPkcs8 = null;
+        let sessionPubkey = random(32), sessionKeyPkcs8 = null, sessionPriv = null;
         try {
           // AN ORDER'S KEY, FROM THE WALLET (kanban #592): it signs the order's cancel and its sell (protocol cancelId / sellId);
           // kept with the order too, and made again from the seed wherever it is not
@@ -5044,6 +5057,7 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
           } else {
             const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
             sessionPubkey = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+            sessionPriv = pair.privateKey;   // kanban #3824: signs the entry proof
           }
         } catch { /* a browser without WebCrypto Ed25519: random bytes, as no mark is ever checked against them */ }
         if (chosen.limitPrice && !sessionKeyPkcs8) { window.ARENA_JOIN_REFUSED = 'this browser cannot make the Ed25519 key an order is cancelled with'; return; }
@@ -5091,7 +5105,10 @@ if(kept)['click','auxclick'].forEach(function(n){document.addEventListener(n,fun
         // replaces it with "Order not placed", hidden after 6 s like the placed note
         const tookEnd = () => { if (submittedAt !== null) tookNote('Order not placed', true); };
         let sent;
-        try { sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, handedOut: window.ARENA_HANDED_OUT, onSubmitted: (x) => {
+        // kanban #3824: the entry proof, by the key that made this entry's session key (a kept entry: only an order's, made again from the seed)
+        let proof = null;
+        try { if (typeof window.ARENA_ENTRY_PROOF === 'function' && ARENACLIENT.toHex(entry.sessionPubkey) === ARENACLIENT.toHex(sessionPubkey)) proof = await window.ARENA_ENTRY_PROOF(entry, sessionKeyPkcs8 || sessionPriv); } catch { proof = null; }
+        try { sent = await ARENACLIENT.submitPick({ entry, stakeLock, nodes: named.nodes, handedOut: window.ARENA_HANDED_OUT, proof, onSubmitted: (x) => {
           early = x.entryId;
           // AN ORDER STILL PLACING AFTER 10 s KEEPS ITS LOG TOO (playtest 2026-10-24 21:26Z: "It's stuck at placing" - 0f975760's entry at six
           // seats, no lock at any, and no log kept: only a placed order kept one): the slow tx row and its Copy log, without waiting for the end

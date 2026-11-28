@@ -13,8 +13,10 @@ import { NAMED_CLAIM_VERSION } from '../src/arena-lock.js';
 test('#3897: 2.0 speaks 33, 34, 35 and 36 (the rollout plan of the 2.0 release)', () => {
   for (const v of [NAMED_CLAIM_VERSION, DISJOINT_RULES_VERSION, 34, 35, 36]) assert.equal(speaksVersion(v), true, `protocol ${v} spoken`);
   assert.equal(speaksVersion(32), false, '32 stays prepared, not spoken (#2832)');
-  assert.equal(speaksVersion(37), false);
-  assert.deepEqual([...SUPPORTED_PROTOCOL_VERSIONS].sort((a, b) => a - b).slice(-4), [33, 34, 35, 36]);
+  // 37 joined with the rulings of 2026-11-28 (kanban #3824, #3882, ...): spoken, written by round creators only with its rollout
+  assert.equal(speaksVersion(37), true);
+  assert.equal(speaksVersion(38), false);
+  assert.deepEqual([...SUPPORTED_PROTOCOL_VERSIONS].sort((a, b) => a - b).slice(-5), [33, 34, 35, 36, 37]);
 });
 
 test('#3897: each version gates on the round\'s own version (#3743 #3762 #3800 at 34, #3854 at 35)', () => {

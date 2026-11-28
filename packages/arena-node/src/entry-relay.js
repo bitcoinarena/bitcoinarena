@@ -10,6 +10,7 @@
 // handed on (RELAY_HEADER marks a seat's), and only to a seat that does not hold it. A market has its own way (order-batch.js replayOrder), and a
 // replayed game's client sends its entry again with its batches.
 import { peerJsonUpTo } from './peer-body.js';
+import { ENTRY_PROOF_HEADER } from '../../arena-protocol/src/entry-proof.js';
 
 export const RELAY_HEADER = 'x-arena-relayed';
 const AFTER_MS = 700, SPREAD_MS = 500;      // after the client's own posts have had their time, and not all seats at the same moment
@@ -67,13 +68,15 @@ export const seatView = (fetcher) => async (base, roundHex) => {
   return new Set((j.players || []).map((p) => String(p.entry)));
 };
 
-export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher = (...a) => globalThis.fetch(...a), log = console.log, nowMs = () => Date.now(),
+export function createEntryRelay({ peersOf, entryOf, entryProofOf = () => null, handoutOf, locksOf, fetcher = (...a) => globalThis.fetch(...a), log = console.log, nowMs = () => Date.now(),
   afterMs = AFTER_MS, spreadMs = SPREAD_MS, lockAfterMs = LOCK_AFTER_MS, againMs = AGAIN_MS } = {}) {
   const entries = new Set(), lockPasses = new Set();
   const later = (ms, run) => { const t = setTimeout(() => { run().catch((e) => log(`[relay] ${e.message}`)); }, ms); if (t.unref) t.unref(); };
   const once = (set, k) => { if (set.has(k)) return false; if (set.size >= KEPT) set.delete(set.values().next().value); set.add(k); return true; };
   const ask = (url, init = {}) => fetcher(url, { ...init, signal: AbortSignal.timeout(WAIT_MS) });
-  const post = (url, body) => ask(url, { method: 'POST', body, headers: { [RELAY_HEADER]: '1' } });
+  const post = (url, body, extra = {}) => ask(url, { method: 'POST', body, headers: { [RELAY_HEADER]: '1', ...extra } });
+  // kanban #3824: an entry goes on with its entry proof, unchanged (header x-arena-entry-proof); an entry kept without one goes on as before
+  const postEntryOn = (base, entryHex, entry) => { const p = entryProofOf(entryHex); return post(`${base}/entry`, entry, p ? { [ENTRY_PROOF_HEADER]: p } : {}); };
   const bases = (roundId) => peersOf(roundId).map((p) => String(p).replace(/\/+$/, ''));
 
   const handEntry = async (roundId, entryHex) => {
@@ -85,7 +88,7 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
         const held = await ask(`${base}/entry?id=${entryHex}`);
         if (held.status !== 404) return null;
         if (handout) await post(`${base}/handout`, handout);
-        const took = await post(`${base}/entry`, entry);
+        const took = await postEntryOn(base, entryHex, entry);
         return took.status === 201 ? 'took' : `${took.status}`;
       } catch (e) { return e.message; }
     }));
@@ -125,7 +128,7 @@ export function createEntryRelay({ peersOf, entryOf, handoutOf, locksOf, fetcher
               if (entry) {
                 const handout = handoutOf(entryHex);
                 if (handout) await post(`${base}/handout`, handout).catch(() => null);
-                const e = await post(`${base}/entry`, entry).catch(() => null);
+                const e = await postEntryOn(base, entryHex, entry).catch(() => null);
                 if (e && (e.status === 201 || e.status === 200)) p = await post(`${base}/${door}?entry=${entryHex}`, JSON.stringify(fields));
               }
             }

@@ -25,7 +25,9 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35, 36, 37]);
+// 37 (kanban #3824 and the other rulings of 2026-11-28): the entry proof at the door (entry-proof.js ENTRY_PROOF_VERSION). Gated on the round's own
+// version; round creators write 37 only once the page and every seat list it.
 // 34, 35, 36 (kanban #3897, the 2.0 release): 34 the signed draw (#3743), the genesis run (#3762) and the bound identity proof (#3800); 35 pool first
 // (#3854); 36 the census minimum at the role floor (#3855 - 2.0 counts it there for every round already, PR #33). Each gates on the round's own
 // version, so no older round changes; round creators write 34+ only once the page and every seat list them.

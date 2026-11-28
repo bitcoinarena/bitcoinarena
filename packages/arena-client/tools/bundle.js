@@ -192,6 +192,7 @@ out += '         headersOverHttp: headersOverHttp, httpProvider: httpProvider,\n
 out += '         GENESIS: GENESIS, NO_PREVIOUS: NO_PREVIOUS,\n';
 out += '         encodeRoundContract: encodeRoundContract, roundId: roundId,\n';
 out += '         encodeEntryContract: encodeEntryContract, entryId: entryId,\n';
+out += '         entryProofDigest: entryProofDigest, entryProofHeadersFor: entryProofHeadersFor,\n';   // kanban #3824
 // (watchGhosts, GHOST_BACKLOG, tickClock, ghostLabels, ghostLabelText, moveGlyphs, playersLine, newestPose, stakeLine: Tick Tock's ghosts,
 // put on ARENACLIENT by its own page script, packages/nextblock/page/ghost-page.js - §0A.2, kanban #525)
 out += '         parseEmergencyCode: parseEmergencyCode, emergencySecret: emergencySecret, signEmergencyDeparture: signEmergencyDeparture,\n';
