@@ -159,9 +159,14 @@ function slashEnv(k) {
   if (!SLASH) return {};
   const offence = path('census', `offence-${k + 1}.txt`);
   if (!existsSync(offence)) writeFileSync(offence, '');
+  // AND ITS DISSENT FILE (test-dissent.js, kanban #3901): empty, nothing armed. A line `<entry hex>` makes this seat's replay of that entry differ and its re-run
+  // sign one score higher - with five seats armed an objection holds and their re-run contradicts the first result, and every AUDIT that vouched for it
+  // (§13A.1: AUDIT_CONTRADICTED), as tools/slash-release-regtest.mjs arms its own seats
+  const dissent = path('census', `dissent-${k + 1}.txt`);
+  if (!existsSync(dissent)) writeFileSync(dissent, '');
   return { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', `key0-${k + 1}.json`), ARENA_CENSUS_KEY_EVERY_MS: '1500',
     ARENA_SLASH_FILE_STEP_MS: env.ARENA_SLASH_FILE_STEP_MS || '500', ARENA_DUTY_POST: 'on', ARENA_DUTY_WALLET: WALLET, ARENA_DUTY_APPS: 'none',
-    ARENA_BOND_CLI: [join(BTC, 'bitcoin-cli'), ...btcArgs(), `-rpcwallet=${WALLET}`].join(','), ARENA_TEST_NAMED_OFFENCE_FILE: offence,
+    ARENA_BOND_CLI: [join(BTC, 'bitcoin-cli'), ...btcArgs(), `-rpcwallet=${WALLET}`].join(','), ARENA_TEST_NAMED_OFFENCE_FILE: offence, ARENA_TEST_DISSENT_FILE: dissent,
     // THE STAKE-LOCK TOOL ON FEW THREADS (measured 2026-11-05 on the test laptop: seven seats' session exports and claim reads, each a tokio runtime on every core,
     // took the load to 150): every tool a seat spawns inherits this
     TOKIO_WORKER_THREADS: env.TOKIO_WORKER_THREADS || '1' };
@@ -1042,6 +1047,8 @@ async function auditorsCmd() {
   const { regtest } = await import('./regtest-bond.mjs');
   const { DatabaseSync } = await import('node:sqlite');
   const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { BOND_TEMPLATE_V3 } = await import('../../arena-protocol/src/bond-script.js');
+  const fromHexKey = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
   // the module cli: chain, cookie and the devnet wallet already in it (kanban #1412)
   const rt = regtest(cli, { network: 'regtest', wallet: WALLET });
   const versions = Number(env.ARENA_PROTOCOL_VERSION || 1);
@@ -1057,9 +1064,12 @@ async function auditorsCmd() {
     if (!row) throw new Error(`auditor ${k + 1}: no identity in its store`);
     const secret = new Uint8Array(row.secret), key = schnorr.getPublicKey(secret);
     if (rt.bondsOf({ pubkey: key }).length) { out.push({ auditor: k + 1, bonded: 'already' }); continue; }
+    // ON A DEVNET THAT SLASHES, TEMPLATE 3 UNDER CENSUS KEY 0 WITH ITS PRESIG, as the seven's first bonds (round-2of2.mjs; kanban #3901): an AUDIT a valid objection
+    // contradicts (§13A.1, AUDIT_CONTRADICTED) is then started by the census key and takes the auditor's bond - on template 2 it waited for an arbitration set the devnet runs none of
+    const t3 = SLASH ? { template: BOND_TEMPLATE_V3, censusKey: fromHexKey(JSON.parse(readFileSync(path('census', 'key0.json'), 'utf8')).publicKey) } : {};
     const p = rt.postBond(secret, { endpoint: `ws://127.0.0.1:${port}`, roles: ['audit'], operatorId: `audit-${k + 1}`, hostedGames: hosted,
-      protocolVersions: Array.from({ length: versions }, (_, i) => i + 1) });
-    rt.include([p.hex]);
+      protocolVersions: Array.from({ length: versions }, (_, i) => i + 1), ...t3 });
+    rt.include([p.hex, ...(SLASH ? [rt.postBondPresig(secret, p).hex] : [])]);
     out.push({ auditor: k + 1, port, key: Buffer.from(key).toString('hex').slice(0, 16), txid: p.txid });
   }
   rt.mine(8);
