@@ -36,9 +36,9 @@ export function bonusPct(flags = {}) {
  * community bonus on top. A node bounty is 10,000 flat (it is not a report: no bonus, no half).
  */
 // kanban #2784 (the owner 2026-11-15): the full level only when the reporter played a round AND is proven human - at least one verified social account
-// (Telegram, Discord or Armada membership, or follows on X); else - a code-only report, or a player with no verified account (a bot) - 25 %.
+// (Telegram or Discord membership, or follows on X); else - a code-only report, or a player with no verified account (a bot) - 25 %.
 // kanban #2788 (the owner 2026-11-15: "Um human zu beweisen benoetigen wir einen Twitter [account]"): only a verified X account proves a human now;
-// Telegram, Discord and Armada stay a bonus.
+// Telegram and Discord stay a bonus. (kanban #3922, the owner 2026-11-28: the Armada community is removed everywhere.)
 // WHAT A BOT GETS (kanban #2784, the owner 2026-11-15: "Setze die Bot-Bounties nur auf 15 % jetzt"): was 25 %
 export const BOT_PCT = 15;
 export const HUMAN_FLAGS = Object.freeze(['x']);

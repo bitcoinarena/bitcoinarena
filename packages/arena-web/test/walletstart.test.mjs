@@ -20,7 +20,7 @@ test('the three ways in, and Create: straight on, or why it cannot on the busy l
   assert.match(h, />Restore a wallet<small>Your 24 words, or your seed<\/small>/);
   assert.match(h, /class="nostr">Login with Nostr</);
   assert.match(h, /<div id="ws-busy" class="ws-note" style="display:none"><\/div>/);
-  assert.match(h, /Join the community on Armada/);
+  assert.doesNotMatch(h, /armada/i); // kanban #3922 (the owner 2026-11-28): the Armada community is gone
   let made = 0;
   const w = live({ create: () => { made++; return { ok: false, why: 'This browser cannot keep a wallet: no storage' }; }, restore() {}, nostr: noNostr });
   w.create();
