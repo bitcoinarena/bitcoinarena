@@ -218,6 +218,14 @@ export const runsDisjointRules = (v) => Number.isInteger(v) && v >= DISJOINT_RUL
  * only, #3743); signed, the 35 cases pass. Round creators write 35 only once every seat of the network lists it.
  */
 export const POOL_FIRST_VERSION = 35;
+/**
+ * A LATE SETTLEMENT NEVER PAYS THE SERIES PUBLISHER (kanban #3882, RULED 2026-11-28; §5A.5 reimburses the first confirmed publication once): the fee back is
+ * paid by round 0's own settlement and by nothing else - a settlement that replaces it (another txid for the same table, a fallback claim of it) still
+ * names the publisher, a late loser's second settlement beside it does not: its fee lock's nodes' part goes whole to the sitting seats' pools. By the
+ * round's version; a late settlement of an earlier round is built and co-signed as before, so a fixed and an unfixed seat derive the same bytes.
+ */
+export const LATE_NO_PUBLISHER_VERSION = 37;
+export const latePaysNoPublisher = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= LATE_NO_PUBLISHER_VERSION;
 /** Whether a market round of protocol version `v` is a pool once it holds a backed plain pick, orders or not (kanban #3854). */
 export const poolsFirst = (v) => Number.isInteger(v) && v >= POOL_FIRST_VERSION;
 /**

@@ -41,7 +41,7 @@ import { netStakeMsat, isRefund, FAILED, FORFEIT, VOID, DELIVERED } from './payo
 import { lockActions, CLAIM, RETURN } from './lock-action.js';
 import { winnings } from './payout-spend.js';
 import { nodeFeeTable, entryFeeMsat, frontendShares, frontendBookShares, GAME_VERIFY, SETTLEMENT, GUARDIAN, GATEWAY, LIQUIDITY } from './fee.js';
-import { MIN_PLAYERS_PER_ROUND, AUDITOR_VERSION } from './constants.js';
+import { MIN_PLAYERS_PER_ROUND, AUDITOR_VERSION, latePaysNoPublisher } from './constants.js';
 import { refundKeyOf } from './stake-lock.js';
 import { splitDonation } from './donation.js';
 import { roundId } from './contracts.js';
@@ -458,6 +458,9 @@ export function lateLockSettlement({ roundId, entryId, entry, lock, feeLock = nu
   const net = netStakeMsat(entry);
   if (lock.amountMsat !== net) return refuse(`the late loser's lock holds ${lock.amountMsat} msat and its entry's net stake is ${net}`);
   if (!(winnerLocks instanceof Map)) return refuse('the winners\' stake locks are a Map by player key');
+  // kanban #3882: a late settlement of a round of LATE_NO_PUBLISHER_VERSION or later names no publisher - one a seat is handed with one is not signed
+  if (latePaysNoPublisher(contract) && signerNodes && signerNodes.publisher)
+    return refuse('a late settlement never pays the series publisher: the fee back is paid once, by round 0\'s own settlement (§5A.5, kanban #3882)');
 
   const inputFeesMsat = lnv2FeeMsat(fees, net);
   const spendableMsat = net - inputFeesMsat;
