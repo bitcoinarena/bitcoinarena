@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SEASON DRAW (kanban #2623, #2641, testnet-stage.bitcoinarena.io/bounty/#draw): 50,000 sat among the reporters with a confirmed report in the week
-// who are members of Telegram, Discord or Armada at draw time, one entry per person, places 20,000 / 12,000 / 8,000 / 6,000 / 4,000. Anyone can run it
+// who are members of Telegram or Discord at draw time, one entry per person, places 20,000 / 12,000 / 8,000 / 6,000 / 4,000. Anyone can run it
 // again: the entry list (platform usernames) is published, and the seed is the hash of THE FIRST BITCOIN (MAINNET) BLOCK WHOSE HEADER TIME IS AFTER THE
 // WEEK'S END (the owner 2026-11-14: "Erster Block nach Week 2"; a block stamped exactly at the end does not count), read from mempool.space.
 // How: the entries are trimmed, deduplicated and sorted (byte order); for place i = 1..5, sha256("<block hash>:<i>") read as a number, modulo the

@@ -942,7 +942,7 @@ const leadsInternal = (u) => new Promise((resolve) => {
 function teamHosts() { return String(process.env.FAUCET_TEAM_HOSTS || 'tn4.bitcoin-arena.io').split(',').map((x) => x.trim().toLowerCase().replace(/\.$/, '')).filter(Boolean); }
 const onTeamHost = (url) => { let h = ''; try { h = new URL(String(url)).hostname.toLowerCase().replace(/\.$/, ''); } catch { return true; } return teamHosts().some((t) => h === t || h.endsWith(`.${t}`)); };
 const walletRefusal = (url) => walletUrlRefusal(url) || (onTeamHost(url) ? 'its wallet must be on a public name' : null);
-/** The same refusal for any other URL a stranger names to the faucet (kanban #2683: an Armada NIP-05 domain). */
+/** The same refusal for any other URL a stranger names to the faucet (kanban #2683: a NIP-05 domain). */
 export const faucetUrlRefusal = walletRefusal;
 const walletGet = async (fetchFn, u, timeoutMs) => {
   if (fetchFn !== publicFetch && await leadsInternal(u)) throw Object.assign(new Error('its wallet must be on a public name'), { code: 'EINTERNALHOST' });

@@ -16,7 +16,7 @@ const rep = (n, pubkey) => ({ id: `e${n}`.padEnd(64, '0'), pubkey });
 
 test('a season draw entrant cannot pick his place after the seed block is known (entries frozen at the season end)', async () => {
   const s = openBountySeason();
-  const yes = { telegram: async () => ({ member: true }), discord: async () => ({ member: true }), armada: async () => ({ member: true }) };
+  const yes = { telegram: async () => ({ member: true }), discord: async () => ({ member: true }) };
   // five honest reporters and the attacker (K6), each with an approved report and a Telegram link
   const names = ['@alice_tg', '@bob_tg', '@carol_tg', '@dave_tg', '@erin_tg', '@mallory'];
   for (let n = 1; n <= 6; n++) {

@@ -20,7 +20,7 @@ const members = {
 test('#2645 typed names of real members count since #3722 (the owner 2026-11-25: the link code is no longer needed)', async () => {
   const s = openBountySeason();
   const r = await socialCheck(s, K(1), { x: 'realmember', discord: 'realmember', telegram: 'realmember' }, members);
-  assert.deepEqual(r.flags, { telegram: true, discord: true, x: true, armada: false, nostr: false });
+  assert.deepEqual(r.flags, { telegram: true, discord: true, x: true, nostr: false });
   assert.equal(r.results.x.member, true, 'the name is still found and shown');
   assert.equal(r.results.x.needsCode, undefined, 'no link code is asked for');
   // one key per account stays: another key cannot take the same names

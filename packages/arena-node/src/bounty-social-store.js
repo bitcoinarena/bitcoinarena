@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SOCIAL NAMES REMEMBERED IN THE BROWSER (kanban #2641, the owner 2026-11-14: "Merke dir die angegebenen social Daten im Browser so dass der User
-// es nicht nochmal angeben muss, wenn es einmal validiert ist"): per report key, arena.bounty.social:<pubkey> = { x, telegram, discord, armada,
-// checkedAt }. Only a name whose live check said member is kept; one that failed is dropped; a check that could not be read leaves what was kept.
+// es nicht nochmal angeben muss, wenn es einmal validiert ist"): per report key, arena.bounty.social:<pubkey> = { x, telegram, discord, nostr,
+// checkedAt } (an armada name kept by an older page is no longer read, kanban #3922). Only a name whose live check said member is kept; one that failed is dropped; a check that could not be read leaves what was kept.
 // Every storage call is in a try (a private window, blocked or full storage): without it the page works, it only asks again.
 // The page carries a copy of the functions between the markers below (the build step copies them; no imports, plain functions).
 // ---- social-store begin
-const SOCIAL_PLATFORMS = ['x', 'telegram', 'discord', 'armada', 'nostr'];
+const SOCIAL_PLATFORMS = ['x', 'telegram', 'discord', 'nostr'];
 function socialKey(pubkey) { return 'arena.bounty.social:' + String(pubkey || ''); }
 function socialLoad(storage, pubkey) {
   if (!/^[0-9a-f]{64}$/.test(String(pubkey || ''))) return null;
@@ -48,10 +48,10 @@ function socialMissing(saved, links) {
   for (const p of SOCIAL_PLATFORMS) if (saved[p] && !have.has(p)) out[p] = saved[p];
   return out;
 }
-/** The bonus the flags give, as the faucet counts it: X +20; Nostr +20; 2 of Telegram, Discord, Armada +20 (kanban #2641). */
+/** The bonus the flags give, as the faucet counts it: X +20; Nostr +20; Telegram and Discord both +20 (kanban #2641; Armada removed, kanban #3922). */
 function socialBonus(flags) {
   const f = flags || {};
-  const n = ['telegram', 'discord', 'armada'].filter((p) => f[p] === true).length;
+  const n = ['telegram', 'discord'].filter((p) => f[p] === true).length;
   return (f.x === true ? 20 : 0) + (f.nostr === true ? 20 : 0) + (n >= 2 ? 20 : 0);
 }
 // ---- social-store end

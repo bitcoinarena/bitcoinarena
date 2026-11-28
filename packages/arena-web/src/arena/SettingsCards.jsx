@@ -128,17 +128,6 @@ export class ConfirmedFederationsCard extends React.Component {
   }
 }
 
-// THE COMMUNITY (2026-10-09: "Armada is the Discord"): the Bitcoin Arena community on Armada - log in with the Nostr key
-export class CommunityCard extends React.Component {
-  render() {
-    return (<>
-      <h3>Community</h3>
-      <div className="muted">Chat with players, node operators and game developers on Armada - log in with your Nostr key.</div>
-      <a id="arena-armada-link" href={this.props.href} target="_blank" rel="noopener" style={{ color: '#c9a8ff', fontWeight: 600 }}>Join Bitcoin Arena on Armada →</a>
-    </>);
-  }
-}
-
 // YOUR REFERRAL LINK (kanban #681, 2026-10-26: "A user may also use a referrer code and link to testnet.bitcoinarena.io. He gets 10% of
 // the node's income"): this wallet's own link - its key is the player's identity key, nothing to set up - Copy, and what it earned so
 // far as the page read it from the seats. Copy is the page's (it also names the program on the seats); the card says its answer.

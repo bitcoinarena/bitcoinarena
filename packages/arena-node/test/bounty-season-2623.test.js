@@ -15,7 +15,7 @@ const rep = (n, pubkey = K(1)) => ({ id: String(n).padStart(64, '0'), pubkey });
 test('#2623 #2641 #2784 the payout: the full level only for a played round by a proven human (a verified X account only - kanban #2788), else 15 % (the owner 2026-11-15, was 25 %); 1,000 for a follow-up; bonus X +20 / Nostr +20 / 2 of 3 communities +20; node 10,000 flat', () => {
   assert.equal(bonusPct({}), 0); assert.equal(bonusPct({ telegram: true }), 0); assert.equal(bonusPct({ discord: true }), 0);
   assert.equal(bonusPct({ x: true }), 20); assert.equal(bonusPct({ telegram: true, discord: true, x: true }), 40);
-  assert.equal(seasonPayout({ level: 'high', flags: { telegram: true, armada: true, x: true, nostr: true } }).sats, 8000, 'the page: "a high bug then pays 8,000"');
+  assert.equal(seasonPayout({ level: 'high', flags: { telegram: true, discord: true, x: true, nostr: true } }).sats, 8000, 'the page: "a high bug then pays 8,000"');
   assert.equal(seasonPayout({ level: 'high' }).sats, 750, 'played, no verified account: counts as a bot, 15 %');
   assert.equal(seasonPayout({ level: 'high', flags: { x: true } }).sats, 6000, 'played and a verified X account: the full level (+20 % X bonus)');
   // kanban #2904 (the owner 2026-11-16 ~14:10Z: "Ein bestaetigtes X-Konto reicht"): a verified X account alone is human - no played round needed
@@ -23,16 +23,16 @@ test('#2623 #2641 #2784 the payout: the full level only for a played round by a 
   assert.equal(seasonPayout({ level: 'low', flags: { x: true }, played: false }).sats, 1200, 'low + X, not played: 1,200');
   assert.equal(seasonPayout({ level: 'low', played: false }).sats, 150, 'low, no X: the bot share');
   // kanban #2904 (the owner 2026-11-16: "Die Boni gelten nur, wenn es ein Mensch ist"): the social bonus only for a human
-  assert.equal(seasonPayout({ level: 'low', flags: { armada: true, nostr: true } }).sats, 150, 'a bot with Armada + Nostr: 15 % flat, no bonus');
+  assert.equal(seasonPayout({ level: 'low', flags: { discord: true, nostr: true } }).sats, 150, 'a bot with Discord + Nostr: 15 % flat, no bonus');
   assert.equal(seasonPayout({ level: 'low', flags: { x: true, telegram: true, discord: true } }).sats, 1400, 'a human (X) with 2 communities: 100 % + 40 %');
-  // kanban #2788 (the owner 2026-11-15): only X proves a human; Telegram, Discord and Armada stay a bonus
-  for (const f of [{ telegram: true }, { discord: true }, { armada: true }, { telegram: true, discord: true, armada: true }, { nostr: true }]) {
+  // kanban #2788 (the owner 2026-11-15): only X proves a human; Telegram and Discord stay a bonus (Armada removed, kanban #3922)
+  for (const f of [{ telegram: true }, { discord: true }, { telegram: true, discord: true }, { nostr: true }]) {
     const p = seasonPayout({ level: 'high', flags: f });
     assert.equal(p.human, false, JSON.stringify(f)); assert.equal(p.quarter, true, JSON.stringify(f)); assert.equal(p.baseSats, 750, JSON.stringify(f)); }
   assert.equal(seasonPayout({ level: 'high', flags: { nostr: true } }).sats, 750, 'a Nostr follow is no proof of a human, and a bot gets no bonus (kanban #2904)');
   assert.equal(seasonPayout({ level: 'high', codeOnly: true }).sats, 750);
   assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true } }).sats, 1500, 'one community alone: no bonus');
-  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true, armada: true } }).sats, 1500, 'a bot share gets no community bonus (kanban #2904)');
+  assert.equal(seasonPayout({ level: 'critical', codeOnly: true, flags: { discord: true, telegram: true } }).sats, 1500, 'a bot share gets no community bonus (kanban #2904)');
   assert.equal(seasonPayout({ level: 'high', followUp: true }).sats, 150);
   assert.equal(seasonPayout({ level: 'medium', followUp: true, flags: { x: true } }).sats, 1200);
   assert.equal(seasonPayout({ level: 'useful', codeOnly: true }).sats, 75);
@@ -53,7 +53,7 @@ test('#2623 link codes: one use, 24 hours, one key per account; reads stored wit
   assert.match(s.redeem(late.code, { platform: 'discord', userId: '9', nowMs: t0 + LINK_CODE_MS + 1 }).why, /expired/);
   const other = s.makeCode(K(2), { nowMs: t0 });
   assert.match(s.redeem(other.code, { platform: 'telegram', userId: '7', nowMs: t0 + 3 }).why, /another report key/);
-  assert.deepEqual(s.flagsOf(K(1), { nowMs: t0 + 5 }), { telegram: false, discord: false, x: false, armada: false, nostr: false }, 'linked is not yet a member');
+  assert.deepEqual(s.flagsOf(K(1), { nowMs: t0 + 5 }), { telegram: false, discord: false, x: false, nostr: false }, 'linked is not yet a member');
   let calls = 0;
   const flags = await s.verify(K(1), { telegram: async (l) => { calls++; assert.equal(l.userId, '7'); return { member: true }; } }, { nowMs: () => t0 + 10 });
   assert.equal(calls, 1); assert.equal(flags.telegram, true);

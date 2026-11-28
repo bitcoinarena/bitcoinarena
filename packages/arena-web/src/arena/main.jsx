@@ -25,7 +25,7 @@ import { ShopItems } from './ShopItems.jsx';
 import { DonateBox } from './DonateBox.jsx';
 import { OtherWallets } from './OtherWallets.jsx';
 import { RefundKey, BackToArena, Text, FedChip, BackupBox } from './PageBits.jsx';
-import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard, RescanCard, ReferralCard } from './SettingsCards.jsx';
+import { NameCard, GraphicsCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, DonationCard, ItemsShareCard, DebugCard, RescanCard, ReferralCard } from './SettingsCards.jsx';
 
 export function drawTiles(list, props) {
   const host = document.createElement('div');
@@ -119,7 +119,7 @@ if (typeof window !== 'undefined') window.ArenaSettings = {
   name: (host, props) => into(host, <NameCard {...props} />), graphics: (host, props) => into(host, <GraphicsCard {...props} />),
   logs: (host, props) => into(host, <LogsCard {...props} />), seed: (host, props) => into(host, <SeedCard {...props} />),
   account: (host, props) => into(host, <AccountCard {...props} />),
-  federations: (host, props) => into(host, <ConfirmedFederationsCard {...props} />), community: (host, props) => into(host, <CommunityCard {...props} />),
+  federations: (host, props) => into(host, <ConfirmedFederationsCard {...props} />), community: () => {}, // kanban #3922 (the owner 2026-11-28): no community card any more; a page from before still calls it
   donation: (host, props) => into(host, <DonationCard {...props} />), itemsShare: (host, props) => into(host, <ItemsShareCard {...props} />),
   debug: (host, props) => into(host, <DebugCard {...props} />), rescan: (host, props) => into(host, <RescanCard {...props} />),
   referral: (host, props) => into(host, <ReferralCard {...props} />) };

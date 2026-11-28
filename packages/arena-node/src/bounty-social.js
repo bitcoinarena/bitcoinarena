@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE SOCIAL SCREEN'S LIVE CHECK (Week 2, kanban #2641, the owner 2026-11-14: "der User gibt jeweils seine usernames dafür an und prüft live ob er da
-// wirklich in der community ist"): the reporter types a name per platform (all optional) - X, Telegram, Discord, Armada - and each is read live.
+// wirklich in der community ist"): the reporter types a name per platform (all optional) - X, Telegram, Discord, Nostr - and each is read live.
 // A name found as a member is linked to the signed-in report key (one key per account); the answer says per platform member yes/no and the bonus
-// that follows (X +25 %, 2 of Telegram / Discord / Armada +25 %).
+// that follows (X +20 %, Nostr +20 %, Telegram and Discord both +20 %; the Armada community was removed by the owner 2026-11-28, kanban #3922).
 import { readFileSync } from 'node:fs';
 import { PLATFORMS, bonusPct } from './bounty-season.js';
 import { discordSearch, telegramByName, telegramVerifier, xByName, xSessionFromChrome } from './bounty-verify.js';
@@ -11,7 +11,7 @@ import { discordSearch, telegramByName, telegramVerifier, xByName, xSessionFromC
 const linksOut = (S2, pubkey) => S2.links(pubkey).map(({ userId, ...l }) => l);
 
 /**
- * CHECK THE NAMES `asked` ({ x, telegram, discord, armada }: strings, empty = not asked) for `pubkey` with `resolvers[platform](name) ->
+ * CHECK THE NAMES `asked` ({ x, telegram, discord, nostr }: strings, empty = not asked) for `pubkey` with `resolvers[platform](name) ->
  * { userId, username, member, why, unseen? }`. A member is linked (S2.claimName) and its read stored with its time; a name that is no member, or
  * that could not be read, links nothing. Answers { ok, results: { platform: { member, why, username?, unseen? } }, flags, bonusPct, links }.
  */
@@ -41,10 +41,10 @@ export async function socialCheck(S2, pubkey, asked, resolvers, { nowMs = () => 
 
 /**
  * THE RESOLVERS FROM THE CONFIG (the same secret files the verifiers read): X from the X browser's session, Discord from the bot token, Telegram from
- * the user account reader (if logged in) or the bot's seen-map plus getChatMember, Armada from the module of that name. A platform without its
+ * the user account reader (if logged in) or the bot's seen-map plus getChatMember. A platform without its
  * config has no resolver (its answer says the check is not on).
  */
-export function resolversFromEnv(S2, env = process.env, { userbot = null, armada = null } = {}) {
+export function resolversFromEnv(S2, env = process.env, { userbot = null } = {}) {
   const rd = (f) => { try { return f ? readFileSync(f, 'utf8').trim() : ''; } catch { return ''; } };
   const out = {};
   if (env.FAUCET_BOUNTY_X_PORT) out.x = xByName({ session: () => xSessionFromChrome({ port: Number(env.FAUCET_BOUNTY_X_PORT) }) });
@@ -55,6 +55,5 @@ export function resolversFromEnv(S2, env = process.env, { userbot = null, armada
     const verify = tg && chat ? telegramVerifier({ token: tg, chatId: chat }) : async () => ({ member: null, why: 'no bot' });
     out.telegram = telegramByName({ idOf: (n) => S2.telegramIdOf(n), verify, userbot });
   }
-  if (armada) out.armada = armada;
   return out;
 }

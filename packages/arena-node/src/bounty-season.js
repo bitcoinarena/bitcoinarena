@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // BUG BOUNTY SEASON 2 (kanban #2623, the rules page testnet-stage.bitcoinarena.io/bounty/): a pot of 100,000 sat per one-week season for confirmed
-// reports, community bonuses and node bounties; a community bonus from linked X / Telegram / Discord / Armada accounts (Week 2 rule, kanban #2641); code-only findings at half; follow-ups
+// reports, community bonuses and node bounties; a community bonus from linked X / Telegram / Discord / Nostr accounts (Week 2 rule, kanban #2641); code-only findings at half; follow-ups
 // at 1,000; the node bounty for the first 3 nodes of a season. Its own file (FAUCET_BOUNTY_S2_DB), so Season 1's feedback.db keeps its schema.
 // This module only computes and records: paying stays the separate manual step it was (it never calls a wallet).
 import { DatabaseSync } from 'node:sqlite';
@@ -16,9 +16,11 @@ export const FOLLOW_UP_SATS = 1000;
 export const NODE_SATS = 10000;
 export const NODES_PER_SEASON = 3;
 export const LEVEL_SATS = Object.freeze({ useful: 500, low: 1000, medium: 2000, high: 5000, critical: 10000 });
-export const PLATFORMS = Object.freeze(['telegram', 'discord', 'x', 'armada', 'nostr']);
-/** WEEK 2 (kanban #2641): the communities the second bonus counts - any 2 of these 3 */
-export const COMMUNITIES = Object.freeze(['telegram', 'discord', 'armada']);
+// NO ARMADA (kanban #3922, the owner 2026-11-28: "Entferne auch die Armada community überall"): it is no platform any more - nothing links,
+// checks or counts it; an older approval or link row that names it still loads (its flag is read and ignored)
+export const PLATFORMS = Object.freeze(['telegram', 'discord', 'x', 'nostr']);
+/** WEEK 2 (kanban #2641): the communities the second bonus counts - both of these (they were 2 of 3 until Armada went, kanban #3922) */
+export const COMMUNITIES = Object.freeze(['telegram', 'discord']);
 export const X_BONUS_PCT = 20;
 export const COMMUNITY_BONUS_PCT = 20;
 export const COMMUNITY_LEAST = 2;
@@ -34,7 +36,7 @@ export const LINK_CODE_RE = /\bBA-([ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8})\b/i;
 
 /**
  * THE BONUS IN PERCENT from the stored flags (Season 2, the owner 2026-11-14, kanban #2641: "Twitter +20%, Nostr +20%, und dann 2 of 3 ist nochmal +20%,
- * gesamt +60% maximal"): X follower +20; Nostr follower +20; a member of at least 2 of Telegram, Discord and Armada +20; at most +60. All optional.
+ * gesamt +60% maximal"): X follower +20; Nostr follower +20; a member of both Telegram and Discord +20 (kanban #3922: Armada no longer counts); at most +60. All optional.
  */
 export function bonusPct(flags = {}) {
   const n = COMMUNITIES.filter((p) => flags[p] === true).length;
@@ -43,8 +45,8 @@ export function bonusPct(flags = {}) {
 
 /**
  * WHAT ONE APPROVAL PAYS, by the Season 2 rules: the level's sats (a follow-up 1,000) in full only when the reporter played a round AND is proven
- * human - a linked X (Twitter) account (kanban #2788, the owner 2026-11-15: "Um human zu beweisen benoetigen wir einen Twitter"; Telegram,
- * Discord and Armada no longer prove it, they stay a bonus); everything else - a code-only finding (no played round) or a player with no verified X
+ * human - a linked X (Twitter) account (kanban #2788, the owner 2026-11-15: "Um human zu beweisen benoetigen wir einen Twitter"; Telegram
+ * and Discord no longer prove it, they stay a bonus); everything else - a code-only finding (no played round) or a player with no verified X
  * account (counts as a bot) - pays BOT_PCT, 15 % (kanban #2784; 25 % until the owner's 15 % later that day; code-only was half). Then the community bonus on top. A node bounty is 10,000 flat (it is not a
  * report: no bonus, no half).
  */
@@ -289,11 +291,11 @@ export function openBountySeason(path = ':memory:', { lastSeason = null, startMs
     if (!PLATFORMS.includes(platform)) return { ok: false, why: 'no such platform' };
     if (!userId) return { ok: false, why: 'no account' };
     const held = db.prepare('SELECT pubkey FROM links WHERE platform = ? AND user_id = ?').get(platform, String(userId));
-    // A REPORT KEY'S OWN NOSTR KEY IS ITS OWNER'S (kanban #3858, audit r30-nostr-1): a Nostr account (nostr, armada) is a key, and the signed-in
+    // A REPORT KEY'S OWN NOSTR KEY IS ITS OWNER'S (kanban #3858, audit r30-nostr-1): a Nostr account is a key, and the signed-in
     // report key proves itself on every request. A stranger who typed an honest reporter's public report key first held that account here, and the
     // owner's own link was refused for good (his Nostr +20 % lost on every report). A claim of the signed-in key itself takes the account from
     // whichever other key holds it; any other claim is refused as before
-    const ownKey = (platform === 'nostr' || platform === 'armada') && String(userId).toLowerCase() === String(pubkey).toLowerCase();
+    const ownKey = platform === 'nostr' && String(userId).toLowerCase() === String(pubkey).toLowerCase();
     if (held && held.pubkey !== pubkey && ownKey) db.prepare('DELETE FROM links WHERE platform = ? AND user_id = ?').run(platform, String(userId));
     else if (held && held.pubkey !== pubkey) return { ok: false, why: 'that account is linked to another report key' };
     const had = db.prepare('SELECT user_id FROM links WHERE pubkey = ? AND platform = ?').get(pubkey, platform);
@@ -361,7 +363,7 @@ export function openBountySeason(path = ':memory:', { lastSeason = null, startMs
 
   /** THE STORED FLAGS of a key: a platform counts when its last read said member and is fresh (CHECK_FRESH_MS). */
   function flagsOf(pubkey, { nowMs = Date.now() } = {}) {
-    const f = { telegram: false, discord: false, x: false, armada: false, nostr: false };
+    const f = { telegram: false, discord: false, x: false, nostr: false };
     const links = linksOf(pubkey);
     // A KNOWN AI BOT IS A BOT, WHATEVER IT LINKS (kanban #2958, the owner 2026-11-17 on x.com/damaidams: "Alle tickets mit diesem handle als bot
     // markieren, auch in Zukunft"): a key that links an X handle on the bot list (FAUCET_BOT_X_HANDLES file, read on every call) gets no flag -
@@ -373,7 +375,7 @@ export function openBountySeason(path = ':memory:', { lastSeason = null, startMs
     // fresh - X makes the reporter human, each platform gives its bonus. The link code stays an optional way (proof 'code'); one key per account
     // (claimName); the bot list above and the owner's real-user mark below are unchanged. A Nostr key also counts when it is the report key itself
     const owned = (l) => l.proof === 'code' || l.proof === 'name' || (l.platform === 'nostr' && String(l.userId || '').toLowerCase() === String(pubkey).toLowerCase());
-    for (const l of links) if (owned(l) && l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
+    for (const l of links) if (PLATFORMS.includes(l.platform) && owned(l) && l.member === true && l.checkedMs != null && nowMs - l.checkedMs <= CHECK_FRESH_MS) f[l.platform] = true;
     // THE OWNER'S REAL-USER MARK MAKES A HUMAN (owner 2026-11-23: "Wenn der X hat, dann ist er ein echter User"): human share, no extra bonus
     try { if (realUserOf(pubkey)) f.realUser = true; } catch (_) {}
     return f;
@@ -492,7 +494,7 @@ export function openBountySeason(path = ':memory:', { lastSeason = null, startMs
     // WHY IT WENT DOWN (the owner 2026-11-14, kanban #2641: "tun ggf nochmal den Betrag reduzieren wenn der User nicht mehr in den angegeben socials ist"):
     // the communities counted at approval that do not count now (left, or not readable now - a failed read is no member)
     const now = a.level === 'node' ? {} : flagsOf(a.pubkey, { nowMs });
-    const NAMES = { x: 'X', telegram: 'Telegram', discord: 'Discord', armada: 'Armada' };
+    const NAMES = { x: 'X', telegram: 'Telegram', discord: 'Discord', nostr: 'Nostr' };
     const lost = PLATFORMS.filter((k) => a.flags && a.flags[k] === true && now[k] !== true);
     // nothing left and no bonus lost: the rule itself went down (kanban #2784: the bot share 25 % -> 15 %)
     const why = sats < a.sats ? (!lost.length && a.bonusPct === p.bonusPct ? `the bot share is ${BOT_PCT} % now (approved ${a.sats})` : `left ${lost.map((k) => NAMES[k]).join(', ') || 'a community'}: -${a.bonusPct - p.bonusPct} %${!a.codeOnly && p.quarter ? `, no linked X account: ${BOT_PCT} %` : ''}`) : null;   // kanban #2788: X proves a human
@@ -501,10 +503,10 @@ export function openBountySeason(path = ':memory:', { lastSeason = null, startMs
   }
 
   /**
-   * THE DRAW'S ENTRIES for a season: every key with an approved report in it that is a member of Telegram, Discord or Armada (fresh read) - one entry
-   * per person, i.e. per report key, however many of the three it is in (the owner 2026-11-14, kanban #2641: "Ein user darf entweder in discord, Armada
+   * THE DRAW'S ENTRIES for a season: every key with an approved report in it that is a member of Telegram or Discord (fresh read) - one entry
+   * per person, i.e. per report key, however many of them it is in (the owner 2026-11-14, kanban #2641: "Ein user darf entweder in discord, Armada
    * oder telegram gezählt [werden], er wird aber nur einmal gezählt"); an account belongs to one key only (links_by_account). Named by its platform
-   * username (telegram, then discord, then armada). Call after verify() for each key (membership is read again right before the draw).
+   * username (telegram, then discord). Call after verify() for each key (membership is read again right before the draw).
    */
   function drawEntries(season, { nowMs = Date.now() } = {}) {
     const keys = db.prepare(`SELECT DISTINCT pubkey FROM approvals WHERE season = ? AND state = 'approved' AND level <> 'node'`).all(Number(season)).map((x) => x.pubkey);

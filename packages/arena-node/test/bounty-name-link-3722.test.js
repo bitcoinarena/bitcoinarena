@@ -24,7 +24,7 @@ test('#3722 a name-linked X follower is human with no link code, and each platfo
   const t0 = 1_800_000_000_000;
   const r = await socialCheck(s, K(1), { x: 'alice', discord: 'alice', telegram: 'alice', nostr: K(7) }, members, { nowMs: () => t0 });
   assert.equal(r.links.every((l) => l.proof === 'name'), true, 'linked by name only');
-  assert.deepEqual(r.flags, { telegram: true, discord: true, x: true, armada: false, nostr: true });
+  assert.deepEqual(r.flags, { telegram: true, discord: true, x: true, nostr: true });
   assert.equal(r.bonusPct, bonusPct(r.flags)); assert.equal(r.bonusPct, 60);
   assert.equal(r.results.x.needsCode, undefined, 'no code is asked for');
   const p = s.plan({ id: 'r1'.padEnd(64, '0'), pubkey: K(1) }, { level: 'high', nowMs: t0 });

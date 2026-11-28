@@ -119,12 +119,8 @@ const S2 = FEEDBACK && env.FAUCET_BOUNTY_S2_DB ? openBountySeason(env.FAUCET_BOU
   paidOf: (id) => FEEDBACK.paidSatsOf(id) }) : null;   // kanban #2784: the pot counts what was paid
 const S2_VERIFY = verifiersFromEnv(env);
 // WEEK 2'S SOCIAL SCREEN (kanban #2641): names typed per platform, read live. Telegram through the user account reader when it is logged in (else the
-// bot's seen-map); Armada through its own module when its key is configured
+// bot's seen-map). No Armada check any more (kanban #3922, the owner 2026-11-28: the Armada community is removed)
 const S2_USERBOT = S2 ? await userbotFromEnv(env, { log: (m) => console.log(`${new Date().toISOString()} ${m}`) }).catch(() => null) : null;
-let S2_ARMADA = null;
-if (S2) { try { const a = await import('../src/bounty-armada.js'); const v = a.armadaFromEnv(env);
-  if (v) { S2_VERIFY.armada = v; S2_ARMADA = async (input) => { const pk = await nostrPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
-    const r = await v({ userId: pk }); return { userId: pk, username: a.bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; }; } } catch (e) { console.log(`${new Date().toISOString()} armada check off: ${String(e.message).slice(0, 80)}`); } }
 // the user account reader is the Telegram check first (the owner 2026-11-14); a read it cannot make falls back to the bot's getChatMember by id
 if (S2_USERBOT) { const bot = S2_VERIFY.telegram;
   S2_VERIFY.telegram = async (l) => { let u = l.username ? await S2_USERBOT(l.username).catch(() => null) : null;
@@ -137,8 +133,8 @@ if (S2_USERBOT) { const bot = S2_VERIFY.telegram;
 // A NOSTR FOLLOW (kanban #2641): the key's newest contact list on our relay and big public ones names our profile key
 if (S2 && env.FAUCET_BOUNTY_NOSTR !== 'off') S2_VERIFY.nostr = nostrVerifier();
 const S2_NOSTR = S2_VERIFY.nostr ? async (input) => { const pk = await nostrPubkeyOf(input); if (!pk) return { userId: null, member: null, why: 'that is not a Nostr key (npub) or name@domain' };
-  const r = await S2_VERIFY.nostr({ userId: pk }); return { userId: pk, username: (await import('../src/bounty-armada.js')).bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; } : null;
-const S2_NAMES = S2 ? { ...resolversFromEnv(S2, env, { userbot: S2_USERBOT, armada: S2_ARMADA }), ...(S2_NOSTR ? { nostr: S2_NOSTR } : {}) } : {};
+  const r = await S2_VERIFY.nostr({ userId: pk }); return { userId: pk, username: (await import('../src/nostr-read.js')).bech32Encode('npub', Buffer.from(pk, 'hex')).slice(0, 20) + '…', member: r.member, why: r.why }; } : null;
+const S2_NAMES = S2 ? { ...resolversFromEnv(S2, env, { userbot: S2_USERBOT }), ...(S2_NOSTR ? { nostr: S2_NOSTR } : {}) } : {};
 const S2_SOCIAL_ASKS = new Map();   // pubkey -> last /feedback/social with names (one each 15 s)
 const S2_SOCIAL_GAP_MS = 15000;
 // ONE BUDGET FOR EVERY LIVE SOCIAL READ, ALL CALLERS TOGETHER (kanban #2646, audit #1489 r1-faucet-2): /feedback/social and /feedback/verify were
@@ -1098,7 +1094,7 @@ createServer((req, res) => {
         if (S2 && b.action === 'payable') { const r = FEEDBACK.report(b.id); if (!r) return send(200, { ok: false, why: 'no such report' });
           await S2.verify(r.pubkey, S2_VERIFY, { cause: 'payout' }); return send(200, S2.payable(r.id)); }
         if (S2 && b.action === 'draw-entries') { const season = Number(b.season) || S2.seasonNow(Date.now());
-          for (const k of S2.keysOfSeason(season)) await S2.verify(k, S2_KEY_PLATFORMS(['telegram', 'discord', 'armada']), { cause: 'draw' });
+          for (const k of S2.keysOfSeason(season)) await S2.verify(k, S2_KEY_PLATFORMS(['telegram', 'discord']), { cause: 'draw' });
           return send(200, { ok: true, season, entries: S2.drawEntries(season) }); }
         return send(400, { ok: false, why: 'an action is approve, reject, duplicate, reward or note' });
       }).catch(() => send(500, { ok: false, why: 'try again' })));
@@ -1250,12 +1246,12 @@ createServer((req, res) => {
     let who = null, last = null;
     for (const base of S2_BASES) { const m = FEEDBACK.mine(ev, { url: base + path.slice('/feedback'.length), method: 'POST', body: raw }); if (m.ok) { who = m.pubkey; break; } last = m; }
     if (!who) return send(401, { ok: false, why: last ? last.why : 'that sign-in does not stand' });
-    // THE SOCIAL SCREEN (kanban #2641): { x, telegram, discord, armada } names, each read live; no names answers the stored links and the bonus
+    // THE SOCIAL SCREEN (kanban #2641): { x, telegram, discord, nostr } names, each read live (an armada name is ignored, kanban #3922); no names answers the stored links and the bonus
     if (path === '/feedback/social') {
       {
-        let asked = {}; try { asked = raw ? JSON.parse(raw) : {}; } catch { return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' }); }
-        if (!asked || typeof asked !== 'object' || Array.isArray(asked)) return send(400, { ok: false, why: 'JSON with x, telegram, discord, armada' });
-        const any = ['x', 'telegram', 'discord', 'armada', 'nostr'].some((k) => typeof asked[k] === 'string' && asked[k].trim());
+        let asked = {}; try { asked = raw ? JSON.parse(raw) : {}; } catch { return send(400, { ok: false, why: 'JSON with x, telegram, discord, nostr' }); }
+        if (!asked || typeof asked !== 'object' || Array.isArray(asked)) return send(400, { ok: false, why: 'JSON with x, telegram, discord, nostr' });
+        const any = ['x', 'telegram', 'discord', 'nostr'].some((k) => typeof asked[k] === 'string' && asked[k].trim());
         if (any) {
           const lastAsk = S2_SOCIAL_ASKS.get(who) || 0;
           if (Date.now() - lastAsk < S2_SOCIAL_GAP_MS) return send(429, { ok: false, why: 'one check every 15 seconds' });

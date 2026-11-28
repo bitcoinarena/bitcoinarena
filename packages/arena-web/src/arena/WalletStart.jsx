@@ -7,7 +7,6 @@
 // this class component only draws the panes and calls them.
 import React from 'react';
 
-const QUESTIONS = 'https://armada.buzz/invite/naddr1qvzqqqyzz5pzpt3qdj9s02tf33v6t5epfuxgk90eklx42cg2ftatwmuzznkww6anqqqqf5522e#BAEU9DouYIxVptZrIZWPrgMF';
 const TESTED_SIGNERS = 'https://bitcoinarena.io/compatibility/#login';
 
 export class WalletStart extends React.Component {
@@ -123,7 +122,6 @@ export class WalletStart extends React.Component {
         <div id="ws-busy" className={`ws-note${wait ? ' on' : ''}`} style={busy ? undefined : { display: 'none' }}>
           {wait ? <><span className="ws-spin" aria-hidden="true" /><span className="ws-step">{busy}</span><span className="ws-secs">{secs ? `${secs} s` : ''}</span></> : busy}
         </div>
-        <p className="ws-note" style={{ textAlign: 'center', margin: '8px 0 0' }}>Questions? <a href={QUESTIONS} target="_blank" rel="noopener" style={{ color: '#c9a8ff' }}>Join the community on Armada</a></p>
       </div>);
   }
 }

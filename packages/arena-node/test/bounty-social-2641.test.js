@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// KANBAN #2641: Week 2's social bonus - X +25 %, 2 of Telegram / Discord / Armada +25 % - and the social screen's live check of typed names:
+// KANBAN #2641: Week 2's social bonus - X +20 %, Nostr +20 %, Telegram and Discord both +20 % (Armada removed: kanban #3922, the owner
+// 2026-11-28 "Entferne auch die Armada community überall") - and the social screen's live check of typed names:
 // Discord member search, the Telegram seen-map and the user account reader (read-only), name claims, and the check itself with fakes.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,17 +17,19 @@ const K = (n) => n.toString(16).padStart(64, '0');
 // AN ACCOUNT PROVEN BY ITS OWN ACTION (kanban #2645, #2657): its key's link code posted from it, as the link bots redeem it - a typed name alone counts no more
 const prove = (s, key, platform, userId, username = null, nowMs = Date.now()) => { const c = s.makeCode(key, { nowMs }); const r = s.redeem(c.code, { platform, userId, username, nowMs }); assert.equal(r.ok, true, r.why); s.record(key, platform, { member: true, nowMs }); };
 
-test('#2641 bonusPct: every combination of X, Nostr, Telegram, Discord, Armada (X +20, Nostr +20, 2 of 3 +20, at most +60)', () => {
+test('#2641 bonusPct: every combination of X, Nostr, Telegram, Discord (X +20, Nostr +20, both communities +20, at most +60; Armada counts for nothing, #3922)', () => {
   const ps = ['x', 'nostr', ...COMMUNITIES];
-  for (let m = 0; m < 32; m++) {
+  assert.deepEqual([...COMMUNITIES], ['telegram', 'discord']);
+  for (let m = 0; m < 16; m++) {
     const f = Object.fromEntries(ps.map((p, i) => [p, !!(m & (1 << i))]));
     const n = COMMUNITIES.filter((p) => f[p]).length;
     assert.equal(bonusPct(f), (f.x ? 20 : 0) + (f.nostr ? 20 : 0) + (n >= 2 ? 20 : 0), JSON.stringify(f));
   }
   assert.equal(bonusPct({ x: 'yes', telegram: 1, discord: 1 }), 0, 'only true counts');
-  assert.equal(seasonPayout({ level: 'high', flags: { x: true, nostr: true, telegram: true, discord: true, armada: true } }).sats, 8000, 'at most +60 %');
-  assert.equal(seasonPayout({ level: 'medium', flags: { discord: true, armada: true } }).sats, 300, 'no X: not proven human, 15 % (kanban #2788, #2784) and no bonus (the owner 2026-11-16: the bonus is for humans only; #2915)');
-  assert.equal(seasonPayout({ level: 'medium', flags: { x: true, discord: true, armada: true } }).sats, 2800);
+  assert.equal(seasonPayout({ level: 'high', flags: { x: true, nostr: true, telegram: true, discord: true } }).sats, 8000, 'at most +60 %');
+  assert.equal(bonusPct({ x: true, discord: true, armada: true }), 20, 'an old armada flag gives nothing (kanban #3922)');
+  assert.equal(seasonPayout({ level: 'medium', flags: { discord: true, telegram: true } }).sats, 300, 'no X: not proven human, 15 % (kanban #2788, #2784) and no bonus (the owner 2026-11-16: the bonus is for humans only; #2915)');
+  assert.equal(seasonPayout({ level: 'medium', flags: { x: true, discord: true, telegram: true } }).sats, 2800);
 });
 
 const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -123,15 +126,16 @@ test('#2641 the social check: members linked to the key with their reads, one ke
     armada: async (n) => ({ userId: 'a'.repeat(64), username: n, member: true, why: 'member' }),
   };
   const a = await socialCheck(s, K(1), { x: 'ann', discord: 'ann', telegram: 'ann', armada: 'npub1ann', other: 'x' }, resolvers, { nowMs: () => t0 });
-  assert.deepEqual(Object.fromEntries(Object.entries(a.results).map(([k, v]) => [k, v.member])), { telegram: null, discord: true, x: true, armada: true });
+  assert.deepEqual(Object.fromEntries(Object.entries(a.results).map(([k, v]) => [k, v.member])), { telegram: null, discord: true, x: true }, 'an armada name is not read (kanban #3922)');
   assert.equal(a.results.telegram.unseen, true);
   // typed names found live are linked and count (kanban #3722; before: #2645, #2657 asked for a link code)
-  assert.deepEqual(a.flags, { telegram: false, discord: true, x: true, armada: true, nostr: false }); assert.equal(a.bonusPct, 40);
+  assert.deepEqual(a.flags, { telegram: false, discord: true, x: true, nostr: false }); assert.equal(a.bonusPct, 20);
   assert.equal(a.results.x.needsCode, undefined);
-  assert.equal(a.links.length, 3); assert.equal(a.links.every((l) => l.proof === 'name'), true);
-  prove(s, K(1), 'discord', '201', 'ann', t0); prove(s, K(1), 'armada', 'a'.repeat(64), 'npub1ann', t0);
-  assert.deepEqual(s.flagsOf(K(1), { nowMs: t0 }), { telegram: false, discord: true, x: true, armada: true, nostr: false }, 'proven by code: still counted');
-  assert.equal(bonusPct(s.flagsOf(K(1), { nowMs: t0 })), 40);
+  assert.equal(a.links.length, 2); assert.equal(a.links.every((l) => l.proof === 'name'), true);
+  prove(s, K(1), 'discord', '201', 'ann', t0);
+  assert.equal(s.redeem(s.makeCode(K(1), { nowMs: t0 }).code, { platform: 'armada', userId: 'a'.repeat(64), nowMs: t0 }).ok, false, 'no armada link (kanban #3922)');
+  assert.deepEqual(s.flagsOf(K(1), { nowMs: t0 }), { telegram: false, discord: true, x: true, nostr: false }, 'proven by code: still counted');
+  assert.equal(bonusPct(s.flagsOf(K(1), { nowMs: t0 })), 20);
   assert.equal(a.links.some((l) => 'userId' in l), false, 'no platform ids go back');
   // a non-member links nothing; empty names are not asked
   const b = await socialCheck(s, K(2), { x: 'bob', discord: '', armada: '   ' }, resolvers, { nowMs: () => t0 });
@@ -161,10 +165,10 @@ const rep = (n, pubkey) => ({ id: `r${n}`.padEnd(64, '0'), pubkey });
 
 test('#2641 a second report from the same key gets the bonus with no new input: the stored links are read live again at approval', async () => {
   const s = openBountySeason();
-  const yes = { x: async () => ({ userId: '77', member: true }), discord: async () => ({ userId: '201', member: true }), armada: async () => ({ userId: 'b'.repeat(64), member: true }) };
-  await socialCheck(s, K(1), { x: 'ann', discord: 'ann', armada: 'npub1ann' }, yes);
-  prove(s, K(1), 'x', '77'); prove(s, K(1), 'discord', '201'); prove(s, K(1), 'armada', 'b'.repeat(64));
-  const live = { x: async () => ({ member: true }), discord: async () => ({ member: true }), armada: async () => ({ member: true }) };
+  const yes = { x: async () => ({ userId: '77', member: true }), discord: async () => ({ userId: '201', member: true }), telegram: async () => ({ userId: '301', member: true }) };
+  await socialCheck(s, K(1), { x: 'ann', discord: 'ann', telegram: 'ann' }, yes);
+  prove(s, K(1), 'x', '77'); prove(s, K(1), 'discord', '201'); prove(s, K(1), 'telegram', '301');
+  const live = { x: async () => ({ member: true }), discord: async () => ({ member: true }), telegram: async () => ({ member: true }) };
   const r1 = rep(1, K(1)); await s.verify(K(1), live, { cause: 'approve' }); const p1 = s.plan(r1, { level: 'high' }); s.commit(r1, p1);
   assert.equal(p1.bonusPct, 40); assert.equal(p1.sats, 7000);
   // days later (the form read is stale by then): the approval reads the stored accounts again, nothing typed
@@ -199,18 +203,18 @@ test('#2641 the browser store: validated names kept per key, failed ones dropped
   socialSave(ls, K(1), { x: 'ann', discord: 'ann', telegram: 'nobody1' }, { x: { member: true }, discord: { member: true }, telegram: { member: null } }, 1000);
   assert.deepEqual(socialLoad(ls, K(1)), { x: 'ann', discord: 'ann', checkedAt: 1000 });
   assert.equal(socialLoad(ls, K(2)), null, 'per key');
-  socialSave(ls, K(1), { discord: 'ann', armada: 'npub1x' }, { discord: { member: false }, armada: { member: true } }, 2000);
-  assert.deepEqual(socialLoad(ls, K(1)), { x: 'ann', armada: 'npub1x', checkedAt: 2000 }, 'discord failed: dropped');
+  socialSave(ls, K(1), { discord: 'ann', nostr: 'npub1x', armada: 'npub1y' }, { discord: { member: false }, nostr: { member: true }, armada: { member: true } }, 2000);
+  assert.deepEqual(socialLoad(ls, K(1)), { x: 'ann', nostr: 'npub1x', checkedAt: 2000 }, 'discord failed: dropped; an armada name is never kept (kanban #3922)');
   socialSave(ls, K(1), { x: 'ann' }, { x: { member: null } }, 3000);
   assert.equal(socialLoad(ls, K(1)).x, 'ann', 'a read that did not happen drops nothing');
-  socialSave(ls, K(1), { x: 'ann', armada: 'npub1x' }, { x: { member: false }, armada: { member: false } }, 4000);
+  socialSave(ls, K(1), { x: 'ann', nostr: 'npub1x' }, { x: { member: false }, nostr: { member: false } }, 4000);
   assert.equal(mem.has(socialKey(K(1))), false, 'nothing validated: nothing kept');
   mem.set(socialKey(K(3)), '{not json'); assert.equal(socialLoad(ls, K(3)), null);
   const broken = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('full'); }, removeItem: () => { throw new Error('x'); } };
   assert.equal(socialLoad(broken, K(1)), null); assert.equal(socialSave(broken, K(1), { x: 'a' }, { x: { member: true } }), null);
   assert.equal(socialLoad(ls, 'not a key'), null);
   assert.deepEqual(socialMissing({ x: 'ann', discord: 'ann', checkedAt: 1 }, [{ platform: 'x', member: true }, { platform: 'discord', member: false }]), { discord: 'ann' });
-  assert.equal(socialBonus({ x: true, telegram: true }), 20); assert.equal(socialBonus({ telegram: true, armada: true }), 20); assert.equal(socialBonus({ x: true, nostr: true, telegram: true, armada: true }), 60); assert.equal(socialBonus({ x: true, discord: true, armada: true }), 40);
+  assert.equal(socialBonus({ x: true, telegram: true }), 20); assert.equal(socialBonus({ telegram: true, discord: true }), 20); assert.equal(socialBonus({ telegram: true, armada: true }), 0, 'Armada counts for nothing (kanban #3922)'); assert.equal(socialBonus({ x: true, nostr: true, telegram: true, discord: true }), 60); assert.equal(socialBonus({ x: true, discord: true, telegram: true }), 40);
   // the page carries the same functions (copied between the markers)
   const src = readFileSync(new URL('../src/bounty-social-store.js', import.meta.url), 'utf8');
   assert.match(src, /\/\/ ---- social-store begin[\s\S]+\/\/ ---- social-store end/);
@@ -220,7 +224,7 @@ test('#2641 Nostr: the newest signed contact list decides; forged or other-autho
   const { nostrVerifier, nostrPubkeyOf, ARENA_NOSTR_PUBKEY } = await import('../src/bounty-nostr.js');
   const { schnorr } = await import('@noble/curves/secp256k1.js');
   const { eventId } = await import('../src/nostr-relay.js');
-  const { bech32Encode } = await import('../src/bounty-armada.js');
+  const { bech32Encode } = await import('../src/nostr-read.js');
   const sk = new Uint8Array(32).fill(9), pk = Buffer.from(schnorr.getPublicKey(sk)).toString('hex');
   const ev = (t, follows, key = sk) => { const e = { pubkey: Buffer.from(schnorr.getPublicKey(key)).toString('hex'), created_at: t, kind: 3, content: '', tags: follows ? [['p', 'a'.repeat(64)], ['p', ARENA_NOSTR_PUBKEY]] : [['p', 'a'.repeat(64)]] };
     e.id = eventId(e); e.sig = Buffer.from(schnorr.sign(Buffer.from(e.id, 'hex'), key)).toString('hex'); return e; };

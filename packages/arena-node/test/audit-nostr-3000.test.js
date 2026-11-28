@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
-import { wsQuery, signEvent, pubkeyOf } from '../src/bounty-armada.js';
+import { wsQuery, signEvent, pubkeyOf } from '../src/nostr-read.js';   // kanban #3922: was bounty-armada.js
 import { nostrVerifier, ARENA_NOSTR_PUBKEY } from '../src/bounty-nostr.js';
 
 const rnd = () => Buffer.from(schnorr.utils.randomSecretKey()).toString('hex');

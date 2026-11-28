@@ -67,7 +67,7 @@ test('#2623 the faucet: link code by sign-in, Season 2 approval with bonus and h
     assert.equal(v.ok, true); assert.equal(v.flags.telegram, true); assert.equal(v.links[0].userId, undefined, 'no platform id goes back');
     // WEEK 2'S SOCIAL SCREEN (kanban #2641): no names answers the stored links and the bonus; a platform this faucet has no reader for says so
     const soc = await j('/feedback/social', { method: 'POST', headers: { ...auth(ann, `${STAGE}/social`, '{}'), 'content-type': 'application/json' }, body: '{}' });
-    assert.equal(soc.ok, true, JSON.stringify(soc)); assert.equal(soc.bonusPct, 20); assert.deepEqual(soc.flags, { telegram: true, discord: true, x: false, armada: false, nostr: false });
+    assert.equal(soc.ok, true, JSON.stringify(soc)); assert.equal(soc.bonusPct, 20); assert.deepEqual(soc.flags, { telegram: true, discord: true, x: false, nostr: false });
     assert.equal(soc.links.some((l) => l.userId), false, 'no platform id goes back');
     const soc2 = await j('/feedback/social', { method: 'POST', headers: { ...auth(ann, `${STAGE}/social`, JSON.stringify({ x: 'ann' })), 'content-type': 'application/json' }, body: JSON.stringify({ x: 'ann' }) });
     assert.equal(soc2.results.x.member, null); assert.match(soc2.results.x.why, /not on/);

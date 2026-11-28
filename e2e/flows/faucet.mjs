@@ -10,7 +10,7 @@
 //   - e2e/bin/lncli-regtest as FAUCET_LNCLI / FAUCET_BOUNTY_LNCLI: --network=regtest, lntb arguments back to lnbcrt (the same signed invoice);
 //   - a front proxy at ctx.faucetUrl (the page's /api/faucet goes there) that hands POST /player's lnbcrt invoice to the faucet as lntb; all else as is;
 //   - a chat stub (front port + 2) in place of Arena Chat: every post a report makes is counted, nothing leaves the machine;
-//   - FAUCET_BOUNTY_TG_USERBOT=off, no X / Discord / Telegram / Armada config, HOME in the run's own directory, no inherited FAUCET_* variable.
+//   - FAUCET_BOUNTY_TG_USERBOT=off, no X / Discord / Telegram config, HOME in the run's own directory, no inherited FAUCET_* variable.
 // The faucet itself listens on front port + 1. Its book, feedback DB, Season 2 DB and logs are in <E2E_FAUCET_DIR or ~/wf1489/e2e-2642/faucet>/run-<time>/.
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
@@ -189,7 +189,7 @@ async function serviceUp(ctx) {
   check(g.ok && g.balanceSats >= 1e8, 'GET /faucet answers the wallet balance through the RPC proxy', g);
   ctx.shared.faucet = { up: true, url: ctx.faucetUrl, inner: `http://127.0.0.1:${inner}`, run, adminCode, origin: pageOrigin, child, chat: chat.posts, rpcNotes, frontNotes, toolsNotes, servers: [chat.server, rpcS, frontS] };
   return { run, ports: { front, faucet: inner, chat: chatPort, rpc: rpcPort }, balanceSats: g.balanceSats, maxSats: g.maxSats, leftTodaySats: g.leftTodaySats, pid: child.pid,
-    standIns: ['RPC proxy tb1<->bcrt1', 'lncli-regtest (--network=regtest, lntb->lnbcrt)', 'front proxy lnbcrt->lntb on POST /player', 'chat stub', 'telegram reader off, no X/Discord/Armada'] };
+    standIns: ['RPC proxy tb1<->bcrt1', 'lncli-regtest (--network=regtest, lntb->lnbcrt)', 'front proxy lnbcrt->lntb on POST /player', 'chat stub', 'telegram reader off, no X/Discord'] };
 }
 
 // ---- helpers for the flows ----
@@ -609,8 +609,8 @@ async function season2(ctx) {
   check(l1.status === 401, 'a sign-in for another door: 401', l1);
   const l2 = await call('/link', K);
   check(l2.status === 200 && /^BA-[A-Z2-9]{8}$/.test(l2.body.code || ''), 'a link code for the signed-in key', l2.body);
-  // the social screen: names typed for X / Telegram / Discord / Armada. Nothing is configured to read them here, so none may count
-  const s1 = await call('/social', K, { x: 'bitcoinarena_io', telegram: '@somebody', discord: 'somebody#0001', armada: 'npub1xyz' });
+  // the social screen: names typed for X / Telegram / Discord. Nothing is configured to read them here, so none may count
+  const s1 = await call('/social', K, { x: 'bitcoinarena_io', telegram: '@somebody', discord: 'somebody#0001' });
   check(s1.status === 200 && s1.body.ok && s1.body.bonusPct === 0 && s1.body.links.length === 0, 'claimed memberships with no reader: no bonus, nothing linked', s1.body);
   check(Object.values(s1.body.results).every((r) => r.member === null), 'every platform answers "not on" (member null), never yes', s1.body.results);
   const s2 = await call('/social', K, { telegram: '@somebody' });

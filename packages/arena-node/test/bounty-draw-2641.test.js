@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
-// KANBAN #2641: the Week 2 draw - a member of Telegram, Discord or Armada enters once per report key; the seed is the first Bitcoin block whose header
+// KANBAN #2641: the Week 2 draw - a member of Telegram or Discord (Armada removed, kanban #3922) enters once per report key; the seed is the first Bitcoin block whose header
 // time is after the week's end (a block stamped exactly at the end does not count).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,20 +10,20 @@ import { seedBlockAfter } from '../tools/bounty-draw.mjs';
 const K = (n) => n.toString(16).padStart(64, '0');
 const rep = (n, pubkey) => ({ id: `d${n}`.padEnd(64, '0'), pubkey });
 
-test('#2641 draw entries: one per key in any of Telegram / Discord / Armada; none without; a shared account counts for the first key only', async () => {
+test('#2641 draw entries: one per key in Telegram or Discord; none without; a shared account counts for the first key only', async () => {
   const s = openBountySeason();
   // each account proven by a code posted from it (kanban #2645, #2657: a typed name enters no draw)
   const link = (k, p, id, name) => { const c = s.makeCode(k); assert.equal(s.redeem(c.code, { platform: p, userId: id, username: name }).ok, true); };
-  link(K(1), 'telegram', 't1', '@all3'); link(K(1), 'discord', 'd1', 'all3'); link(K(1), 'armada', 'a'.repeat(64), 'npub1all3');
-  link(K(2), 'armada', 'b'.repeat(64), 'npub1onlyarmada');
+  link(K(1), 'telegram', 't1', '@all3'); link(K(1), 'discord', 'd1', 'all3');
+  link(K(2), 'discord', 'd2', 'onlydiscord');
   link(K(3), 'x', 'x3', 'xonly');
   link(K(4), 'telegram', 't4', '@first');
   assert.equal(s.redeem(s.makeCode(K(5)).code, { platform: 'telegram', userId: 't4', username: '@first' }).ok, false, 'the same Telegram account for a second key');
-  const yes = { telegram: async () => ({ member: true }), discord: async () => ({ member: true }), armada: async () => ({ member: true }), x: async () => ({ member: true }) };
+  const yes = { telegram: async () => ({ member: true }), discord: async () => ({ member: true }), x: async () => ({ member: true }) };
   for (let n = 1; n <= 5; n++) { await s.verify(K(n), yes); const r = rep(n, K(n)); s.commit(r, s.plan(r, { level: 'low' })); }
   const r1b = rep(11, K(1)); s.commit(r1b, s.plan(r1b, { level: 'medium' }));
-  assert.deepEqual(s.drawEntries(2), ['armada:npub1onlyarmada', 'telegram:@all3', 'telegram:@first'],
-    'K1 (all three, two reports) once; K2 by Armada alone; K3 only X: none; K4 once; K5 holds no account: none');
+  assert.deepEqual(s.drawEntries(2), ['discord:onlydiscord', 'telegram:@all3', 'telegram:@first'],
+    'K1 (both, two reports) once; K2 by Discord alone; K3 only X: none; K4 once; K5 holds no account: none');
 });
 
 test('#2641 the week ends 7 days after its start', () => {

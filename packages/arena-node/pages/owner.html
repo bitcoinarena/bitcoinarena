@@ -690,7 +690,6 @@ const S2_ROWS = [
   { p: 'telegram', name: 'Telegram', ph: 'yourname on Telegram', join: 'https://t.me/bitcoinarena_io', joinText: 'Join the group' },
   { p: 'discord', name: 'Discord', ph: 'Discord username', join: 'https://discord.gg/9zZbASZyue', joinText: 'Join the server' },
   { p: 'nostr', name: 'Nostr', ph: 'Nostr npub1… or name@domain', join: 'https://njump.me/npub1p8dl6aewvlszgsxlvpzznaruw3mx3wpt3699zgwnv7tk5pk790msqkqyh2', joinText: 'Follow on Nostr' },
-  { p: 'armada', name: 'Armada', ph: 'Armada npub1… or name@domain', join: 'https://armada.buzz/', joinText: 'Join the community' },
 ];
 async function s2Post(door, body) {
   const who = await identity(); if (!who || !who.signEvent) throw new Error('sign in first');
@@ -709,7 +708,7 @@ function nodeSocialPanel(box, el) {
   const head = el('div', { cls: 'fbn-s-head' }, el('b', { text: 'Season 2: prove you are human, earn the community bonus' }), el('span', { cls: 'sub', text: ' optional' }));
   const rules = el('ul', { cls: 'sub fbn-s-rules' },
     el('li', { text: 'Humans 100 %, bots 15 %: a linked X account proves you are human. Without one, a report counts as a bot report and gets 15 %.' }),
-    el('li', { text: 'Community bonus: +20 % for following on X, +20 % on Nostr, +20 % for any two of Telegram, Discord and Armada (at most +60 %), for humans only (a linked X account).' }),
+    el('li', { text: 'Community bonus: +20 % for following on X, +20 % on Nostr, +20 % for being in both Telegram and Discord (at most +60 %), for humans only (a linked X account).' }),
     el('li', { text: 'From 26 Nov 2026 00:00 UTC: at most 5 reports per reporter per UTC day are rewarded (the most valuable first). Further reports that day are still reviewed - real bugs get fixed - but count as variants without a reward. Mass-produced or automated reports are paid at the bot rate (15 %, no bonus); the full rate is for genuinely good reports (a real, new, reproducible bug with clear impact).' }),
     el('li', { text: 'From 16 Nov 2026 07:06 UTC the 10,000 sat node bounty is only for humans with a linked X account. Node reports from bots are rewarded like any other feedback.' }),
     el('li', {}, el('span', { text: 'All rules: ' }), el('a', { href: 'https://bitcoinarena.io/bounty/#rules', target: '_blank', rel: 'noopener noreferrer', text: 'bitcoinarena.io/bounty' })));

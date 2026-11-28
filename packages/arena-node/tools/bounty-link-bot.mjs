@@ -35,9 +35,9 @@ export async function linkFromText(S2, verifiers, { platform, userId, username, 
   const r = S2.redeem(text, { platform, userId, username, nowMs });
   if (!r.ok) return { ok: false, reply: `Not linked: ${r.why}.` };
   const flags = await S2.verify(r.pubkey, { [platform]: verifiers[platform] }, { cause: 'link' });
-  // SEASON 2 (kanban #2641): X +20 %, Nostr +20 %, any 2 of Telegram, Discord, Armada +20 %
+  // SEASON 2 (kanban #2641): X +20 %, Nostr +20 %, Telegram and Discord both +20 % (Armada removed, kanban #3922)
   const said = platform === 'x' ? (flags.x ? 'you follow @bitcoinarena_io: +20% on confirmed reports' : 'you do not follow @bitcoinarena_io yet - follow, then press Check again in My feedback')
-    : flags[platform] ? 'you are a member: with a second of Telegram, Discord and Armada it is +20% on confirmed reports' : 'you are not a member yet - join, then press Check again in My feedback';
+    : flags[platform] ? 'you are a member: in both Telegram and Discord it is +20% on confirmed reports' : 'you are not a member yet - join, then press Check again in My feedback';
   return { ok: true, pubkey: r.pubkey, reply: `${NAMES[platform]} linked to your report key; ${said}.` };
 }
 
