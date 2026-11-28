@@ -2234,9 +2234,13 @@ export class Verifier {
           const fork = this.round.provenFork(roundIdBytes, entryIdBytes);
           if (fork) scored = { ok: true, outcome: 'FORFEIT', score: 0, coreHash: this.#coreOf(roundIdBytes)?.hash };
         }
+        // A PRICE ROUND'S RE-RUN CARRIES ITS FRONT, as its first result does (#sign; kanban #3903): without it the re-run of an honest price round named
+        // another run than the one it re-ran, and an agreed re-run contradicted the honest first result
+        let priceRound = false;
+        try { priceRound = !!(this.round.pricesRequired && this.round.pricesRequired(encodeRoundContract(contract))); } catch { priceRound = false; }
         const built = canonical && resultFrom({
           answer: scored, contract, entry: found.entry, transcript: canonical, entryId: entryIdBytes,
-          nodePubkey: this.round.pubkey, stopped: true,
+          nodePubkey: this.round.pubkey, stopped: true, priceRound,
         });
         if (built && !built.ok) report.refused.push(built.why);
         // THE RE-RUN CARRIES WHEN IT WAS SIGNED, ON THIS SEAT'S CLOCK (§13A, WINDOW-10-SPEC, RULED 2026-10-01): a holder
