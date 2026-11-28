@@ -245,9 +245,11 @@ export function createHalts({ records, censusSeats, clocks, verify, sign, ownKey
   const listGuardian = (fid) => [...(keptG.get(String(fid).toLowerCase()) || new Map()).values()].map(asJsonG);
   /** The signed observations held of a federation, as a bound proof carries them (kanban #1269). */
   const observationsOf = (fid) => [...(kept.get(String(fid).toLowerCase()) || new Map()).values()];
+  /** The guardians' signed halt observations held of a federation, as a halt's abandonment proof carries them (kanban #3901). */
+  const guardianObservationsOf = (fid) => [...(keptG.get(String(fid).toLowerCase()) || new Map()).values()];
   /** Reads this seat's tip now (the door asks it before take). */
   const refreshTip = async () => { try { const t = await height(); if (Number.isFinite(t)) lastTip = t; } catch { /* the last one stands */ } };
-  return { observe, take, refreshTip, takeGuardian, proofOf, haltOf, haltedFederations, list, listGuardian, observationsOf, seen: (fid) => seen.get(fid) || null, CLOCK_RULE };
+  return { observe, take, refreshTip, takeGuardian, proofOf, haltOf, haltedFederations, list, listGuardian, observationsOf, guardianObservationsOf, seen: (fid) => seen.get(fid) || null, CLOCK_RULE };
 }
 
 /**
