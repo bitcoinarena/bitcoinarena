@@ -69,6 +69,9 @@ import { bondSetFor, tweakPoint, combine } from '../src/curve.js';
 import { bondOutputKey, bondInternalKey, BOND_TEMPLATE_V3 } from '../../arena-protocol/src/bond-script.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { MIN_ENTRY_WINDOW_MS } from '../../arena-protocol/src/constants.js';
+import { hasHeartbeats } from '../../arena-protocol/src/heartbeat.js';
+import { SEATING_LEAD_MS } from '../../arena-protocol/src/seating.js';
+import { BEAT_LEAD_MS } from '../src/heartbeat-agent.js';
 import { receiptsNeeded } from '../../arena-protocol/src/threshold.js';
 import { NETWORK_ID_REGTEST, NETWORK_ID_TESTNET4 } from '../../arena-protocol/src/genesis-ids.js';
 import { NEXTBLOCK_GAME_ID, NEXTBLOCK } from '../../nextblock/plugin/nextblock.js';
@@ -121,6 +124,19 @@ export const RUN_82_FROM_MS = BigInt(process.env.ARENA_RUN82_FROM_MS || Date.UTC
 /** The versions a bond of this run names: 1 up to ARENA_PROTOCOL_VERSION, the version its rounds are written at. */
 const bondVersions = () => (process.env.ARENA_PROTOCOL_VERSION ? Array.from({ length: Number(process.env.ARENA_PROTOCOL_VERSION) }, (_, i) => i + 1) : [1]);
 export const runTicksAt = (startMs) => (BigInt(startMs) >= RUN_82_FROM_MS ? RUN_82_TICKS : BLOCK_TICKS);
+
+/**
+ * A ROUND THAT SEATS ITSELF IS HELD BEFORE ITS SEATING CLOSES (kanban #3900, measured 2026-11-27 on the 2.0 devnet): a seat stores an
+ * opened round ~4 s after its committee time, and its seating and heartbeat slot close SEATING_LEAD_MS (120 s) before its start. With the
+ * start MIN_ENTRY_WINDOW_MS (60 s) after the committee time every slot had closed a minute before any seat held the round: no node could
+ * beat, and every heartbeat certificate said "heard 0". So from protocol 22 a round of its own (no caller-named committee time, no exact
+ * entry close) starts this much later, so that the seating, and the minute of HEARTBEATs before it, come after the round is posted.
+ */
+export function selfSeatLeadMs({ contract, kind = {}, committee }) {
+  if (kind.committeeAtMs !== undefined || kind.entryCloseAtMs !== undefined) return 0n;
+  return hasHeartbeats({ ...contract, ...(kind.fields || {}), startTimeMs: BigInt(committee) + MIN_ENTRY_WINDOW_MS })
+    ? SEATING_LEAD_MS + BEAT_LEAD_MS + 60000n : 0n;
+}
 
 export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8081,
                                      // A THIRD SIGNER NODE, OPT-IN (§23.6). A 3-of-4 federation needs its
@@ -837,6 +853,12 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
   const VERSION = Number(process.env.ARENA_PROTOCOL_VERSION || 1);
   const V2 = VERSION >= 2;
   if (V2) { contract.protocolVersion = VERSION; contract.nodes = []; }
+  // THE FIRST ROUND SEATS ITSELF TOO (kanban #3900): on a chain it is posted after its committee time, so it starts late enough that its
+  // seating and heartbeat minute come after that (selfSeatLeadMs); its entry window is the same length after its start
+  if (onChain) {
+    const lead = selfSeatLeadMs({ contract, kind: entryCloseAtMs == null ? {} : { entryCloseAtMs }, committee: committeeTimeMs });
+    if (lead > 0n) { contract.startTimeMs += lead; contract.entryCloseMs += lead; if (!roundFields || roundFields.blockTicks === undefined) contract.blockTicks = runTicksAt(contract.startTimeMs); }
+  }
   // AND A COMMITTEE THE PROTOCOL HAS A THRESHOLD FOR, said here rather than
   // discovered half an hour later. `dkg.deal` asks `receiptsNeeded(nodes.length)`
   // and only 2 (2-of-2) and 7 (5-of-7) have an answer; for anything else it
@@ -1208,7 +1230,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
     // block and posted at once, and the chain's own block clock names its beacon later. Without it every opening waited for
     // its committee time and mined six blocks: 12-23 s each, so 8 s head-to-head rounds could not follow each other
     if (kind.committeeAtMs !== undefined && BigInt(kind.committeeAtMs) > committee) committee = BigInt(kind.committeeAtMs);
-    let start = committee + MIN_ENTRY_WINDOW_MS;
+    const seatLead = selfSeatLeadMs({ contract, kind, committee });   // kanban #3900
+    let start = committee + MIN_ENTRY_WINDOW_MS + seatLead;
     // `kind.entryAfterStartMs`: this kind's own entry window after its start - a head-to-head round closes its
     // entries a couple of minutes in, not when the first round's (a 30-minute nextblock window) would
     let close = start + (kind.entryAfterStartMs !== undefined ? BigInt(kind.entryAfterStartMs) : (contract.entryCloseMs - contract.startTimeMs));
@@ -1228,8 +1251,9 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // 10 s regtest clock that is ~95 s after committee_time (median lags ~50 s, six blocks ~50 s): with a 90 s lead every
       // free round was assigned after its entry had closed, and none was joinable. 180 s leaves ~85 s to join. The start
       // grid is unchanged: one round every period.
-      const lead = COMMITTEE_LEAD_MS !== null ? BigInt(COMMITTEE_LEAD_MS)
+      const lead0 = COMMITTEE_LEAD_MS !== null ? BigInt(COMMITTEE_LEAD_MS)
         : BigInt(roundPeriodMs) > MIN_ENTRY_WINDOW_MS ? BigInt(roundPeriodMs) : MIN_ENTRY_WINDOW_MS;
+      const lead = lead0 > MIN_ENTRY_WINDOW_MS + seatLead ? lead0 : MIN_ENTRY_WINDOW_MS + seatLead;   // kanban #3900
       start = last > 0n ? last + BigInt(roundPeriodMs) : start;
       while (start - lead < committee) start += BigInt(roundPeriodMs);
       committee = start - lead;
