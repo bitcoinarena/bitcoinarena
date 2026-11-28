@@ -208,9 +208,16 @@ function startNode(k, { invite, apps, extra = {} }) {
     ARENA_FEDERATION_INVITE: invite, ARENA_CLOSE_AT_END: '1', ARENA_FUND_FREE_ROUNDS: '1', ARENA_DONATION_NETWORK: 'regtest',
     ARENA_LNURL_LOCAL_HOSTS: `127.0.0.1:${PLAN.lnurl}`,   // the devnet's own payee: a funding payout asks it past the #1809 guard (kanban #2323)
     ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
-    ARENA_APPS: apps.join(','), [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`, ...extra }) });
+    ARENA_APPS: apps.join(','), [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`, ARENA_SEATING: SEATING, ARENA_PRICE_FEED: PRICE_FEED, ...extra }) });
 }
 
+// SEATING AND HEARTBEATS ON, as every install has them (src/arena-conf.js sets ARENA_SEATING=1 unless the operator chose otherwise; kanban
+// #3900, measured 2026-11-27: without it no devnet node seated a round or beat, and GET /presence held nothing for any node)
+const SEATING = env.ARENA_SEATING ?? '1';
+// AND THE PRICE FEED, as the live seats run it (blwp-tn4-node price-311.conf; kanban #3900, measured 2026-11-28 on the devnet: with seating on and no feed no seat
+// signed a PRESENT for a Next Block round - server.js servesRound, kanban #2780 - so no round was seated and the paying client refused every entry, "the round is not
+// seated"). It reads BTC/USD from the internet every 5 s; ARENA_PRICE_FEED=0 turns it off
+const PRICE_FEED = env.ARENA_PRICE_FEED ?? '1';
 function fedEnv(extra = {}) {
   return { ...env, PATH: [FED, dirname(process.execPath), env.PATH || ''].join(delimiter), HOME: path('home'),
     ARENA_BITCOIND_URL: RPC_URL, ARENA_BITCOIND_COOKIE: COOKIE(), ARENA_TN4_NETWORK: 'regtest',
@@ -301,7 +308,7 @@ async function up() {
       // A FEDERATION CLIENT LIKE EVERY NODE (measured 12:39Z: without one each answered a round "reaches no federation to read the guardians of")
       ARENA_STAKE_LOCK_BIN: LOCK, ARENA_FEDERATION_CLIENT_DIR: path('clients', name), ARENA_FEDERATION_CLIENTS_DIR: path('clients', `${name}-others`),
       ARENA_FEDERATION_INVITE: invite,
-      ARENA_APPS: apps.join(','), ARENA_DONATION_NETWORK: 'regtest', [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`,
+      ARENA_APPS: apps.join(','), ARENA_DONATION_NETWORK: 'regtest', [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`, ARENA_SEATING: SEATING, ARENA_PRICE_FEED: PRICE_FEED,
       // THE ROUNDS IT MAY HOLD, AS THE SEVEN READ THEM (measured 2026-11-10 12:36Z: without these each auditor answered every v2 round's
       // post "402 this node stores nothing for a round nobody has funded", held no round, and so audited none)
       ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
