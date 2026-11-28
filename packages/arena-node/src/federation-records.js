@@ -21,9 +21,10 @@ import { nodeBonds } from '../../arena-protocol/src/census.js';
 import { abandonmentProof, bondSpentProof } from '../../arena-protocol/src/absence.js';
 import { guardianSlashStands, scheduledDeparture } from '../../arena-protocol/src/federation-slash.js';
 import { judgeAbandoned } from './arbiter.js';
-import { abandonedRows, outputsLeft, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId } from '../../arena-protocol/src/abandoned-slash.js';
+import { abandonedRows, outputsLeft, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId, startsByCensusKey } from '../../arena-protocol/src/abandoned-slash.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
 import { decodeBoundProof, encodeBoundProof, boundProofId, boundSlashStands } from '../../arena-protocol/src/bound-slash.js';
+import { decodeHaltAbandonedProof, encodeHaltAbandonedProof, haltAbandonedProofId, haltAbandonedSlashStands, haltSlashDue } from '../../arena-protocol/src/halt-abandoned-slash.js';
 import { encodeTheftProof, decodeTheftProof, theftProofId, theftOutputs, theftSlashStands, theftTakes, sessionsShowMark, spendStands, theftVerifyInput } from '../../arena-protocol/src/theft-slash.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
 import { emergencyEntryOf, emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
@@ -889,6 +890,72 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     const got = boundSlashStands({ record: st.record, proof: p, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, censusSeats: seats, abandonBlocks, bonds, atHeight: at });
     return { verdict: got.verdict, why: got.why };
   }
+  /**
+   * THE SLASHES A PROVEN HALT FILES (§23A.5 step 3, RULED 2026-11-28 on kanban #3901 Q2): `cases` [{ federation, halt, observations, guardianObservations }]
+   * (halts.js proofOf, observationsOf, the guardians' kept ones) - for every guardian of the newest kept record the halt proof names ABANDONED, each output of its
+   * node left from before the halt height, read off the census at the shared basis height, under its HaltAbandonedProof (the record, the observations), kept
+   * under its hash for anyone to fetch. Template 3 only: the census key's holders start it. Answers [{ federation, node, peer, proof, session, since, txid, vout, sats, template }].
+   */
+  async function haltAbandonedSlashes(cases = []) {
+    if (!cases.length || !Number.isInteger(abandonedFrom)) return [];
+    const h = await bondsAtBasis();
+    if (h === null) return [];
+    let tip = null; try { tip = Number(await chainTip()); } catch { tip = null; }
+    const out = [];
+    for (const { federation, halt, observations, guardianObservations } of cases) {
+      const k = kept.get(String(federation).toLowerCase());
+      if (!k || !k.record || !k.bytes || !halt || !(observations || []).length || halt.haltHeight < abandonedFrom) continue;
+      // NOT BEFORE THE GUARDIANS HAD THEIR TIME TO SIGN (haltSlashDue): who is slashed is read from their own signed observations
+      if (!haltSlashDue({ tip, haltHeight: halt.haltHeight, abandonBlocks })) continue;
+      for (const peer of halt.abandoned || []) {
+        const g = (k.record.guardians || []).find((x) => toHex(x.peerKey) === toHex(peer));
+        if (!g) continue;
+        for (const o of outputsLeft(bondsRead.get(h), g.nodePubkey, halt.haltHeight)) {
+          if (!startsByCensusKey(o.template)) continue;
+          const name = `halt:${federation}:${toHex(halt.id)}:${o.txid}:${o.vout}`;
+          if (!proofListed.has(name)) {
+            const proof = encodeHaltAbandonedProof({ federationId: fromHex(federation), nodePubkey: g.nodePubkey, txid: fromHex(o.txid), vout: o.vout, record: k.bytes,
+              observations, guardianObservations: guardianObservations || [] }), made = toHex(haltAbandonedProofId(proof));
+            proofListed.set(name, made); keptProof(made, proof);
+          }
+          out.push({ federation, node: toHex(g.nodePubkey), peer: toHex(peer), proof: proofListed.get(name), session: halt.session, since: halt.haltHeight, recordHeight: k.height,
+            txid: o.txid, vout: o.vout, sats: String(o.sats), template: o.template });
+        }
+      }
+    }
+    return out;
+  }
+  /** A HALT'S ABANDONMENT PROOF HANDED TO THIS SEAT (PUT /slash/<id>, kanban #3901): kept when the bytes hash to that id, the record in them stands here, is the proof's federation's, and seats the node. */
+  async function takeHaltAbandonedProof(id, bytes, inviteFederationId) {
+    let p;
+    try { if (toHex(haltAbandonedProofId(bytes)) !== id) return { ok: false, status: 409, why: 'those bytes are not the proof that hash names' }; p = decodeHaltAbandonedProof(bytes); } catch (e) { return { ok: false, status: 400, why: e.message }; }
+    const st = await recordStands(p.record, inviteFederationId);
+    if (!st.ok) return st;
+    if (toHex(st.record.federationId) !== toHex(p.federationId)) return { ok: false, status: 409, why: 'that record is another federation\'s' };
+    if (!(st.record.guardians || []).some((g) => toHex(g.nodePubkey) === toHex(p.nodePubkey))) return { ok: false, status: 409, why: 'that record does not seat that node as a guardian' };
+    keptProof(id, bytes);
+    return { ok: true, status: 201 };
+  }
+  /**
+   * THIS SEAT'S OWN WORD ON A HALT'S ABANDONMENT PROOF (kanban #3901, RULED Q2): the record in it on this seat's census, a halt proof made of its observations on this seat's
+   * census seats and voided by any later session this seat knows of (`laterSessionOf(fid)`), the accused named ABANDONED by it, and the accused's template-3 output
+   * left from before the halt height on this seat's chain. Undefined where this seat cannot say yet. Answers { verdict, why }.
+   */
+  async function haltAbandonedVerdict(bytes, inviteFederationId, beforeHeight = null, laterSessionOf = () => null) {
+    let p; try { p = decodeHaltAbandonedProof(bytes); } catch (e) { return { verdict: false, why: `that is no proof of a guardian a halt left abandoned: ${e.message}` }; }
+    const st = await recordStands(p.record, inviteFederationId);
+    if (!st.ok) return { verdict: st.wait ? undefined : false, why: st.why };
+    if (typeof bondsAt !== 'function' || typeof chainTip !== 'function' || !Number.isInteger(abandonBlocks)) return { verdict: undefined, why: 'this seat reads no census from its chain' };
+    const at = beforeHeight === null ? Number(await chainTip()) : beforeHeight;
+    const bonds = await Promise.resolve().then(() => bondsAt(at)).catch(() => null);
+    if (!Array.isArray(bonds)) return { verdict: undefined, why: `the bonds at ${at} are not read here` };
+    const seats = (() => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; })();
+    if (!seats.length) return { verdict: undefined, why: 'this seat holds no census to weigh the halt observations on' };
+    let later = null; try { later = laterSessionOf(toHex(p.federationId)); } catch { later = null; }
+    const got = haltAbandonedSlashStands({ record: st.record, proof: p, verify: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } }, censusSeats: seats, abandonBlocks,
+      laterSession: Number.isInteger(later) ? later : null, bonds, from: abandonedFrom });
+    return { verdict: got.verdict, why: got.why };
+  }
   const proofListed = new Map();             // the output and the row -> the hash this seat lists it under
   const proofsHeld = new Map();              // id hex -> bytes, what no store keeps; with a store only so each is written once
   const keptProof = (id, bytes) => { if (proofsHeld.has(id)) return; proofsHeld.set(id, keepProof ? true : bytes); if (keepProof) { try { keepProof(id, bytes); } catch { proofsHeld.delete(id); } } };
@@ -1509,7 +1576,7 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     censusKeys: () => { const b = basis(); return b.ok ? (b.census.entries || []).map((e) => e.pubkey).filter(Boolean) : []; },
     /** THE CENSUS THIS SEAT READS, its entries and height (GET /roles), or why none. */
     censusNow: () => { const b = basis(); return b.ok ? { ok: true, height: b.height, entries: b.census.entries || [] } : { ok: false, why: b.why }; },
-    abandonedSlashes, abandonedProof, takeAbandonedProof, abandonedVerdict, theftSlashes, theftProof, takeTheftProof, theftVerdict, takeBoundProof, boundVerdict, boundSlashes,
+    abandonedSlashes, abandonedProof, takeAbandonedProof, abandonedVerdict, theftSlashes, theftProof, takeTheftProof, theftVerdict, takeBoundProof, boundVerdict, boundSlashes, haltAbandonedSlashes, takeHaltAbandonedProof, haltAbandonedVerdict,
     recordOf: (fidHex) => { const k = kept.get(String(fidHex).toLowerCase()); return k ? { record: k.record, status: k.status, height: k.height, bytes: k.bytes } : null; },
     /**
      * HOW MANY OF A FEDERATION'S GUARDIAN SEATS HOLD ITS RECORD CLOSED (kanban #577, measured 2026-10-22 on 89ce310e: the first guardian to

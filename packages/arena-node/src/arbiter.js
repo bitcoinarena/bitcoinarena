@@ -28,6 +28,7 @@ const ARBITER_DOOR_MOST = 64 * 1024;
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { taggedHash, toHex, fromHex } from '../../arena-protocol/src/hash.js';
+import { haltProof, decodeHaltObservation, decodeGuardianHaltObservation, haltObservationId, guardianHaltObservationId } from '../../arena-protocol/src/halt-proof.js';
 import { decodeSpentSet, spentNonceSet, newestSpentSet } from '../../arena-protocol/src/spent-set.js';
 import { affectedEntries, realLosses, slashHolds, slashHoldsOnRerun, splitRerunSlashEvidence, slashHeightIsValid, slashDistribution, splitSlashEvidence, REPLAY_CONTRADICTS, TWO_RESULTS,
   splitAuditSlashEvidence, slashHoldsOnAudit, AUDIT_CONTRADICTED, splitDoubleSlashEvidence, slashHoldsOnDoubleSign, splitTableSlashEvidence, slashHoldsOnTable, splitReleaseSlashEvidence, slashHoldsOnRelease, slashHoldsOnReleaseTable,
@@ -617,6 +618,30 @@ export function verifyHaltRecord(bytes, { fid, keys, census, tip, networkId = nu
 }
 
 /**
+ * A HALT PROOF, CHECKED HERE (RULED 2026-11-28 on kanban #3901 Q1). `said` every seat's GET /halt-observations answer ({ observations, guardianObservations } as hex
+ * pairs), believed for nothing: each observation is decoded and its signature checked by haltProof itself; `record` the federation's newest record, verified here;
+ * `censusSeats` the node keys of this arbiter's own census's active seats; `abandonBlocks` its clock. Any signed observation naming a session after the one a quorum
+ * halted at voids the halt (progress, §23A.5 step 2). Answers { ok, haltHeight, record, proof } or { ok: false, why }.
+ */
+export function haltProofFromSeats({ said, record, censusSeats, abandonBlocks, verify = verifySchnorr }) {
+  const obs = new Map(), gobs = new Map();
+  for (const a of said || []) {
+    for (const x of (a && a.observations) || []) { try { const o = { ...decodeHaltObservation(fromHex(String(x.observation))), signature: fromHex(String(x.signature)) }; obs.set(`${toHex(o.observer)}:${o.session}:${o.height}`, o); } catch { /* not one */ } }
+    for (const x of (a && a.guardianObservations) || []) { try { const o = { ...decodeGuardianHaltObservation(fromHex(String(x.observation))), signature: fromHex(String(x.signature)) }; gobs.set(`${toHex(o.guardian)}:${o.session}:${o.height}`, o); } catch { /* not one */ } }
+  }
+  // one per seat and session, the widest span (haltProof keeps one per seat and session)
+  const widest = new Map();
+  for (const o of obs.values()) { const k = `${toHex(o.observer)}:${o.session}`, had = widest.get(k); if (!had || o.height - o.firstHeight > had.height - had.firstHeight) widest.set(k, o); }
+  const observations = [...widest.values()].filter((o) => { try { return verify(o.signature, haltObservationId(o), o.observer); } catch { return false; } });
+  if (!observations.length) return { ok: false, why: 'no seat hands over a signed halt observation of that federation' };
+  const sessions = [...observations.map((o) => o.session), ...[...gobs.values()].filter((o) => { try { return verify(o.signature, guardianHaltObservationId(o), (record.guardians || []).find((g) => toHex(g.peerKey) === toHex(o.guardian))?.nodePubkey); } catch { return false; } }).map((o) => o.session)];
+  const laterSession = sessions.length ? Math.max(...sessions) : null;
+  const p = haltProof(observations, { record, censusSeats, abandonBlocks, verify, laterSession, guardianObservations: [...gobs.values()] });
+  if (!p.ok) return { ok: false, why: p.why };
+  return { ok: true, haltHeight: p.haltHeight, record, proof: p };
+}
+
+/**
  * THE LIQUIDATION THE ARBITER SETTLES, FROM EVERY SEAT AND ITS OWN CHECKS (kanban #2617, feedback #046). It took the first seat's listing whole:
  * haltHeight, liquidatesAt, claimWindowCloses, lateClaimsUntil and haltRecord unchecked - one seat listed first moved the halt back, voided every
  * claim and named the remainder's payees through an unsigned record. Now:
@@ -629,20 +654,45 @@ export function verifyHaltRecord(bytes, { fid, keys, census, tip, networkId = nu
  *   THE REST       the spent set checked against the verified record (spentSetFromSeats); the issued set only as a strict majority lists it.
  * Answers { ok: true, haltHeight, record (the verified record), haltRecord (hex), ... } or { ok: false, why } - the arbiter then settles nothing.
  */
-export async function liquidationFromSeats(fidHex, listings, { seatCount, clocks, verifyHalt, verify = verifySchnorr, frozen = null }) {
+export async function liquidationFromSeats(fidHex, listings, { seatCount, clocks, verifyHalt, verifyHaltProof = null, verify = verifySchnorr, frozen = null }) {
   const fid = String(fidHex).toLowerCase();
   const rows = (listings || []).filter((l) => l && String(l.federation || '').toLowerCase() === fid);
   if (!rows.length) return { ok: false, why: 'no seat lists that federation as liquidating' };
   const n = Math.max(Number(seatCount) || 0, rows.length);
   const need = Math.floor(n / 2) + 1;
-  const votes = new Map();
-  for (const l of rows) { const h = typeof l.haltRecord === 'string' ? l.haltRecord.toLowerCase() : ''; if (h && /^[0-9a-f]+$/.test(h)) votes.set(h, (votes.get(h) || 0) + 1); }
-  const [recHex, count] = [...votes.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0] || [null, 0];
-  if (!recHex) return { ok: false, why: 'no seat lists a signed HALTED record of that federation: a halt proof alone is not settled by this arbiter' };
-  if (count < need) return { ok: false, why: `the seats disagree on the halt record: the most listed one is listed by ${count} of ${n} seats, ${need} needed` };
-  let v; try { v = await verifyHalt(fromHex(recHex)); } catch (e) { v = { ok: false, why: e.message }; }
-  if (!v || !v.ok) return { ok: false, why: `the halt record ${count} of ${n} seats list does not stand: ${(v && v.why) || 'not verified'}` };
-  const haltHeight = Number(v.record.height);
+  // A SIGNED HALTED RECORD, settled as before (kanban #2617)
+  const fromRecord = async () => {
+    const votes = new Map();
+    for (const l of rows) { const h = typeof l.haltRecord === 'string' ? l.haltRecord.toLowerCase() : ''; if (h && /^[0-9a-f]+$/.test(h)) votes.set(h, (votes.get(h) || 0) + 1); }
+    const [recHex, count] = [...votes.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0] || [null, 0];
+    if (!recHex) return { ok: false, why: 'no seat lists a signed HALTED record of that federation' };
+    if (count < need) return { ok: false, why: `the seats disagree on the halt record: the most listed one is listed by ${count} of ${n} seats, ${need} needed` };
+    let v; try { v = await verifyHalt(fromHex(recHex)); } catch (e) { v = { ok: false, why: e.message }; }
+    if (!v || !v.ok) return { ok: false, why: `the halt record ${count} of ${n} seats list does not stand: ${(v && v.why) || 'not verified'}` };
+    return { ok: true, haltHeight: Number(v.record.height), record: v.record, haltRecord: recHex, signers: v.signers, count };
+  };
+  // OR THE SEATS' HALT PROOF (§23A.5 "How a halt is proven", RULED 2026-11-28 on kanban #3901 Q1): a federation that lost 2f + 1 signs no HALTED record, so a halt proof a
+  // strict majority of the seats list is settled too - never on their word: `verifyHaltProof(rows)` checks it again on this arbiter's own census (halt-proof.js: a majority of
+  // its active seats, never fewer than five, one S, each spanning abandon_blocks, no session after S) and answers { ok, haltHeight, record, proof } or why not
+  const fromProof = async () => {
+    if (typeof verifyHaltProof !== 'function') return { ok: false, why: 'this arbiter checks no halt proof' };
+    const votes = new Map();
+    for (const l of rows) { const id = l.haltProof && typeof l.haltProof.id === 'string' ? l.haltProof.id.toLowerCase() : ''; if (id) votes.set(id, (votes.get(id) || 0) + 1); }
+    const [id, count] = [...votes.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0] || [null, 0];
+    if (!id) return { ok: false, why: 'no seat lists a halt proof of that federation' };
+    if (count < need) return { ok: false, why: `the seats disagree on the halt proof: the most listed one is listed by ${count} of ${n} seats, ${need} needed` };
+    let v; try { v = await verifyHaltProof(rows); } catch (e) { v = { ok: false, why: e.message }; }
+    if (!v || !v.ok) return { ok: false, why: `the halt proof ${count} of ${n} seats list does not stand on this arbiter's census: ${(v && v.why) || 'not verified'}` };
+    if (toHex(v.proof.id) !== id) return { ok: false, why: 'this arbiter\'s own check makes another halt proof than the one the seats list' };
+    return { ok: true, haltHeight: Number(v.haltHeight), record: v.record, proof: v.proof, count };
+  };
+  const byRecord = await fromRecord(), byProof = await fromProof();
+  if (!byRecord.ok && !byProof.ok) return { ok: false, why: `${byRecord.why}; ${byProof.why}` };
+  // BOTH: the earlier halt height counts (the ruling)
+  const pick = byRecord.ok && byProof.ok ? (byProof.haltHeight < byRecord.haltHeight ? byProof : byRecord) : byRecord.ok ? byRecord : byProof;
+  const v = { record: pick.record, signers: byRecord.ok ? byRecord.signers : null };
+  const recHex = byRecord.ok ? byRecord.haltRecord : null, count = pick.count;
+  const haltHeight = pick.haltHeight;
   if (frozen && Number.isInteger(frozen.height) && frozen.height !== haltHeight)
     return { ok: false, why: `the seats now list a halt at ${haltHeight}; this arbiter counts from ${frozen.height} since its first pass` };
   const when = liquidationSchedule({ haltHeight, clocks });
@@ -659,7 +709,8 @@ export async function liquidationFromSeats(fidHex, listings, { seatCount, clocks
   return { ok: true, federation: fid, haltHeight, haltRecord: recHex, record: v.record, haltSigners: v.signers, seatsAgree: count, seats: n,
     liquidatesAt: when.claimWindowOpens, claimWindowCloses: when.claimWindowCloses, lateClaimsUntil: when.lateClaimsUntil, remainderSplitsAt: when.remainderSplitsAt,
     spentNonces: ss.spentNonces, spentSetSession: ss.session ?? null, ...(ss.spentNonces === null ? { spentSetWhy: ss.why } : {}),
-    issuedHashes: issuedKey && issuedCount >= need ? JSON.parse(issuedKey) : null, haltProof: proofKey && proofCount >= need ? JSON.parse(proofKey) : null };
+    issuedHashes: issuedKey && issuedCount >= need ? JSON.parse(issuedKey) : null, haltProof: proofKey && proofCount >= need ? JSON.parse(proofKey) : null,
+    haltBy: pick === byProof ? 'proof' : 'record' };
 }
 
 /**

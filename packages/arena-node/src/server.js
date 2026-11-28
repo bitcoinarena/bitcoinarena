@@ -223,7 +223,7 @@ import { WinningsSend, sendPlanToJson, decodeNamedResendList } from './winnings-
 import { PLAN_ASK, SEND_PLAN_ASK_HEADER, sendPlanAskHeaders, checkSendPlanAsk } from './send-plan-ask.js';
 import { objectionWindowAllowed, mediansAllBonds } from '../../arena-protocol/src/constants.js';   // kanban #1398
 import { settledListDigest } from '../../arena-protocol/src/settled-list.js';   // kanban #2108, #2123
-import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, TYPE_SIGNED_INPUT_BATCH, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, TYPE_BOUND_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
+import { TYPE_SETTLEMENT_ACK, TYPE_CHECKPOINT, TYPE_INPUT_BATCH, TYPE_SIGNED_INPUT_BATCH, TYPE_HALT_ABANDONED_PROOF, STAKE_NOT_SEEN, takesAnyFederation, networkOf, TYPE_RERUN_RESULT, TYPE_AUDIT_SLASH_PROOF, TYPE_ABANDONED_PROOF, TYPE_THEFT_PROOF, TYPE_BOUND_PROOF, SUPPORTED_PROTOCOL_VERSIONS, GATEWAY_SEAT_VERSION, LIQUIDITY_VERSION, PRESSURE_WEIGHT_VERSION, AUDITOR_VERSION, seatingRulesEpochOf } from '../../arena-protocol/src/constants.js';
 import { splitSigned, decodeCheckpoint, checkpointId, encodeCheckpoint, joinSigned } from '../../arena-protocol/src/checkpoint.js';
 import { MAX_SIGNED_INPUT_BATCH_BYTES, decodeInputBatch, splitSignedBatch, batchId } from '../../arena-protocol/src/batch.js';
 import { SIGNED_CHECKPOINT_BYTES } from '../../arena-protocol/src/checkpoint.js';
@@ -6347,6 +6347,9 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     lostForfeitOf: (_contract, rid, eid) => lostForfeitAllowed(round, rid, eid),
     // LEVEL 2 OF A NAMED CLAIM (rulings #1138 2, #1140): who the round may pay, as the filer reads it, and the Entry Contracts this seat holds of the round
     payeesOf: (contract, rid) => namedPayeesFor(contract, rid), entriesOf: (rid) => (round.get(rid) ? round.entriesOf(rid).map((x) => x.entry) : null),
+    // A GUARDIAN A PROVEN HALT LEFT ABANDONED (kanban #3901, RULED Q2): judged on this seat's census, and void once this seat saw a session after the halted one
+    haltAbandoned: async (bytes, beforeHeight) => (fedRecords ? fedRecords.haltAbandonedVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight,
+      (fid) => { const s = halts && typeof halts.seen === 'function' ? halts.seen(fid) : null; return s && Number.isInteger(s.session) ? s.session : null; }) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     bound: async (bytes, beforeHeight) => (fedRecords ? fedRecords.boundVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     theft: async (bytes, beforeHeight) => (fedRecords ? fedRecords.theftVerdict(bytes, (inv) => { const f = fedOfInvite(inv); return f ? fromHex(String(f)) : null; }, beforeHeight) : { verdict: undefined, why: 'this seat holds no federation records yet' }),
     coreOf: (contract, rid) => coreForRound(contract, rid, hosted), beaconOf: (contract, rid, entry, eid) => verifier.proofBeacon(contract, rid, entry, eid), replayRunOf: (rid, eid, core) => verifier.proofReplay(rid, eid, core), vrf: auditVrf,
@@ -6466,6 +6469,17 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     let rows = []; try { rows = fedRecords ? await fedRecords.boundSlashes(boundCases()) : []; } catch { rows = []; }
     return rows.map((r) => { if (!boundSeen.has(r.proof)) boundSeen.set(r.proof, Date.now()); return { proofId: fromHex(r.proof), seenMs: boundSeen.get(r.proof) }; });
   };
+  // EVERY GUARDIAN A PROVEN HALT NAMES ABANDONED (§23A.5 step 3, RULED 2026-11-28 on kanban #3901 Q2): for each federation this seat proves halted, the halt proof, the observations
+  // it is made of and the guardians' own, each template-3 output of an abandoned guardian under its HaltAbandonedProof; the starter files them as it files an abandonment's
+  const haltCases = () => (halts && typeof halts.haltedFederations === 'function' ? halts.haltedFederations().map((federation) => {
+    const p = halts.proofOf(federation);
+    return p ? { federation, halt: p, observations: halts.observationsOf(federation), guardianObservations: typeof halts.guardianObservationsOf === 'function' ? halts.guardianObservationsOf(federation) : [] } : null;
+  }).filter(Boolean) : []);
+  const haltAbandonedSeen = new Map();
+  const haltAbandonedHeld = async () => {
+    let rows = []; try { rows = fedRecords && typeof fedRecords.haltAbandonedSlashes === 'function' ? await fedRecords.haltAbandonedSlashes(haltCases()) : []; } catch { rows = []; }
+    return rows.map((r) => { if (!haltAbandonedSeen.has(r.proof)) haltAbandonedSeen.set(r.proof, Date.now()); return { proofId: fromHex(r.proof), seenMs: haltAbandonedSeen.get(r.proof) }; });
+  };
   const theftSeen = new Map();
   const theftHeld = async () => {
     let rows = []; try { rows = fedRecords ? await fedRecords.theftSlashes() : []; } catch { rows = []; }
@@ -6474,7 +6488,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // THE FILER'S SIGNED ASK (kanban #1386, audit 2 #1204 RES-7): every census-sign ask this seat files goes signed by its node key
   const censusAsker = { node: toHex(round.pubkey), sign: (d) => schnorr.sign(d, round.identity.secret) };
   const slashStarter = holdWatch && censusKey.feeCoin ? createSlashStarter({ asker: censusAsker, key: round.pubkey, network: censusKey.network, db: round.db, store: new CensusKeyStore(round.db), thresholdOf: censusKey.scan.thresholdOf, totalOf: censusKey.scan.totalOf, tipHeight: censusKey.tipHeight, entriesAtTip: entriesAtTipForStart,
-    heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...round.namedClaimProofs(), ...(await abandonedHeld()), ...(await theftHeld()), ...(await boundHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, feeFind: typeof censusKey.feeCoin.find === 'function' ? censusKey.feeCoin.find : null, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
+    heldProofs: async () => [...round.allSlashProofs(), ...round.allRerunSlashProofs(), ...round.auditSlashProofs(), ...round.doubleSlashProofs(), ...round.tableSlashProofs(), ...round.namedClaimProofs(), ...(await abandonedHeld()), ...(await theftHeld()), ...(await boundHeld()), ...(await haltAbandonedHeld())].flatMap((p) => { const bytes = round.relayGet(Buffer.from(p.proofId)); return bytes ? [{ proofId: p.proofId, bytes, seenMs: p.seenMs }] : []; }), bytesOf: (id) => round.relayGet(Buffer.from(id)), judge: judgeProofBytes, holdsFor: holdsForStart, feeCoin: censusKey.feeCoin, feeFind: typeof censusKey.feeCoin.find === 'function' ? censusKey.feeCoin.find : null, send: (hex) => chainSend(hex), urlsOf: () => censusUrls || [],
     stepMs: Number(process.env.ARENA_SLASH_FILE_STEP_MS || 600000), log: (l) => console.log(l),
     checkOther: (request) => (slashRelease ? slashRelease.checkOther(request) : { ok: false, why: 'this seat runs no release or fallback' }),
     feeSecret: (proofId) => taggedHash('ARENA/v1/SlashFeeKey', Uint8Array.from([...round.identity.secret, ...proofId])),
@@ -8677,6 +8691,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // kanban #2932: the guardians' spent-set copies kept beside the halts file
   const spentCopiesFile = db && db.arenaPath ? `${db.arenaPath}.spent-sets.json` : null;
   liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts, alarms: reserveAlarms,
+    escrowsOf: (fid) => (slashRelease && slashRelease.liquidation && typeof slashRelease.liquidation.listed === 'function' ? slashRelease.liquidation.listed(fid) : null),   // kanban #3901
     load: () => (spentCopiesFile && existsSync(spentCopiesFile) ? JSON.parse(readFileSync(spentCopiesFile, 'utf8')) : []),
     save: (v) => { if (spentCopiesFile) { try { writeFileSync(spentCopiesFile, JSON.stringify(v)); } catch { /* kept in memory */ } } } });
   // THE ARBITRATION SET'S EVENTS (kanban #723): its liquidations and slashes with every payout and transaction, signed by k of its members -
@@ -15727,13 +15742,14 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
         // AND A MARK OF THEFT'S (kanban #1093 part 2): every seated guardian's template-3 output, under its TheftProof; each row says where the slash is owed (one rule with an abandonment's)
         let theftRows = []; try { theftRows = fedRecords ? await fedRecords.theftSlashes() : []; } catch (e) { console.log(`[slash] theft rows: ${e.message}`); }
         let boundRows = []; try { boundRows = fedRecords ? await fedRecords.boundSlashes(boundCases()) : []; } catch (e) { console.log(`[slash] bound rows: ${e.message}`); }
+        let haltRows = []; try { haltRows = fedRecords && typeof fedRecords.haltAbandonedSlashes === 'function' ? await fedRecords.haltAbandonedSlashes(haltCases()) : []; } catch (e) { console.log(`[slash] halt rows: ${e.message}`); }
         const owedTo = (r) => ({ ...r, pays: slashedGuardianPays({ federation: r.federation, halt: liquidations ? liquidations.haltOf(r.federation) : null }) });
-        abandonedRows = abandonedRows.map(owedTo); theftRows = theftRows.map(owedTo); boundRows = boundRows.map(owedTo);
+        abandonedRows = abandonedRows.map(owedTo); theftRows = theftRows.map(owedTo); boundRows = boundRows.map(owedTo); haltRows = haltRows.map(owedTo);
         abandonedRows = abandonedRows.map((r) => { const got = startsByCensusKey(r.template) && seating ? seating.presigOf({ txid: r.txid, vout: r.vout }) : null; return got ? { ...r, presig: got.signature, presigRound: got.round } : r; });
         // AND THE PROOFS OF A NAMED CLAIM'S OFFENCE (§5A.3 rows (a), (b), kanban #1044 B1): row 1 (a), 2 (b), 3 (a) at level 2, against a settlement's or a forfeit's named signers
         const namedRows = round.namedClaimProofs().map((r) => ({ round: toHex(r.roundId), node: toHex(r.nodePubkey), row: r.row, proof: toHex(r.proofId), seenMs: r.seenMs }));
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store', ...CORS });
-        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows, namedSlashes: namedRows, abandonedSlashes: abandonedRows, theftSlashes: theftRows, boundSlashes: boundRows }));
+        return res.end(JSON.stringify({ node: toHex(round.pubkey), slashes: rows, auditSlashes: auditRows, doubleSlashes: doubleRows, tableSlashes: tableRows, namedSlashes: namedRows, abandonedSlashes: abandonedRows, theftSlashes: theftRows, boundSlashes: boundRows, haltAbandonedSlashes: haltRows }));
       }
       // A ROUND'S PROOFS OF FALSE TABLES, as published (proof, ack, the rest), one after another (kanban #1040)
       if (req.method === 'GET' && url.pathname === '/table-slash-proofs') {
@@ -16282,6 +16298,13 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
           return text(res, r.status, r.ok ? 'kept' : r.why);
         }
         // A COPY ABOVE THE HALT'S BOUND (kanban #1269): the same, the record listing the node as a guardian
+        // A HALT'S ABANDONMENT PROOF (kanban #3901): the same, the record seating the node as a guardian
+        if (bytes[0] === TYPE_HALT_ABANDONED_PROOF) {
+          if (!fedRecords) return text(res, 503, 'this seat holds no federation records yet');
+          const r = await fedRecords.takeHaltAbandonedProof(slashed[1], u8, (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; });
+          if (r.ok && slashStarter) slashStarter.handed(fromHex(slashed[1]));
+          return text(res, r.status, r.ok ? 'kept' : r.why);
+        }
         if (bytes[0] === TYPE_BOUND_PROOF) {
           if (!fedRecords) return text(res, 503, 'this seat holds no federation records yet');
           const r = await fedRecords.takeBoundProof(slashed[1], u8, (inv) => { const f = fedOf(inv); return f ? fromHex(String(f)) : null; });

@@ -34,10 +34,11 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { bitcoindRpc, blocksOver, blockCache } from '../src/chain-rpc.js';
-import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, resumeSlashIntent, txidOf, liquidationFromSeats, verifyHaltRecord } from '../src/arbiter.js';
+import { arbitrationMembers, judgeProof, judgeAuditProof, judgeDoubleProof, judgeTableProof, judgeAbandoned, buildAbandonedSlash, buildSlash, settledEntries, memberSign, assemble, post, coreForRound, serveArbiter, payOutSlash, buildEscrowPegin, intentLanded, writeJsonAtomic, resumeIntent, resumeSlashIntent, txidOf, liquidationFromSeats, verifyHaltRecord, haltProofFromSeats } from '../src/arbiter.js';
 import { wsClientConfig } from '../src/federation-endpoints.js';
 import { createTrustedGuardianKeys, recordInviteSource } from '../../arena-protocol/src/trusted-guardian-keys.js';
 import { createLiquidationClaims, payOutLiquidation, escrowCoverageMsat } from '../src/liquidation-claims.js';
+import { verifyFederationRecord as verifyRecordHere, splitSignedRecord as splitRecordHere, federationRecordId as federationRecordIdHere } from '../../arena-protocol/src/federation-record.js';
 import { liquidationEvent, slashEvent, stampEvent, signEvent, eventKey } from '../src/arbitration-events.js';
 import { fedimintNoteValidator } from '../src/note-validate.js';
 import { decodeSpentSet, spentNonceSet } from '../../arena-protocol/src/spent-set.js';
@@ -87,13 +88,17 @@ const LOOKBACK = Number(env.ARENA_ARBITER_LOOKBACK || 2100);
 
 const get = async (url, as = 'json') => { const r = await fetch(url, { signal: AbortSignal.timeout(20000) }); if (!r.ok) throw new Error(`${url} answered ${r.status}`); return as === 'json' ? r.json() : new Uint8Array(await r.arrayBuffer()); };
 
+// ON A REGTEST DEVNET THAT SLASHES, ITS CENSUS KEY 0 STANDS FROM HEIGHT 0 (kanban #3901): the seats count template-3 bonds under it (ARENA_CENSUS_KEY_0, as round-2of2.mjs's
+// census does), and an arbiter that did not counted none of them - no census seat stood behind any halt observation. Regtest only
+const STANDING = network === 'regtest' && env.ARENA_CENSUS_KEY_0
+  ? { standingKeys: [{ epoch: 0, publicKey: fromHex(JSON.parse(readFileSync(env.ARENA_CENSUS_KEY_0, 'utf8')).publicKey), height: 0 }] } : {};
 /** The census of a round's contract at `height`, from this arbiter's own blocks, with its entries' adverts. */
 async function censusAt(contract, height, from = Math.max(0, height - LOOKBACK)) {
   const tip = Number(await rpc('getblockcount'));
   const view = await blocksOver(rpc, from, Math.min(tip, height), { cache });
   const byTxid = new Map();
   for (const b of view.blocks) for (const raw of b.transactions || []) { try { byTxid.set(toHex(parseTransaction(raw).txid), raw); } catch { /* */ } }
-  const c = deriveCensus(view, { contract: { ...contract, censusHeight: height }, bond: bondSetFor(network),
+  const c = deriveCensus(view, { contract: { ...contract, censusHeight: height }, bond: { ...bondSetFor(network), ...STANDING },
     resolve: (e) => { const raw = byTxid.get(toHex(e.txid)); return raw ? { transaction: raw } : null; },
     verifyUpdate: (s, m, k) => { try { return schnorr.verify(s, m, k); } catch { return false; } } });
   return { ...c, tip, view };
@@ -511,6 +516,41 @@ async function verifyHalt(fid, bytes) {
   if (!census.ok) return { ok: false, why: `no census at ${r.height}: ${census.why}` };
   return verifyHaltRecord(bytes, { fid, keys, census: census.entries, tip: census.tip, networkId: chainNetworkId || null, inviteFederationId });
 }
+// A HALT PROOF CHECKED HERE (RULED 2026-11-28 on kanban #3901 Q1): the newest record a strict majority of the seats list, signed by the federation's own guardians on this
+// arbiter's census at its height; every seat's halt observations (GET /halt-observations) weighed on this arbiter's census at its tip - its active seats, never fewer than five
+async function verifyHaltProof(fid, rows) {
+  // BY THE RECORD'S BODY, NOT ITS BYTES: each seat keeps the signatures it gathered, so one record is listed under several signature sets (measured on the devnet,
+  // kanban #3901: 14 seats, 14 byte strings of one body) - the body a strict majority lists, held by the first of its copies that stands here
+  const bodies = new Map();
+  for (const l of rows) {
+    const h = typeof l.record === 'string' ? l.record.toLowerCase() : '';
+    if (!h) continue;
+    let id; try { id = toHex(federationRecordIdHere(splitRecordHere(fromHex(h)).record)); } catch { continue; }
+    if (!bodies.has(id)) bodies.set(id, { n: 0, copies: [] });
+    const b = bodies.get(id); b.n += 1; if (!b.copies.includes(h)) b.copies.push(h);
+  }
+  const [, best] = [...bodies.entries()].sort((a, b) => b[1].n - a[1].n || (a[0] < b[0] ? -1 : 1))[0] || [null, null];
+  if (!best || best.n < Math.floor(Math.max(seats.length, rows.length) / 2) + 1) return { ok: false, why: 'no record of that federation is listed by a strict majority of the seats' };
+  let v = null, why = 'no copy of it stands';
+  for (const h of best.copies) {
+    const bytes = fromHex(h);
+    const r = splitRecordHere(bytes).record;
+    const keys = await guardianKeysFor(fid, [recordInviteSource(bytes, verifyInviteSig)]);
+    if (!keys) { why = 'this arbiter holds no guardian keys of that federation'; continue; }
+    const at = await censusRead(r.height);
+    if (!at.ok) { why = `no census at ${r.height}: ${at.why}`; continue; }
+    const got = verifyRecordHere(bytes, { census: at.entries, verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } }, inviteFederationId, networkId: chainNetworkId || null, guardianKeys: keys });
+    if (got.ok) { v = got; break; }
+    why = `the record does not stand: ${got.why}`;
+  }
+  if (!v) return { ok: false, why };
+  const tip = Number(await rpc('getblockcount'));
+  const now = await censusRead(tip);
+  if (!now.ok) return { ok: false, why: `no census at the tip: ${now.why}` };
+  const said = (await Promise.all(seats.map(async (s) => { try { return await (await fetch(`${s}/halt-observations?federation=${fid}`, { signal: AbortSignal.timeout(15000) })).json(); } catch { return null; } }))).filter(Boolean);
+  return haltProofFromSeats({ said, record: v.record, censusSeats: (now.entries || []).map((e) => e.pubkey).filter(Boolean), abandonBlocks: liqClocks.abandonBlocks,
+    verify: (sg, m, k) => { try { return schnorr.verify(sg, m, k); } catch { return false; } } });
+}
 let claims = null;
 if (liqClients.size) {
   const claimsFile = env.ARENA_LIQ_CLAIMS_FILE || null;
@@ -539,7 +579,7 @@ if (liqClients.size) {
       }))).filter(Boolean);
       if (!listings.length) return null;
       state.liquidationHalts = state.liquidationHalts || {};
-      const got = await liquidationFromSeats(fid, listings, { seatCount: seats.length, clocks: liqClocks, verifyHalt: (bytes) => verifyHalt(fid, bytes),
+      const got = await liquidationFromSeats(fid, listings, { seatCount: seats.length, clocks: liqClocks, verifyHalt: (bytes) => verifyHalt(fid, bytes), verifyHaltProof: (rows) => verifyHaltProof(fid, rows),
         frozen: state.liquidationHalts[fid] || null });
       if (!got.ok) { say({ liquidation: fid.slice(0, 16), refused: got.why }); return got; }
       if (!state.liquidationHalts[fid]) { state.liquidationHalts[fid] = { height: got.haltHeight, record: got.haltRecord, atMs: Date.now() }; keep(); }

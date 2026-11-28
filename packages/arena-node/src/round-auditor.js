@@ -14,6 +14,7 @@
 // Everything that touches the network, the census or the replay worker is injected, as drawn-attestor.js does.
 import { auditAlpha, isAuditor, auditResultsHash, encodeAudit, auditId, AUDIT_LEAD_MS, auditTickHash } from '../../arena-protocol/src/auditor.js';
 import { toHex } from '../../arena-protocol/src/hash.js';
+import { auditsBlindOn } from './test-dissent.js';
 
 export class RoundAuditor {
   /**
@@ -65,7 +66,7 @@ export class RoundAuditor {
         let got = null;
         try { got = await this.replay(r.roundId, e.entryId, t === null ? [] : [t]); } catch { got = null; }
         if (!got) { missing = true; break; }
-        if (toHex(got) !== toHex(e.runId)) { differs = e; break; }
+        if (toHex(got) !== toHex(e.runId) && !auditsBlindOn(e.entryId)) { differs = e; break; }   // the test fault (test-dissent.js `blind`, kanban #3901)
       }
       if (differs) {
         let took = false;

@@ -89,7 +89,7 @@ const readPid = (name) => { try { return JSON.parse(readFileSync(pidFile(name), 
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const groupAlive = (pgid) => { try { process.kill(-pgid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const running = (name) => { const p = readPid(name); return p && alive(p.pid) ? p : null; };
-const PARTS = ['bitcoind', 'lnd-a', 'lnd-b', 'lnd-c', 'gateway-a', 'gateway-b', ...PLAN.nodes.map((_, k) => `node-${k + 1}`), ...PLAN.auditors.map((_, k) => `auditor-${k + 1}`), 'runner', 'page', 'lnurl'];
+const PARTS = ['bitcoind', 'lnd-a', 'lnd-b', 'lnd-c', 'gateway-a', 'gateway-b', ...PLAN.nodes.map((_, k) => `node-${k + 1}`), ...PLAN.auditors.map((_, k) => `auditor-${k + 1}`), ...PLAN.fed2.map((_, k) => `fed2-${k + 1}`), 'runner', 'page', 'lnurl', 'arbiter'];
 const LND = env.LND_BIN || dirOnPath('lnd');
 /** Start a process in a new session (its own process group: `detached`), its output to its log, its pid to its file. */
 function startPart(name, cmd, args, { env: e = env, cwd = NODE_PKG } = {}) {
@@ -159,9 +159,14 @@ function slashEnv(k) {
   if (!SLASH) return {};
   const offence = path('census', `offence-${k + 1}.txt`);
   if (!existsSync(offence)) writeFileSync(offence, '');
+  // AND ITS DISSENT FILE (test-dissent.js, kanban #3901): empty, nothing armed. A line `<entry hex>` makes this seat's replay of that entry differ and its re-run
+  // sign one score higher - with five seats armed an objection holds and their re-run contradicts the first result, and every AUDIT that vouched for it
+  // (§13A.1: AUDIT_CONTRADICTED), as tools/slash-release-regtest.mjs arms its own seats
+  const dissent = path('census', `dissent-${k + 1}.txt`);
+  if (!existsSync(dissent)) writeFileSync(dissent, '');
   return { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', `key0-${k + 1}.json`), ARENA_CENSUS_KEY_EVERY_MS: '1500',
     ARENA_SLASH_FILE_STEP_MS: env.ARENA_SLASH_FILE_STEP_MS || '500', ARENA_DUTY_POST: 'on', ARENA_DUTY_WALLET: WALLET, ARENA_DUTY_APPS: 'none',
-    ARENA_BOND_CLI: [join(BTC, 'bitcoin-cli'), ...btcArgs(), `-rpcwallet=${WALLET}`].join(','), ARENA_TEST_NAMED_OFFENCE_FILE: offence,
+    ARENA_BOND_CLI: [join(BTC, 'bitcoin-cli'), ...btcArgs(), `-rpcwallet=${WALLET}`].join(','), ARENA_TEST_NAMED_OFFENCE_FILE: offence, ARENA_TEST_DISSENT_FILE: dissent,
     // THE STAKE-LOCK TOOL ON FEW THREADS (measured 2026-11-05 on the test laptop: seven seats' session exports and claim reads, each a tokio runtime on every core,
     // took the load to 150): every tool a seat spawns inherits this
     TOKIO_WORKER_THREADS: env.TOKIO_WORKER_THREADS || '1' };
@@ -199,6 +204,13 @@ async function censusKey0() {
   say({ step: 'census key 0', key: genesis.publicKey.slice(0, 16), holders: 'nodes 1..4', threshold: 3 });
 }
 
+/** An audit-only node's dissent file on a slashing devnet (test-dissent.js `blind`, kanban #3901): empty, nothing armed. */
+function auditorDissent(k) {
+  const f = path('census', `dissent-auditor-${k + 1}.txt`);
+  mkdirSync(path('census'), { recursive: true });
+  if (!existsSync(f)) writeFileSync(f, '');
+  return f;
+}
 function startNode(k, { invite, apps, extra = {} }) {
   const port = PLAN.nodes[k], client = path('clients', `node-${k + 1}`);
   mkdirSync(client, { recursive: true });
@@ -208,7 +220,7 @@ function startNode(k, { invite, apps, extra = {} }) {
     ARENA_FEDERATION_INVITE: invite, ARENA_CLOSE_AT_END: '1', ARENA_FUND_FREE_ROUNDS: '1', ARENA_DONATION_NETWORK: 'regtest',
     ARENA_LNURL_LOCAL_HOSTS: `127.0.0.1:${PLAN.lnurl}`,   // the devnet's own payee: a funding payout asks it past the #1809 guard (kanban #2323)
     ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
-    ARENA_APPS: apps.join(','), [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`, ARENA_SEATING: SEATING, ARENA_PRICE_FEED: PRICE_FEED, ...extra }) });
+    ARENA_APPS: apps.join(','), [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`, ARENA_SEATING: SEATING, ARENA_PRICE_FEED: PRICE_FEED, ...CLAIMS_DOOR, ...extra }) });
 }
 
 // SEATING AND HEARTBEATS ON, as every install has them (src/arena-conf.js sets ARENA_SEATING=1 unless the operator chose otherwise; kanban
@@ -218,6 +230,9 @@ const SEATING = env.ARENA_SEATING ?? '1';
 // signed a PRESENT for a Next Block round - server.js servesRound, kanban #2780 - so no round was seated and the paying client refused every entry, "the round is not
 // seated"). It reads BTC/USD from the internet every 5 s; ARENA_PRICE_FEED=0 turns it off
 const PRICE_FEED = env.ARENA_PRICE_FEED ?? '1';
+// THE CLAIMS DOOR (DEVNET_ARBITER=1, kanban #3901): the devnet's arbitration set (`devnet.mjs arbiter`) on base + 9; every seat names it, as a seat names the set's endpoint
+// (ARENA_LIQUIDATION_CLAIMS), so GET /liquidations says where claims go and the census-key escrow reads the one claims ledger from it
+const CLAIMS_DOOR = env.DEVNET_ARBITER === '1' ? { ARENA_LIQUIDATION_CLAIMS: `http://127.0.0.1:${PLAN.arbiter}` } : {};
 function fedEnv(extra = {}) {
   return { ...env, PATH: [FED, dirname(process.execPath), env.PATH || ''].join(delimiter), HOME: path('home'),
     ARENA_BITCOIND_URL: RPC_URL, ARENA_BITCOIND_COOKIE: COOKIE(), ARENA_TN4_NETWORK: 'regtest',
@@ -226,7 +241,7 @@ function fedEnv(extra = {}) {
     ...(Number(env.ARENA_PROTOCOL_VERSION || 1) >= 11 && env.DEVNET_DONATION_SET !== 'lnurl' ? { ARENA_REGTEST_DONATION_SET: 'keys' } : {}),
     // EACH GUARDIAN'S ENDPOINT, NAMED: the node's own /guardian door on 127.0.0.1. Derived from Tailscale otherwise
     // (guardian.js readTailscale), which on a machine with a Funnel asks it for every node - and a devnet is local.
-    ...Object.fromEntries(PLAN.nodes.map((p) => [`ARENA_GUARDIAN_ENDPOINT_${p}`, `ws://127.0.0.1:${p}/guardian`])),
+    ...Object.fromEntries([...PLAN.nodes, ...PLAN.fed2].map((p) => [`ARENA_GUARDIAN_ENDPOINT_${p}`, `ws://127.0.0.1:${p}/guardian`])),
     ...extra };
 }
 const fcli = (dir, args, ms = 60000) => spawnSync(join(FED, 'fedimint-cli'), ['--data-dir', dir, ...args],
@@ -314,7 +329,7 @@ async function up() {
       ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
       // ON A DEVNET THAT SLASHES, CENSUS KEY 0 AS THE SEVEN HAVE IT (kanban #3896, measured 2026-11-27: without it each auditor derived another census root at
       // the round's height - it counts no template-3 bond - and refused every paid round "that round names census root ... and the chain gives ...")
-      ...(SLASH ? { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', 'key0.json') } : {}) }) });
+      ...(SLASH ? { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', 'key0.json'), ARENA_TEST_DISSENT_FILE: auditorDissent(k) } : {}) }) });
   }
   for (const [k, port] of PLAN.auditors.entries()) {
     for (let i = 0; ; i++) {
@@ -996,7 +1011,7 @@ async function down() {
   const stopped = [];
   // the runner and the page first (they post to the nodes), then the nodes with their guardians, then the chain
   // the audit-only nodes (kanban #1412) by every name they may have had: a down without DEVNET_AUDITORS still stops them (a pid file stops only what it started)
-  for (const n of ['runner', 'page', 'lnurl', ...Array.from({ length: 9 }, (_, k) => `auditor-${k + 1}`), ...PLAN.nodes.map((_, k) => `node-${k + 1}`).reverse(), 'gateway-a', 'gateway-b', 'lnd-a', 'lnd-b', 'lnd-c', 'bitcoind']) {
+  for (const n of ['arbiter', 'runner', 'page', 'lnurl', ...Array.from({ length: 9 }, (_, k) => `auditor-${k + 1}`), ...Array.from({ length: 4 }, (_, k) => `fed2-${k + 1}`), ...PLAN.nodes.map((_, k) => `node-${k + 1}`).reverse(), 'gateway-a', 'gateway-b', 'lnd-a', 'lnd-b', 'lnd-c', 'bitcoind']) {
     const s = await stopPart(n, n === 'bitcoind' ? 60000 : 20000);
     if (s) stopped.push(s);
   }
@@ -1042,6 +1057,8 @@ async function auditorsCmd() {
   const { regtest } = await import('./regtest-bond.mjs');
   const { DatabaseSync } = await import('node:sqlite');
   const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { BOND_TEMPLATE_V3 } = await import('../../arena-protocol/src/bond-script.js');
+  const fromHexKey = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
   // the module cli: chain, cookie and the devnet wallet already in it (kanban #1412)
   const rt = regtest(cli, { network: 'regtest', wallet: WALLET });
   const versions = Number(env.ARENA_PROTOCOL_VERSION || 1);
@@ -1057,16 +1074,213 @@ async function auditorsCmd() {
     if (!row) throw new Error(`auditor ${k + 1}: no identity in its store`);
     const secret = new Uint8Array(row.secret), key = schnorr.getPublicKey(secret);
     if (rt.bondsOf({ pubkey: key }).length) { out.push({ auditor: k + 1, bonded: 'already' }); continue; }
+    // ON A DEVNET THAT SLASHES, TEMPLATE 3 UNDER CENSUS KEY 0 WITH ITS PRESIG, as the seven's first bonds (round-2of2.mjs; kanban #3901): an AUDIT a valid objection
+    // contradicts (§13A.1, AUDIT_CONTRADICTED) is then started by the census key and takes the auditor's bond - on template 2 it waited for an arbitration set the devnet runs none of
+    const t3 = SLASH ? { template: BOND_TEMPLATE_V3, censusKey: fromHexKey(JSON.parse(readFileSync(path('census', 'key0.json'), 'utf8')).publicKey) } : {};
     const p = rt.postBond(secret, { endpoint: `ws://127.0.0.1:${port}`, roles: ['audit'], operatorId: `audit-${k + 1}`, hostedGames: hosted,
-      protocolVersions: Array.from({ length: versions }, (_, i) => i + 1) });
-    rt.include([p.hex]);
+      protocolVersions: Array.from({ length: versions }, (_, i) => i + 1), ...t3 });
+    rt.include([p.hex, ...(SLASH ? [rt.postBondPresig(secret, p).hex] : [])]);
     out.push({ auditor: k + 1, port, key: Buffer.from(key).toString('hex').slice(0, 16), txid: p.txid });
   }
   rt.mine(8);
   say({ step: 'auditor bonds', bonds: out, height: rt.height() });
 }
 
+// fed2 (DEVNET_FED2=1, kanban #3901): A SECOND FEDERATION OF FOUR GUARDIAN NODES, 3 of 4, founded as `up` founds the first (testnet4-found.mjs, ARENA_FOUND_N=4), each node
+// started as the seven are with its own guardian and its own client of it, and bonded as the seven: template 3 under census key 0 with its presig on a slashing devnet,
+// guardian_of naming its guardian key. The seats then keep its record from the census and its guardian seats' signatures. It is the federation a liquidation run halts
+// (two of its guardians stopped: 2 of 4 left, 3 needed) while the first one stays OPEN and safe - the federation the census key's carriers pay the claims into.
+const fed2Store = (k) => path('nodes', `fed2-${k + 1}.db`);
+async function fed2Cmd() {
+  if (!PLAN.fed2.length) throw new Error('no second federation: run with DEVNET_FED2=1');
+  needBins();
+  const { openStore, nodeIdentity } = await import('../src/store.js');
+  const { holdsGuardianKey } = await import('../src/node-start.js');
+  const stores = PLAN.fed2.map((_, k) => fed2Store(k));
+  for (const st of stores) { const db = openStore(st); nodeIdentity(db); db.close(); }
+  if (!stores.every((st) => holdsGuardianKey(st))) {
+    if (PLAN.fed2.some((_, k) => running(`fed2-${k + 1}`))) throw new Error('fed2 nodes run but their federation is not founded: stop them first');
+    const t = Date.now();
+    const r = spawnSync(process.execPath, [join(HERE, 'testnet4-found.mjs'), ...PLAN.fed2.map((p, k) => `${p}:${stores[k]}`)],
+      { cwd: NODE_PKG, encoding: 'utf8', timeout: 900000, env: fedEnv({ ARENA_FEDERATION_NAME: 'devnet-2', ARENA_FOUND_N: '4' }) });
+    writeFileSync(path('logs', 'found-fed2.log'), `${r.stdout || ''}${r.stderr || ''}`);
+    if (r.status !== 0) throw new Error(`the second founding failed (logs/found-fed2.log): ${String(r.stderr || r.error || '').trim().split('\n').slice(-3).join(' | ')}`);
+    say({ step: 'fed2 founded', seconds: Math.round((Date.now() - t) / 1000), guardians: 4, threshold: 3 });
+  }
+  const invite2 = readFileSync(`${stores[0]}.guardian/invite-code`, 'utf8').replace(/["\s]/g, '');
+  writeFileSync(path('invite-code-fed2'), invite2 + '\n');
+  const { readInvite } = await import('../src/invite.js');
+  const fid2 = readInvite(invite2).federationId;
+  const apps = [join(NODE_PKG, '..', 'nextblock', 'plugin', 'nextblock.js'), ...APP_FILES];
+  for (const [k, port] of PLAN.fed2.entries()) {
+    const name = `fed2-${k + 1}`;
+    mkdirSync(path('clients', name), { recursive: true });
+    if (!running(name)) startPart(name, process.execPath, ['src/main.js', String(port), stores[k]], { env: fedEnv({
+      ARENA_STAKE_LOCK_BIN: LOCK, ARENA_FEDERATION_CLIENT_DIR: path('clients', name), ARENA_FEDERATION_CLIENTS_DIR: path('clients', `${name}-others`),
+      ARENA_FEDERATION_INVITE: invite2, ARENA_CLOSE_AT_END: '1', ARENA_DONATION_NETWORK: 'regtest', ARENA_LNURL_LOCAL_HOSTS: `127.0.0.1:${PLAN.lnurl}`,
+      ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
+      ARENA_APPS: apps.join(','), [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`, ARENA_SEATING: SEATING, ARENA_PRICE_FEED: PRICE_FEED,
+      ...(SLASH ? { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', 'key0.json'), ARENA_CENSUS_KEY_EVERY_MS: '1500', TOKIO_WORKER_THREADS: env.TOKIO_WORKER_THREADS || '1' } : {}) }) });
+  }
+  for (const [k, port] of PLAN.fed2.entries()) {
+    for (let i = 0; ; i++) {
+      try { if ((await fetch(`http://127.0.0.1:${port}/identity`, { signal: AbortSignal.timeout(3000) })).ok) break; } catch { /* not yet */ }
+      if (!running(`fed2-${k + 1}`)) throw new Error(`fed2 node ${k + 1} (${port}) exited: see logs/fed2-${k + 1}.log`);
+      if (i > 240) throw new Error(`fed2 node ${k + 1} (${port}) did not answer in 120 s`);
+      await wait(500);
+    }
+  }
+  // A CLIENT OF IT FOR EACH OF ITS NODES, as `up` joins the seven's
+  for (const [k] of PLAN.fed2.entries()) {
+    const dir = path('clients', `fed2-${k + 1}`);
+    for (let i = 0; ; i++) {
+      if (fcli(dir, ['info'], 60000).status === 0) break;
+      if (fcli(dir, ['join-federation', invite2], 120000).status === 0) break;
+      if (i > 20) throw new Error(`the client in ${dir} did not join the second federation`);
+      await wait(3000);
+    }
+  }
+  // ITS BONDS, as the seven's (round-2of2.mjs): the guardian key its federation's config names for it, its guardian fields from the node itself
+  const { regtest } = await import('./regtest-bond.mjs');
+  const { DatabaseSync } = await import('node:sqlite');
+  const { schnorr } = await import('@noble/curves/secp256k1.js');
+  const { BOND_TEMPLATE_V3 } = await import('../../arena-protocol/src/bond-script.js');
+  const { guardianFieldsFromNode } = await import('./round-2of2.mjs');
+  const fromHexKey = (h) => Uint8Array.from(Buffer.from(h, 'hex'));
+  const rt = regtest(cli, { network: 'regtest', wallet: WALLET });
+  const versions = Number(env.ARENA_PROTOCOL_VERSION || 1);
+  // THE GAMES THEY HOST: every game this devnet registers, as the seven's bonds name them (round-2of2.mjs hostedGames) - not read off a seat's bond, which a slash may have spent
+  const hostedGames = (await registrations()).map((g) => g.gameId).sort((x, y) => Buffer.compare(Buffer.from(x), Buffer.from(y)));
+  const out = [];
+  for (const [k, port] of PLAN.fed2.entries()) {
+    const db = new DatabaseSync(stores[k], { readOnly: true });
+    let row; try { row = db.prepare('SELECT secret FROM identity WHERE one = 0').get(); } finally { db.close(); }
+    const secret = new Uint8Array(row.secret), key = schnorr.getPublicKey(secret);
+    if (rt.bondsOf({ pubkey: key }).length) { out.push({ fed2: k + 1, bonded: 'already' }); continue; }
+    const dir = `${stores[k]}.guardian`;
+    const id = JSON.parse(readFileSync(join(dir, 'local.json'), 'utf8')).identity;
+    const guardianKey = fromHexKey(JSON.parse(readFileSync(join(dir, 'consensus.json'), 'utf8')).broadcast_public_keys[String(id)]);
+    const g = await guardianFieldsFromNode(`http://127.0.0.1:${port}`);
+    const t3 = SLASH ? { template: BOND_TEMPLATE_V3, censusKey: fromHexKey(JSON.parse(readFileSync(path('census', 'key0.json'), 'utf8')).publicKey) } : {};
+    const p = rt.postBond(secret, { endpoint: `ws://127.0.0.1:${port}`, operatorId: `fed2-${k + 1}`, hostedGames,
+      protocolVersions: Array.from({ length: versions }, (_, i) => i + 1), guardianOf: [{ federationId: fromHexKey(fid2), guardianKey }], ...g, ...t3 });
+    rt.include([p.hex, ...(SLASH ? [rt.postBondPresig(secret, p).hex] : [])]);
+    out.push({ fed2: k + 1, port, key: Buffer.from(key).toString('hex').slice(0, 16), guardian: g.guardianCapable, txid: p.txid });
+  }
+  rt.mine(8);
+  say({ step: 'fed2 up', federation: fid2, invite: invite2, bonds: out, height: rt.height() });
+}
+
+// arbiter (DEVNET_ARBITER=1, kanban #3901): THE ARBITRATION SET'S SERVICE (tools/arbiter.mjs) on base + 9, its members the regtest set's derivable keys, reading every seat of the
+// devnet (the seven, the audit-only nodes, the second federation's), its own state and claims book in arbiter/, a client of the second federation joined while it is OPEN
+// to check presented notes (ARENA_LIQ_CLIENTS), census key 0 standing as the seats read it. Run it after `fed2`, before the halt.
+async function arbiterCmd() {
+  if (env.DEVNET_ARBITER !== '1') throw new Error('run with DEVNET_ARBITER=1 (the seats name the claims door from their start)');
+  needBins();
+  mkdirSync(path('arbiter'), { recursive: true });
+  const seats = [...PLAN.nodes, ...PLAN.auditors, ...PLAN.fed2].map((p) => `http://127.0.0.1:${p}`);
+  const liq = [];
+  if (existsSync(path('invite-code-fed2'))) {
+    const invite2 = readFileSync(path('invite-code-fed2'), 'utf8').trim();
+    const { readInvite } = await import('../src/invite.js');
+    const dir = path('arbiter', 'client-fed2');
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; ; i++) {
+      if (fcli(dir, ['info'], 60000).status === 0) break;
+      if (fcli(dir, ['join-federation', invite2], 120000).status === 0) break;
+      if (i > 20) throw new Error('the arbiter\'s client did not join the second federation');
+      await wait(3000);
+    }
+    liq.push(`${readInvite(invite2).federationId}=${dir}`);
+  }
+  if (!running('arbiter')) startPart('arbiter', process.execPath, [join(HERE, 'arbiter.mjs')], { env: fedEnv({
+    ARENA_ARBITER_NETWORK: 'regtest', ARENA_ARBITER_SEATS: seats.join(','), ARENA_ARBITER_PORT: String(PLAN.arbiter), ARENA_ARBITER_STATE: path('arbiter', 'state.json'),
+    ARENA_ARBITER_DOOR: `http://127.0.0.1:${PLAN.arbiter}`, ARENA_ARBITER_EVERY_MS: env.ARENA_ARBITER_EVERY_MS || '15000', ARENA_LIQ_CLAIMS_FILE: path('arbiter', 'claims.json'),
+    ARENA_LIQ_CLIENTS: liq.join(','), ARENA_FEDIMINT_CLI: join(FED, 'fedimint-cli'), ARENA_FEDIMINT_HOME: path('home'), ARENA_STAKE_LOCK_BIN: LOCK,
+    ...(SLASH ? { ARENA_CENSUS_KEY_0: path('census', 'key0.json') } : {}) }) });
+  for (let i = 0; ; i++) {
+    try { if ((await fetch(`http://127.0.0.1:${PLAN.arbiter}/status`, { signal: AbortSignal.timeout(3000) })).ok) break; } catch { /* not yet */ }
+    if (!running('arbiter')) throw new Error('the arbiter exited: see logs/arbiter.log');
+    if (i > 240) throw new Error('the arbiter did not answer in 120 s: see logs/arbiter.log');
+    await wait(500);
+  }
+  say({ step: 'arbiter', door: `http://127.0.0.1:${PLAN.arbiter}`, seats: seats.length, liquidationClients: liq.length });
+}
+
+// liq pegin | halt | claim | status (DEVNET_FED2=1 DEVNET_ARBITER=1, kanban #3901): A LIQUIDATION OF THE SECOND FEDERATION, END TO END AGAINST THE SEATS.
+//   pegin   a player's client of the second federation (clients/player-fed2) pegs in DEVNET_LIQ_PEGIN_BTC (default 0.002) and claims it (arena-stake-lock pegin-claim,
+//           blocks mined beside it): the notes a halt strands
+//   halt    the guardians of fed2 nodes 3 and 4 frozen (SIGSTOP of their fedimintd; the nodes themselves run on): 2 of 4 left, 3 needed. abandon_blocks and more are
+//           mined until the seats list the halt; their halt proof names the two ABANDONED, and the census key's holders start their bonds (HaltAbandonedProof)
+//   claim   every note the player holds handed over as e-cash (mintv2 send, offline) and presented at the claims door, paid to the player's key (keys/player-fed2.json)
+//   status  each seat's GET /liquidations row and events, the arbiter's claims, the slashes filed: what the run did, as the seats list it
+async function liqCmd() {
+  const sub = process.argv[3];
+  const player = path('clients', 'player-fed2');
+  const invite2 = existsSync(path('invite-code-fed2')) ? readFileSync(path('invite-code-fed2'), 'utf8').trim() : null;
+  if (!invite2) throw new Error('no second federation: run fed2 first');
+  const { readInvite } = await import('../src/invite.js');
+  const fid2 = readInvite(invite2).federationId;
+  const lockJson = (args, ms = 600000) => { const r = spawnSync(LOCK, args, { encoding: 'utf8', timeout: ms, env: fedEnv() }); const line = String(r.stdout || '').trim().split('\n').filter((l) => l.startsWith('{')).pop(); if (!line) throw new Error(`arena-stake-lock ${args[1]}: ${String(r.stderr || r.stdout).trim().slice(-300)}`); return JSON.parse(line); };
+  if (sub === 'pegin') {
+    mkdirSync(player, { recursive: true });
+    if (fcli(player, ['info'], 60000).status !== 0) { const j = fcli(player, ['join-federation', invite2], 120000); if (j.status !== 0) throw new Error(`the player did not join: ${String(j.stderr).slice(-300)}`); }
+    const address = lockJson(['--mode', 'pegin-address', '--data-dir', player]).address;
+    const txid = cli('sendtoaddress', address, env.DEVNET_LIQ_PEGIN_BTC || '0.002');
+    cli('generatetoaddress', '1', cli('getnewaddress'));
+    const miner = setInterval(() => { try { cli('generatetoaddress', '1', cli('getnewaddress')); } catch { /* next */ } }, 3000);
+    let claimed; try { claimed = await new Promise((done) => { const c = spawn(LOCK, ['--mode', 'pegin-claim', '--data-dir', player, '--address', address, '--timeout-s', '400'], { env: fedEnv() });
+      let out = ''; c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; }); c.on('close', () => { const l = out.trim().split('\n').filter((x) => x.startsWith('{')).pop(); done(l ? JSON.parse(l) : { error: out.slice(-300) }); }); }); }
+    finally { clearInterval(miner); }
+    say({ step: 'player pegged into fed2', federation: fid2, address, txid, claimed, height: Number(cli('getblockcount')) });
+    return;
+  }
+  if (sub === 'halt') {
+    const frozen = [];
+    for (const k of [3, 4]) {
+      const p = readPid(`fed2-${k}`);
+      if (!p) throw new Error(`fed2 node ${k} is not running`);
+      const ps = spawnSync('ps', ['-Ao', 'pid=,pgid=,command='], { encoding: 'utf8' }).stdout.split('\n').map((l) => l.trim().split(/\s+/)).filter((x) => x.length > 2 && Number(x[1]) === p.pgid && /fedimintd$/.test(x[2]));
+      for (const [pid] of ps) { process.kill(Number(pid), 'SIGSTOP'); frozen.push({ node: `fed2-${k}`, fedimintd: Number(pid) }); }
+    }
+    if (frozen.length !== 2) throw new Error(`froze ${frozen.length} guardians, wanted 2: ${JSON.stringify(frozen)}`);
+    say({ step: 'fed2 halted: the guardians of fed2 nodes 3 and 4 frozen (2 of 4 left, 3 needed)', frozen, height: Number(cli('getblockcount')) });
+    return;
+  }
+  if (sub === 'claim') {
+    const { schnorr, secp256k1 } = await import('@noble/curves/secp256k1.js');
+    const keyFile = path('keys', 'player-fed2.json');
+    mkdirSync(path('keys'), { recursive: true });
+    if (!existsSync(keyFile)) { const secret = secp256k1.utils.randomSecretKey(); writeFileSync(keyFile, JSON.stringify({ secret: Buffer.from(secret).toString('hex'), payoutPk: Buffer.from(secp256k1.getPublicKey(secret, true)).toString('hex') }) + '\n'); }
+    const k = JSON.parse(readFileSync(keyFile, 'utf8'));
+    let ecash = existsSync(path('keys', 'player-fed2.ecash')) ? readFileSync(path('keys', 'player-fed2.ecash'), 'utf8').trim() : null;
+    if (!ecash) {
+      const info = fcli(player, ['info'], 60000);
+      const msat = info.status === 0 ? JSON.parse(info.stdout).total_amount_msat : null;
+      const r = spawnSync(join(FED, 'fedimint-cli'), ['--data-dir', player, 'module', 'mintv2', 'send', String(msat)], { encoding: 'utf8', timeout: 300000, env: fedEnv() });
+      if (r.status !== 0) throw new Error(`the hand-over failed: ${String(r.stderr).trim().split('\n').pop()}`);
+      ecash = String(r.stdout).trim(); try { const j = JSON.parse(ecash); ecash = typeof j === 'string' ? j : (j.ecash || j.notes || ecash); } catch { /* raw */ }
+      writeFileSync(path('keys', 'player-fed2.ecash'), ecash + '\n');
+      say({ step: 'player handed over its notes', msat, chars: ecash.length });
+    }
+    const r = await fetch(`http://127.0.0.1:${PLAN.arbiter}/liquidation-claims`, { method: 'POST', body: JSON.stringify({ federation: fid2, ecash, payoutPk: k.payoutPk }), signal: AbortSignal.timeout(300000) });
+    say({ step: 'claim presented', status: r.status, answer: (await r.text()).slice(0, 600), payoutPk: k.payoutPk });
+    return;
+  }
+  if (sub === 'status') {
+    const tip = Number(cli('getblockcount'));
+    const rows = await Promise.all([...PLAN.nodes, ...PLAN.fed2].map(async (p) => { try { const j = await getJson(`http://127.0.0.1:${p}/liquidations`); const row = (j.liquidations || []).find((x) => x.federation === fid2) || null;
+      return { seat: p, phase: row && row.phase, haltHeight: row && row.haltHeight, proof: row && row.haltProof ? { session: row.haltProof.session, abandoned: row.haltProof.abandoned.length } : null, spentSet: row && row.spentSet ? row.spentSet.session : null, claims: row && row.claims,
+        events: (j.events || []).filter((e) => e.federation === fid2 || (e.event && e.event.federation === fid2)).map((e) => ({ kind: e.kind || (e.event && e.event.kind), status: e.status || (e.event && e.event.status) })) }; } catch (e) { return { seat: p, error: e.message }; } }));
+    let slashes = null; try { const j = await getJson(`${nodeUrl(0)}/slashes`); slashes = (j.haltAbandonedSlashes || []).map((x) => ({ node: x.node.slice(0, 16), proof: x.proof.slice(0, 16), txid: x.txid.slice(0, 16), sats: x.sats })); } catch (e) { slashes = e.message; }
+    let claims = null; try { claims = await getJson(`http://127.0.0.1:${PLAN.arbiter}/liquidation-claims?federation=${fid2}`); } catch (e) { claims = e.message; }
+    say({ step: 'liquidation status', tip, federation: fid2.slice(0, 16), seats: rows, haltAbandonedSlashes: slashes, claims });
+    return;
+  }
+  throw new Error('liq pegin | halt | claim | status');
+}
+
 const cmd = process.argv[2];
-const run = { up, runner, page, status, play, replay: replayCmd, down, stop: stopCmd, restart: restartCmd, 'new-game': newGame, liquidity, lnurl: lnurlDoor, auditors: auditorsCmd }[cmd];
+const run = { up, runner, page, status, play, replay: replayCmd, down, stop: stopCmd, restart: restartCmd, 'new-game': newGame, liquidity, lnurl: lnurlDoor, auditors: auditorsCmd, fed2: fed2Cmd, arbiter: arbiterCmd, liq: liqCmd }[cmd];
 if (!run) { console.error('devnet.mjs up | liquidity | status | play [round] [--game name] | replay [round entry] | down | new-game <dir> [name]     (DEVNET_DIR, DEVNET_BASE_PORT, BITCOIN_BIN, FEDIMINT_BIN)'); process.exit(2); }
 run().catch((e) => { console.error(`devnet ${cmd}: ${e.message}`); process.exit(1); });
