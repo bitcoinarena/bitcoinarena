@@ -6,7 +6,7 @@
 //   1. the newest release is the signed release/latest.json (release-latest.js: believed only under the Arena release key);
 //   2. newer than the release this node runs, and auto_update not off in arena.conf: this node's own asset is fetched - in pieces from the
 //      unlisted path latest.json names (tools/release/unlisted.mjs; Cloudflare Pages serves at most 25 MiB a file), joined, its SHA-256
-//      checked against latest.json, and SHA256SUMS + SHA256SUMS.sig checked against the release key (release-verify.js) as a manual update does;
+//      checked against latest.json, and SHA256SUMS + SHA256SUMS.sigs/.sig checked against the release keys, 2 of 3 (release-verify.js) as a manual update does;
 //   3. unpacked beside the running release and the node moved to it by update.js - outside a market seating window, backed up, the same
 //      node answering after, rolled back by itself if not.
 //
@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync, renameSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync, execFile } from 'node:child_process';
-import { checkAsset } from './release-verify.js';
+import { checkAsset, keptKeyset, keepKeyset } from './release-verify.js';
 import { updateNode, resumeUpdate, readJournal, openJournal, takeUpdateLock, roomForUpdate, freeBytesAt } from './update.js';
 import { nodeOf } from './node-services.js';
 import { QUIET } from '../../arena-node/src/log-level.js';
@@ -152,12 +152,19 @@ async function updateOnce({ home, latest, fetcher = fetch, platform = process.pl
     renameSync(part, file);
   } else say(50, `Downloading ${v}`, 'downloaded before');
   say(50, 'Checking the signature');
-  let sums, sig;
+  let sums, sig, sigs = '';
   try { sums = await get(d.sums || 'SHA256SUMS'); sig = (await get(d.sig || 'SHA256SUMS.sig')).toString('utf8'); } catch (e) { return { ok: false, why: `SHA256SUMS could not be read: ${e.message}` }; }
-  writeFileSync(join(dir, 'SHA256SUMS'), sums); writeFileSync(join(dir, 'SHA256SUMS.sig'), sig);
-  const c = verifyAsset({ file, sums, sig });
-  trace.verbose(`SHA256SUMS and its signature against the Arena release key: ${c.ok ? 'ok' : `refused (${c.why})`}`);
+  // 2-OF-3 (kanban #3920): every key's signature in SHA256SUMS.sigs, and any key-set change files the release names (download.keysets)
+  try { sigs = (await get(d.sigs || 'SHA256SUMS.sigs')).toString('utf8'); } catch (e) { trace.verbose(`SHA256SUMS.sigs could not be read (${e.message}): only SHA256SUMS.sig counts`); }
+  const keysets = [];
+  for (const k of Array.isArray(d.keysets) ? d.keysets.slice(0, 64) : []) {
+    try { keysets.push(JSON.parse((await get(String(k))).toString('utf8'))); } catch (e) { trace.verbose(`key-set change ${k} could not be read: ${e.message}`); }
+  }
+  writeFileSync(join(dir, 'SHA256SUMS'), sums); writeFileSync(join(dir, 'SHA256SUMS.sig'), sig); writeFileSync(join(dir, 'SHA256SUMS.sigs'), sigs);
+  const c = verifyAsset({ file, sums, sig, sigs, keysets, trusted: keptKeyset(home) });
+  trace.verbose(`SHA256SUMS and its signatures against the Arena release keys: ${c.ok ? `ok (${(c.keys || []).length} keys)` : `refused (${c.why})`}`);
   if (!c.ok) return { ok: false, why: `refused: ${c.why}` };
+  if (c.keyset && keepKeyset(home, c.keyset)) trace.verbose(`the release key set is now set ${c.keyset.seq} (${c.keyset.threshold} of ${c.keyset.keys.length})`);
   const base = name.replace(/\.(tar\.gz|zip)$/, '');
   const releases = join(home, 'releases');
   t0 = performance.now();

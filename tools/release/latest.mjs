@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-Bitcoin-Arena-1.0
 // Copyright (c) 2026 The Bitcoin Arena authors. See LICENSE.
 // THE NEWEST RELEASE, FOR THE OWNER PAGE ("a new release is available"). Writes <out>/latest.json from a release's
-// SHA256SUMS: its version, tag, commit, release page and assets; tools/release/sign.sh <out> <key> latest.json signs it with the
-// release key, and both are published at https://testnet.bitcoinarena.io/release/. A seat reads them (/owner/version) and offers
+// SHA256SUMS: its version, tag, commit, release page and assets; tools/release/sign-part.mjs <out>/latest.json <key> per key holder and
+// combine-sigs.mjs <out> latest.json sign it (kanban #3920: key 1 in latest.json.sig for older nodes), and both are published at https://testnet.bitcoinarena.io/release/. A seat reads them (/owner/version) and offers
 // the update only when the signature verifies.
 //
 //     node tools/release/latest.mjs <version> <commit> <dir holding SHA256SUMS> <out dir>
