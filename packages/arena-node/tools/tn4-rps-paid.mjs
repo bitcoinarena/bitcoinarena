@@ -46,7 +46,7 @@ import { genesisFor } from '../../arena-protocol/src/genesis.js';
 import { dealHandout, encodeHandout, handoutId } from '../../arena-protocol/src/handout.js';
 import { FIELD, scalarFrom32 } from '../../arena-protocol/src/shares.js';
 import { refundKeyOf } from '../../arena-protocol/src/stake-lock.js';
-import { settlementOf, forfeitOf } from '../../arena-client/src/page-lock.js';
+import { settlementOf, forfeitOf, isArenaLock } from '../../arena-client/src/page-lock.js';
 import { netStakeMsat } from '../../arena-protocol/src/payout.js';
 import { entryFeeMsat } from '../../arena-protocol/src/fee.js';
 import { entrySplit, lockEntry } from './entry-locks.mjs';
@@ -377,9 +377,14 @@ try {
     const stakes = [];
     for (const [l, kind] of [[p.stake, 'stake'], [p.fee, 'fee']]) {
       if (!l) continue;
-      const f = await forfeitOf({ roundId: rid, entryId: toHex(p.eid), nodes, lock: kind });
+      // AN ARENA LOCK (protocol 27+, regtest's point 0; kanban #3897, measured on the 2.0 devnet at v36: "the lock names no claimPk"): its forfeit
+      // names its signers and the 2.0 lock client spends it by arenaRedeem, as tn4-live-run.mjs does
+      const named = isArenaLock(l.fields);
+      const f = await forfeitOf({ roundId: rid, entryId: toHex(p.eid), nodes, lock: kind, named });
       if (!f.ok) { stakes.push({ kind, forfeit: f.why.slice(0, 160) }); continue; }
-      const said = JSON.parse(await p.lc.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(p.playerSecret)));
+      const said = named
+        ? JSON.parse(await p.lc.arenaRedeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify({ kind: 'cancel', signers: f.signers, signature: f.signature }), toHex(p.playerSecret)))
+        : JSON.parse(await p.lc.redeem(toHex(l.outpoint.txid), Number(l.outpoint.outIdx), JSON.stringify(lockFieldsToJson(l.fields)), f.signature, toHex(p.playerSecret)));
       stakes.push({ kind, accepted: said.accepted === true, ...(said.accepted === true ? {} : { said: JSON.stringify(said).slice(0, 200) }) });
     }
     log({ step: 'collected', player: who, payout, stakes, balanceBeforeMsat: before, balanceAfterMsat: await p.lc.balanceMsat() });
