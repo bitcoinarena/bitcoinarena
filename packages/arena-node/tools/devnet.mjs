@@ -304,7 +304,10 @@ async function up() {
       ARENA_APPS: apps.join(','), ARENA_DONATION_NETWORK: 'regtest', [`ARENA_WSS_${port}`]: `ws://127.0.0.1:${port}`,
       // THE ROUNDS IT MAY HOLD, AS THE SEVEN READ THEM (measured 2026-11-10 12:36Z: without these each auditor answered every v2 round's
       // post "402 this node stores nothing for a round nobody has funded", held no round, and so audited none)
-      ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt') }) });
+      ARENA_ATTACH_PROOF_DIR: path('runner', 'proof'), ARENA_FUNDED_ROUNDS_FILE: path('runner', 'funded.txt'),
+      // ON A DEVNET THAT SLASHES, CENSUS KEY 0 AS THE SEVEN HAVE IT (kanban #3896, measured 2026-11-27: without it each auditor derived another census root at
+      // the round's height - it counts no template-3 bond - and refused every paid round "that round names census root ... and the chain gives ...")
+      ...(SLASH ? { ARENA_CENSUS_KEY_FIRST_HEIGHT: '100000', ARENA_CENSUS_KEY_0: path('census', 'key0.json') } : {}) }) });
   }
   for (const [k, port] of PLAN.auditors.entries()) {
     for (let i = 0; ; i++) {

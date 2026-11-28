@@ -1068,7 +1068,10 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       // refuses until it has it: asked again, 3 s apart, for up to five minutes - that refusal only.
       let r, why = '';
       for (let tries = 0; ; tries++) {
-        r = await fetch(`http://${host}:${node.port}/round`, { method: 'POST', body });
+        // A STOPPED NODE (devnet.mjs stop <n>, kanban #3896: the absence proof needs rounds while one node is down) is left out, said once;
+        // the round still needs every other node, and at least five in all (below)
+        try { r = await fetch(`http://${host}:${node.port}/round`, { method: 'POST', body }); }
+        catch (e) { console.log(`[publish] ${node.port} unreachable, the round is posted without it: ${e.message}`); opened[at] = null; return; }
         if (r.ok) break;
         why = await r.text();
         // AND A NODE WHOSE OWN VIEW HAS NOT YET READ THE PUBLICATION this tool saw confirm below the beacon: asked again,
@@ -1080,7 +1083,8 @@ export async function standUpRound({ host = '127.0.0.1', portA = 8080, portB = 8
       opened[at] = toHex(new Uint8Array(await r.arrayBuffer()));
     }));
     const rid = toHex(roundId(c));
-    if (opened.some((o) => o !== rid))
+    if (opened.filter((o) => o === rid).length < Math.min(5, opened.length)) throw new Error(`only ${opened.filter((o) => o === rid).length} of ${opened.length} daemons took the round`);
+    if (opened.some((o) => o !== null && o !== rid))
       throw new Error(`the ${opened.length} daemons named the round differently: ` + opened.join(' '));
     // A V2 ROUND GOES TO EVERY NODE OF ITS CENSUS: any of them may be drawn, and a drawn node that never held
     // the round signs no PRESENT. Each at its advertised endpoint (wss -> https), through ARENA_ROUTE_MAP's host aliases
