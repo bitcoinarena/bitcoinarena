@@ -39,7 +39,7 @@ reproducible on two machines.
 
 **The Rust binaries were not rebuilt on a second machine.** fedimintd, gatewayd,
 fedimint-cli and arena-stake-lock enter the archives as prebuilt binaries, pinned by SHA-256 and
-fetched from the `custody-5fa01c5d` release. They were built once, on the main build machine
+fetched from the `custody-20d79ed6` release (5fa01c5d's gatewayd and arena-stake-lock; fedimintd and fedimint-cli with the liquidation patch, `tools/release/custody-check.sh`, kanban #3910). They were built once, on the main build machine
 (`custody-build.sh`). The only other build machine is kept free of extra jobs, so no second build was made, and the SHA-256 of those binaries has
 **not** been compared with an independent build. The same holds for the lock-client wasm
 tracked in the repository. Until such a comparison exists, a release is reproducible only
