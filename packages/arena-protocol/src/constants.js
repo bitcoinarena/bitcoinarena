@@ -25,7 +25,8 @@ export const PROTOCOL_VERSION = 1;
  * until the last round of N has settled and refunded, then N leaves the list. A version joins the list only together
  * with its decoding - the layout read is still this build's. Every decoder asks `speaksVersion`, none compares itself.
  */
-export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33, 35, 36]);
+export const SUPPORTED_PROTOCOL_VERSIONS = Object.freeze([PROTOCOL_VERSION, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 27, 28, 29, 30, 31, 33, 35, 36, 37]);
+// 37 (kanban #3882 and the other rulings of 2026-11-28): gated on the round's own version; round creators write 37 only once the page and every seat list it.
 /** The last BLWP/v1 tags become ARENA/v1 at one point per network (tag-switch.js, kanban #525). */
 export const TAG_SWITCH_VERSION = 18;
 /** A node's bond outputs count as their sum: the round's floor is applied to it (census.js nodeBonds, kanban #544). */
@@ -124,6 +125,14 @@ export const poolsFirst = (v) => Number.isInteger(v) && v >= POOL_FIRST_VERSION;
  * (bond_min, byte for byte as before), and a seat on an older build does not speak 36. Round creators write 36 only once every seat lists it.
  */
 export const CENSUS_ROLE_FLOOR_VERSION = 36;
+/**
+ * A LATE SETTLEMENT NEVER PAYS THE SERIES PUBLISHER (kanban #3882, RULED 2026-11-28; §5A.5 reimburses the first confirmed publication once): the fee back is
+ * paid by round 0's own settlement and by nothing else - a settlement that replaces it (another txid for the same table, a fallback claim of it) still
+ * names the publisher, a late loser's second settlement beside it does not: its fee lock's nodes' part goes whole to the sitting seats' pools. By the
+ * round's version; a late settlement of an earlier round is built and co-signed as before, so a fixed and an unfixed seat derive the same bytes.
+ */
+export const LATE_NO_PUBLISHER_VERSION = 37;
+export const latePaysNoPublisher = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= LATE_NO_PUBLISHER_VERSION;
 /** Whether a round counts census_min_nodes at the role floor (kanban #3855): its contract names protocol version 36 or later. */
 export const countsAtRoleFloor = (c) => !!c && Number.isInteger(c.protocolVersion) && c.protocolVersion >= CENSUS_ROLE_FLOOR_VERSION;
 /**
