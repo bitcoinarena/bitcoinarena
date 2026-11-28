@@ -8691,6 +8691,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
   // kanban #2932: the guardians' spent-set copies kept beside the halts file
   const spentCopiesFile = db && db.arenaPath ? `${db.arenaPath}.spent-sets.json` : null;
   liquidations = createLiquidations({ records: fedRecords, clocks: fedClocks, verify: schnorrVerify, claimsUrl: process.env.ARENA_LIQUIDATION_CLAIMS || null, halts, alarms: reserveAlarms,
+    escrowsOf: (fid) => (slashRelease && slashRelease.liquidation && typeof slashRelease.liquidation.listed === 'function' ? slashRelease.liquidation.listed(fid) : null),   // kanban #3901
     load: () => (spentCopiesFile && existsSync(spentCopiesFile) ? JSON.parse(readFileSync(spentCopiesFile, 'utf8')) : []),
     save: (v) => { if (spentCopiesFile) { try { writeFileSync(spentCopiesFile, JSON.stringify(v)); } catch { /* kept in memory */ } } } });
   // THE ARBITRATION SET'S EVENTS (kanban #723): its liquidations and slashes with every payout and transaction, signed by k of its members -

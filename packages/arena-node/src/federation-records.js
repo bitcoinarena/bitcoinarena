@@ -24,7 +24,7 @@ import { judgeAbandoned } from './arbiter.js';
 import { abandonedRows, outputsLeft, encodeAbandonedProof, decodeAbandonedProof, abandonedProofId, startsByCensusKey } from '../../arena-protocol/src/abandoned-slash.js';
 import { abandonedSlashPoint, networkOf } from '../../arena-protocol/src/constants.js';
 import { decodeBoundProof, encodeBoundProof, boundProofId, boundSlashStands } from '../../arena-protocol/src/bound-slash.js';
-import { decodeHaltAbandonedProof, encodeHaltAbandonedProof, haltAbandonedProofId, haltAbandonedSlashStands } from '../../arena-protocol/src/halt-abandoned-slash.js';
+import { decodeHaltAbandonedProof, encodeHaltAbandonedProof, haltAbandonedProofId, haltAbandonedSlashStands, haltSlashDue } from '../../arena-protocol/src/halt-abandoned-slash.js';
 import { encodeTheftProof, decodeTheftProof, theftProofId, theftOutputs, theftSlashStands, theftTakes, sessionsShowMark, spendStands, theftVerifyInput } from '../../arena-protocol/src/theft-slash.js';
 import { absenceHex, readAbsenceHex, departureHex, readDepartureHex, dueDeparture, emergencyHex, readEmergencyHex } from './absences.js';
 import { emergencyEntryOf, emergencyDepartureStands, emergencyDepartureEffect, emergencyDepartureId } from '../../arena-protocol/src/emergency.js';
@@ -899,10 +899,13 @@ export function federationRecords({ round, roster, inviteFor, networkId, leaving
     if (!cases.length || !Number.isInteger(abandonedFrom)) return [];
     const h = await bondsAtBasis();
     if (h === null) return [];
+    let tip = null; try { tip = Number(await chainTip()); } catch { tip = null; }
     const out = [];
     for (const { federation, halt, observations, guardianObservations } of cases) {
       const k = kept.get(String(federation).toLowerCase());
       if (!k || !k.record || !k.bytes || !halt || !(observations || []).length || halt.haltHeight < abandonedFrom) continue;
+      // NOT BEFORE THE GUARDIANS HAD THEIR TIME TO SIGN (haltSlashDue): who is slashed is read from their own signed observations
+      if (!haltSlashDue({ tip, haltHeight: halt.haltHeight, abandonBlocks })) continue;
       for (const peer of halt.abandoned || []) {
         const g = (k.record.guardians || []).find((x) => toHex(x.peerKey) === toHex(peer));
         if (!g) continue;

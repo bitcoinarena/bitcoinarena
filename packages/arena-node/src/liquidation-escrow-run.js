@@ -447,5 +447,24 @@ export function createLiquidationEscrow({ asker = null, secret, me, networkId, c
     };
   }
 
-  return { pass, carry, checkLiquidationEscrow, takeCarrierPegIn, servedCarriers, served, contextOf, walk, buildAt, claimState };
+  /**
+   * WHAT THIS SEAT SAW OF A FEDERATION'S CENSUS-KEY ESCROWS (kanban #3901: a liquidation paid by them was listed nowhere - GET /liquidations named the halt and the claims
+   * door, and the arbitration set's events only what it paid itself): each escrow spend on the chain this seat read, with what it carried - the claims it named, each output
+   * and, where this seat was its carrier, what it claimed, what it paid at face and what went to the reserves. A reading of this seat's own store; it decides nothing.
+   */
+  function listed(federation) {
+    const fid = String(federation || '').toLowerCase();
+    return db.prepare('SELECT table_id, seq, start, escrow_in, value, outputs, claims, txid FROM liq_escrow_chain WHERE federation = ? ORDER BY table_id, seq').all(fid).map((r) => {
+      let d = null, claims = [];
+      try { d = decodeLiquidationEscrowOutputs(new Uint8Array(r.outputs)); claims = decodeLiquidationClaims(new Uint8Array(r.claims)); } catch { d = null; }
+      const carried = db.prepare('SELECT out_index, state FROM liq_carried WHERE escrow = ? ORDER BY out_index').all(r.escrow_in).map((c) => {
+        let st = {}; try { st = JSON.parse(c.state); } catch { st = {}; }
+        return { index: c.out_index, claimedMsat: st.claimedMsat || null, paidTxid: st.paidTxid || null, claimsPaid: Array.isArray(st.claims) ? st.claims.length : 0,
+          claimsMsat: Array.isArray(st.claims) ? String(st.claims.reduce((a, x) => a + BigInt(x.msat), 0n)) : '0', reserves: st.reserves || null };
+      });
+      return { start: r.start, table: r.table_id, seq: r.seq, escrow: r.escrow_in, sats: String(r.value), txid: r.txid, claims: claims.length,
+        claimsMsat: String(claims.reduce((a, c) => a + BigInt(c.msat), 0n)), outputs: d ? d.outputs.map((o) => ({ pays: o.pays, sats: String(o.value) })) : null, carried };
+    });
+  }
+  return { pass, carry, checkLiquidationEscrow, takeCarrierPegIn, servedCarriers, served, contextOf, walk, buildAt, claimState, listed };
 }

@@ -75,3 +75,14 @@ export function haltAbandonedSlashStands({ record, proof, verify, censusSeats, a
   if (!startsByCensusKey(output.template)) return { verdict: false, why: 'that output is no template-3 bond: the census key starts template 3 only', halt };
   return { verdict: true, why: `ABANDONED by the halt proof of session ${halt.session} (halt at ${halt.haltHeight}, ${halt.observers} observers)`, output, halt };
 }
+
+/**
+ * WHEN A SEAT FILES A HALT'S ABANDONMENT (kanban #3901, measured on the devnet 2026-11-28): the seats' halt proof stood at 14 observers before either live guardian of
+ * the halted federation had signed its own halt observation (a guardian signs from abandon_blocks after it first saw the session, on its own pass), so the proof named
+ * all four ABANDONED and the census key started the two live guardians' bonds too - and an idle federation whose session had not moved got its seven honest guardians
+ * started the same way. Who is slashed is read from the guardians' signatures (#1289), so a seat files only once they have had abandon_blocks more to give them:
+ * at a tip of the halt height + 2 x abandon_blocks or later. Local to the filer: the judgement of a proof is unchanged.
+ */
+export const haltSlashDue = ({ tip, haltHeight, abandonBlocks }) => Number.isInteger(tip) && Number.isInteger(haltHeight) && Number.isInteger(abandonBlocks)
+  && tip >= haltHeight + 2 * abandonBlocks;
+

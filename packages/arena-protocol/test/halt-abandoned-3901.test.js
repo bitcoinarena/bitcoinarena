@@ -11,7 +11,7 @@ import { taggedHash, toHex } from '../src/hash.js';
 import { signHaltObservation, signGuardianHaltObservation } from '../src/halt-proof.js';
 import { BOND_TEMPLATE_V2, BOND_TEMPLATE_V3 } from '../src/bond-script.js';
 import { TYPE_ABANDONED_PROOF, TYPE_HALT_ABANDONED_PROOF } from '../src/constants.js';
-import { encodeHaltAbandonedProof, decodeHaltAbandonedProof, haltAbandonedSlashStands, haltAbandonedProofId, isHaltAbandonedProof } from '../src/halt-abandoned-slash.js';
+import { encodeHaltAbandonedProof, decodeHaltAbandonedProof, haltAbandonedSlashStands, haltAbandonedProofId, isHaltAbandonedProof, haltSlashDue } from '../src/halt-abandoned-slash.js';
 
 const key = (s) => { const secret = taggedHash('TEST/halt3901', new TextEncoder().encode(s)); return { secret, pub: schnorr.getPublicKey(secret) }; };
 const verify = (sig, msg, pub) => { try { return schnorr.verify(sig, msg, pub); } catch { return false; } };
@@ -54,3 +54,10 @@ test('#3901 the guardians a proven halt names ABANDONED are slashed on the halt 
   assert.equal(afterHalt.verdict, false, 'a bond made after the halt stood for nothing at it');
   assert.equal(decodeHaltAbandonedProof(bytes).guardianObservations.length, 4);
 });
+
+test('#3901 a seat files a halt\'s abandonment only once the guardians had abandon_blocks more to sign their own observations', () => {
+  const at = (tip) => haltSlashDue({ tip, haltHeight: 394, abandonBlocks: 10 });
+  assert.deepEqual([at(394), at(404), at(413), at(414), at(500)], [false, false, false, true, true]);
+  assert.equal(haltSlashDue({ tip: null, haltHeight: 394, abandonBlocks: 10 }), false);
+});
+

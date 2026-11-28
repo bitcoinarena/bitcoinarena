@@ -17,7 +17,7 @@ import { toHex, fromHex } from '../../arena-protocol/src/hash.js';
 // AND A MARK OF THEFT (kanban #1093 part 2, ruling #1106): "the federation is treated as HALTED from that height. Liquidation runs as in §23A.5 ...
 // The proof is the alarm plus the chain spend." `alarms` (reserve-alarms.js): a federation with a standing alarm is halted from the alarm's
 // height; a record's or the seats' halt, when one exists, counts first.
-export function createLiquidations({ records, clocks, verify, claimsUrl = null, halts = null, alarms = null, load = () => [], save = () => {} }) {
+export function createLiquidations({ records, clocks, verify, claimsUrl = null, halts = null, alarms = null, load = () => [], save = () => {}, escrowsOf = () => null }) {
   const alarmHalt = (fid) => { const a = alarms ? alarms.of(fid) : null; return a ? { height: a.height, alarm: a } : null; };
   const haltOf = (fid) => records.haltOf(fid) || (halts ? halts.haltOf(fid) : null) || alarmHalt(fid);
   const haltedFederations = () => [...new Set([...records.haltedFederations(), ...(halts ? halts.haltedFederations() : []),
@@ -87,6 +87,8 @@ export function createLiquidations({ records, clocks, verify, claimsUrl = null, 
           copies: all.filter((c) => c.session === pick.session).map((c) => ({ spentSet: toHex(encodeSpentSet(c)), signature: toHex(c.signature) })) }
           : null,
         ...(pick.copy ? {} : { why: pick.why }),
+        // THE CENSUS-KEY ESCROWS OF ITS SLASHED GUARDIANS, as this seat saw them spent and carried (kanban #3901, liquidation-escrow-run.js listed): the claims paid, the reserves
+        escrows: (() => { try { return escrowsOf(fid) || []; } catch { return []; } })(),
       };
     });
   }
