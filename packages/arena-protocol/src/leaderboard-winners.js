@@ -7,7 +7,7 @@ import { FUNDING_CAP_PCT } from './funding.js';
 import { season } from './season.js';
 import { refundKeyOf } from './stake-lock.js';
 import { placeAmounts } from './leaderboard-payout.js';
-import { placeStanding, placeOrder } from './place-eligibility.js';   // kanban #2841
+import { placeStanding, placeOrder, capsAtCountedFees } from './place-eligibility.js';   // kanban #2841
 
 const lower = (x) => String(x || '').toLowerCase();
 
@@ -18,14 +18,15 @@ const lower = (x) => String(x || '').toLowerCase();
  * cut sharing the places it spans equally (the floors' remainder to the first of the tie, in the season's order). Answers { ok, winners:
  * [{ player, payoutPk (33-byte refund key, hex), msat, places }], skipped: [player], totalMsat } or { ok: false, why }.
  */
-export function leaderboardWinners({ rounds, games, fromMs, toMs, top, amountMsat, splitBps = [] }) {
+// `network` (kanban #3850): whose PLACE_COUNTED_FEES_FROM_MS names the first window capped at the counted rounds' fees; `countedFeesFromMs` a test's own start.
+export function leaderboardWinners({ rounds, games, fromMs, toMs, top, amountMsat, splitBps = [], network = null, countedFeesFromMs = undefined }) {
   const s = season(rounds, { games, fromMs, toMs });
   if (!s.ok) return { ok: false, why: s.why };
   // WHO MAY TAKE A PLACE (kanban #2841, ruling 2026-11-16; place-eligibility.js): a proven identity older than the week, with at least 3 distinct
   // opponents older than the week, ranked by the P&L of its rounds against older opponents only, and paid at most 10x the entry fees it paid in
   // the window - the rest of its place stays in the reserves. It keeps #2450 (it staked) and #2656 (it won money): fresh identities made for free
   // rounds or at one fee each still fill no place. A place nobody qualifies for stays in the reserves.
-  const standing = placeStanding({ rounds, games, fromMs, toMs });
+  const standing = placeStanding({ rounds, games, fromMs, toMs, countedFeesCap: capsAtCountedFees({ network, fromMs, startMs: countedFeesFromMs }) });
   const ranked = placeOrder(standing);
   const placedKeys = new Set(ranked.map((r) => r.player));
   const skipped = s.rows.filter((row) => !placedKeys.has(lower(row.player))).map((row) => row);
