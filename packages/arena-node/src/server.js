@@ -3091,7 +3091,7 @@ export function serve(db, { port = 0, host = '127.0.0.1', funded = NOTHING_IS_FU
     const w = leaderboardWindow(p, paymentMs);
     return { ok: true, games: ids, fromMs: w.fromMs, toMs: w.toMs, days: w.days, top: p.top, amountMsat: p.amountSats * 1000n, splitBps: p.splitBps };
   };
-  const winnersBook = round.db ? createWinnersBook({ db: round.db, paramsOf: leaderboardSeasonOf, seatsOf: seasonSeatsOf, verify: (s, m, k) => schnorr.verify(s, m, k),
+  const winnersBook = round.db ? createWinnersBook({ db: round.db, network: winningsNetwork, paramsOf: leaderboardSeasonOf, seatsOf: seasonSeatsOf, verify: (s, m, k) => schnorr.verify(s, m, k),
     // AND PLACE_AGE_LOOKBACK_DAYS BEFORE THE WINDOW (kanban #2841): a place needs an identity whose first paid round lies before the week
     collect: async (id, p) => (await seasonAccounts(p.games, p, { keyed: true, signed: true, days: Math.min(SEASON_DAYS_MAX, Math.ceil((Date.now() - p.fromMs) / DAY_MS) + 1 + PLACE_AGE_LOOKBACK_DAYS) })).bySeat,
     log: (l) => console.log(l) }) : null;

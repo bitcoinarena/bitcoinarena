@@ -96,7 +96,7 @@ export function peerEvidence(evidence) {
  * `collect(id, params)` async -> every seat's signed answers (a Map label -> rounds, this seat's own included); `seatsOf` and `verify`
  * as mergeSignedSeasonAccounts takes them.
  */
-export function createWinnersBook({ db, paramsOf, collect, seatsOf, verify, now = () => Date.now(), graceMs = FREEZE_GRACE_MS,
+export function createWinnersBook({ db, paramsOf, collect, seatsOf, verify, network = null, now = () => Date.now(), graceMs = FREEZE_GRACE_MS,
   pendingMaxMs = FREEZE_PENDING_MAX_MS, log = () => {} }) {
   db.exec(WINNERS_SQL);
   const rowOf = (id) => {
@@ -106,7 +106,7 @@ export function createWinnersBook({ db, paramsOf, collect, seatsOf, verify, now 
   const stateOf = (id) => { const r = rowOf(id); return r ? r.state : WINNERS.OPEN; };
   const merged = (answers) => mergeSignedSeasonAccounts(answers, { seatsOf, verify });
   const winnersFrom = (p, rounds) => {
-    const w = leaderboardWinners({ rounds, games: p.games, fromMs: p.fromMs, toMs: p.toMs, top: p.top, amountMsat: BigInt(p.amountMsat), splitBps: p.splitBps || [] });
+    const w = leaderboardWinners({ rounds, games: p.games, fromMs: p.fromMs, toMs: p.toMs, top: p.top, amountMsat: BigInt(p.amountMsat), splitBps: p.splitBps || [], network });   // kanban #3850
     return w.ok ? { ok: true, winners: norm(w.winners) } : w;
   };
   const reading = new Map();
