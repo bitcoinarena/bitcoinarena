@@ -3310,5 +3310,17 @@
  "3894": {
   "text": "Rock Paper Scissors game: the site and the docs say a draw returns both stakes, but the game keeps a fee",
   "kind": "bug"
+ },
+ "3912": {
+  "text": "Website: a page polls seats too often and crowds the tunnel",
+  "kind": "bug"
+ },
+ "3913": {
+  "text": "Federation: guardian live connections are a large share of tunnel traffic",
+  "kind": "bug"
+ },
+ "3914": {
+  "text": "Settlement: seats keep re-reading unsettled rounds from an outside peer",
+  "kind": "bug"
  }
 }
