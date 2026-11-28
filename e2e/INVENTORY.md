@@ -69,7 +69,7 @@ Money first, then reach, as the suite runs them.
 - [x] Admin review list / act / CSV, approval bands, one approval - `bounty.admin-review`
 - [x] Community check against fakes (forged signature, edited content, other key, replays, stale/future events, bad addresses, secrets scrubbed) - `feedback.fakes`
 - [x] Season 2 / Week 2 bounty: pot, link codes behind NIP-98, approvals per band - `bounty.season2`
-- [ ] Week 2 social readers (X, Telegram, Discord, Armada) - public services, none configured
+- [ ] Week 2 social readers (X, Telegram, Discord) - public services, none configured
 
 ## Proposals and ballot
 

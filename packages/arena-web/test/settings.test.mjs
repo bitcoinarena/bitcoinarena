@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { NameCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, CommunityCard, DonationCard, ItemsShareCard, DebugCard, RescanCard, ReferralCard } from '../dist/test/settings.mjs';
+import { NameCard, LogsCard, SeedCard, AccountCard, ConfirmedFederationsCard, DonationCard, ItemsShareCard, DebugCard, RescanCard, ReferralCard } from '../dist/test/settings.mjs';
 
 const live = (C, props) => { const c = new C(props); c.setState = (u) => Object.assign(c.state, typeof u === 'function' ? u(c.state) : u); return c; };
 const html = (c) => renderToStaticMarkup(React.createElement(React.Fragment, null, c.render()));
@@ -56,7 +56,6 @@ test('the confirmed federations with Forget, none said; the community link; the 
   const f = new ConfirmedFederationsCard({ list: [{ federation: 'cd'.repeat(32) }], onForget: (x) => forgot.push(x) });
   f.render().props.children[2].props.children[0].props.children[1].props.onClick();
   assert.deepEqual(forgot, ['cd'.repeat(32)]);
-  assert.match(h(CommunityCard, { href: 'https://armada.example/x' }), /<a id="arena-armada-link" href="https:\/\/armada\.example\/x" target="_blank" rel="noopener"/);
   assert.match(h(DonationCard, { pct: 2, recipients: 'to 3 developers', onChange() {} }), /<option value="2" selected="">2%<\/option>.*<div class="muted">to 3 developers<\/div>/);
   const items = h(ItemsShareCard, { share: 20, lead: 'Your share', what: 'A 500 sat item costs 550 sat', onChange() {} });
   assert.deepEqual([...items.matchAll(/<option value="(\d+)"/g)].map((m) => Number(m[1])), [40, 30, 20, 10, 0]);
