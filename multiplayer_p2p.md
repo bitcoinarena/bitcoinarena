@@ -9521,12 +9521,10 @@ and hosted by node 91bc07d2 at node91bc07d2e41c5a.nodes.bitcoinarena.io.
 - **At the start:** all seven drawn nodes. **On the result page:** the nodes
   whose signatures the result carries, and every hoster the player was sent
   to in that round.
-- **The line "The developers of Bitcoin Arena do not operate or host this
-  round" is shown only when it is true:** when no node of the committee
-  declares an `operator_id` of the frontend's own operator (the frontend
-  names its operator ids in its bundle). Where a developer-run node sits on
-  the committee, the notice names it as such instead. The notice never
-  claims more than the page verified.
+- **The notice states what the page verified and nothing more:** the node
+  keys of the draw and the hoster's name. It makes no statement about who
+  the operators are or are not. Who runs a node is what the node declares
+  (`operator_id`, §31), shown on a tap as it is in the lobby today.
 
 ## 25B.2 The hosting name
 
